@@ -15,16 +15,20 @@ class ModelPipeline:
 
     def _get_client(self):
         """获取 LLM 客户端"""
-        if self._client is None:
-            try:
-                from langchain_openai import ChatOpenAI
-                self._client = ChatOpenAI(
-                    model=self.model_name,
-                    temperature=self.temperature,
-                    api_key=self.api_key
-                )
-            except ImportError:
-                self._client = None
+        if self._client is not None:
+            return self._client
+        
+        try:
+            from langchain_openai import ChatOpenAI
+            from openai import OpenAIError
+            self._client = ChatOpenAI(
+                model=self.model_name,
+                temperature=self.temperature,
+                api_key=self.api_key
+            )
+        except (ImportError, OpenAIError, Exception):
+            self._client = None
+        
         return self._client
 
     async def chat(
