@@ -1,0 +1,23 @@
+napcat:
+  ws_url: "ws://localhost:3000"
+  http_url: "http://localhost:3000"
+
+model:
+  provider: "openai"
+  model: "gpt-4"
+  temperature: 0.7
+
+context:
+  window_size: 20
+  max_tokens: 4096
+
+memory:
+  pg_connection: "postgresql://user:pass@localhost:5432/mutsumi"
+  vector_dim: 1536
+
+deduplication:
+  wait_time: 1.0
+
+cache:
+  image_md5: "./cache/image_md5.json"
+  meme_desc: "./cache/meme_desc.json"
