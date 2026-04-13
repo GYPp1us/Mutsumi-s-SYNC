@@ -3,9 +3,11 @@ napcat:
   http_url: "http://localhost:3000"
 
 model:
-  provider: "openai"
+  provider: "openai"       # openai / custom (OpenAI-compatible API)
   model: "gpt-4"
   temperature: 0.7
+  # api_key: "your-api-key"  # 可选: 从环境变量 OPENAI_API_KEY 读取
+  # base_url: "https://api.openai.com/v1"  # 自定义 API 端点 (如使用代理或本地模型)
 
 context:
   window_size: 20

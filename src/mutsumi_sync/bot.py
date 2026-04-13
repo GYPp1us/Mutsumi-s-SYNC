@@ -16,7 +16,13 @@ class MutsumiSync:
         self.config = config
         self.receiver = MessageReceiver(config.napcat.ws_url)
         self.sender = MessageSender(config.napcat.http_url)
-        self.pipeline = ModelPipeline(config.model.model, config.model.temperature)
+        self.pipeline = ModelPipeline(
+            provider=config.model.provider,
+            model=config.model.model,
+            temperature=config.model.temperature,
+            api_key=config.model.api_key,
+            base_url=config.model.base_url
+        )
         self.matcher = VectorMatcher(config.memory.vector_dim)
         self.dedup = Deduplicator(config.deduplication.wait_time)
         self.auth = AuthManager()

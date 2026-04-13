@@ -13,6 +13,8 @@ class ModelConfig(BaseModel):
     provider: str = "openai"
     model: str = "gpt-4"
     temperature: float = 0.7
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 class ContextConfig(BaseModel):
