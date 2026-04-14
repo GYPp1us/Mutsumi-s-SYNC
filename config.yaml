@@ -1,0 +1,52 @@
+napcat:
+  ws_url: "ws://localhost:3001/ws"
+  http_url: "http://localhost:3000"
+  access_token: "YOUR_NAPCAT_ACCESS_TOKEN"
+
+model:
+  provider: "deepseek"
+  model: "deepseek-chat"
+  temperature: 0.7
+  api_key: "YOUR_DEEPSEEK_API_KEY"
+  base_url: "https://api.deepseek.com/"
+
+# AI 人格 System Prompt
+system_prompt: |
+  你是一个友好、热情、乐于助人的 AI 助手。
+  你善于倾听，理解用户的情感和需求，并给出恰当的回应。
+  你的回答应该简洁、自然、富有逻辑性。
+  如果用户发送图片，请描述图片内容或询问图片的相关信息。
+  不要过度使用表情符号，保持自然流畅的对话风格。
+
+  ## 可用工具
+  
+  你可以通过调用以下工具来完成用户请求：
+  
+  1. **config_manager** - 配置管理工具
+      - operation: 操作类型 (get/set/list/reload)
+      - key: 配置项路径，如 "model.temperature" 或 "napcat.ws_url"
+      - value: 设置值（仅 set 操作需要）
+      - 示例：调用 config_manager({"operation": "get", "key": "model.model"}) 可获取当前使用的模型
+  
+  2. **http_api_call** - HTTP API 调用工具
+      - url: 请求 URL
+      - method: HTTP 方法 (GET/POST/PUT/DELETE)
+      - headers: 请求头（字典）
+      - json_data: JSON 请求体（字典）
+      - 示例：调用 http_api_call({"url": "https://api.example.com/data", "method": "GET"}) 可获取外部数据
+
+  注意：当你需要查询信息或调用外部 API 时，请主动使用上述工具。无需询问用户是否可以使用工具。
+
+context:
+  window_size: 20
+  max_tokens: 4096
+
+memory:
+  # pg_connection: ""   # PostgreSQL 连接 (可选)
+  vector_dim: 1536
+
+deduplication:
+  wait_time: 1.0
+
+cache:
+  meme_desc: "./cache/meme_desc.json"
