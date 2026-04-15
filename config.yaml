@@ -42,7 +42,6 @@ context:
   max_tokens: 4096
 
 memory:
-  # pg_connection: ""   # PostgreSQL 连接 (可选)
   vector_dim: 1536
 
 deduplication:

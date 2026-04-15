@@ -9,7 +9,7 @@ logger = logging.getLogger("mutsumi.sender")
 
 
 class Peer(BaseModel):
-    chat_type: int
+    chat_type: int  # 1: private, 2: group
     peer_uid: str
 
 

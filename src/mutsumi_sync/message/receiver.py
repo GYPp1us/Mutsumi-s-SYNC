@@ -88,8 +88,6 @@ class MessageReceiver:
                             logger.debug(f"Unknown event: {post_type}")
                     except json.JSONDecodeError as e:
                         logger.error(f"JSON decode error: {e}")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON decode error: {e}")
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
                         
