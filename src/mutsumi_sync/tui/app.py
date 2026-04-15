@@ -3,6 +3,8 @@ from textual.widgets import Static, Footer
 from textual.containers import Container, Horizontal, Vertical
 from textual.binding import Binding
 from .storage import ConversationStorage
+from .widgets.status_bar import StatusBar
+from .widgets.conversation import ConversationView
 
 class MutsumiTUI(App):
     CSS = """
@@ -30,9 +32,8 @@ class MutsumiTUI(App):
     def compose(self) -> ComposeResult:
         yield Static("Mutsumi's SYNC", id="header")
         with Vertical(id="content"):
-            pass
-        with Horizontal(id="status"):
-            yield Static("初始化中...", id="status_text")
+            yield ConversationView(id="conversation")
+        yield StatusBar(id="status")
     
     def action_next_user(self):
         convs = self.storage.get_conversations()
@@ -60,13 +61,13 @@ class MutsumiTUI(App):
         self.refresh_content()
     
     def refresh_content(self):
-        pass
+        convs = self.storage.get_conversations()
+        if convs:
+            conv = convs[self.current_user_idx]
+            self.query_one("#conversation", ConversationView).update(conv, self.current_round_idx)
     
     def update_status(self, ai_online: bool, napcat_online: bool, msg_count: int):
-        ai_status = "●" if ai_online else "○"
-        nc_status = "●" if napcat_online else "○"
-        status = f"[AI: {ai_status}] [NapCat: {nc_status}] [消息: {msg_count}]"
-        self.query_one("#status_text", Static).update(status)
+        self.query_one("#status", StatusBar).update(ai_online, napcat_online, msg_count)
     
     def action_show_detail(self):
         pass
