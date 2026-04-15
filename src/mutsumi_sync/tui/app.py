@@ -5,6 +5,7 @@ from textual.binding import Binding
 from .storage import ConversationStorage
 from .widgets.status_bar import StatusBar
 from .widgets.conversation import ConversationView
+from .screens.detail import DetailScreen
 
 class MutsumiTUI(App):
     CSS = """
@@ -70,7 +71,11 @@ class MutsumiTUI(App):
         self.query_one("#status", StatusBar).update(ai_online, napcat_online, msg_count)
     
     def action_show_detail(self):
-        pass
+        convs = self.storage.get_conversations()
+        if convs and convs[self.current_user_idx].rounds:
+            self.push_screen(
+                DetailScreen(convs[self.current_user_idx], self.current_round_idx)
+            )
     
     def action_back(self):
         pass
