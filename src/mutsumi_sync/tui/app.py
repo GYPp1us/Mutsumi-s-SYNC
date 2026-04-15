@@ -24,11 +24,38 @@ class MutsumiTUI(App):
         Binding("escape", "back", "返回"),
     ]
     
-    def __init__(self, storage: ConversationStorage):
+    def __init__(self, storage: ConversationStorage, config=None, bot=None):
         super().__init__()
         self.storage = storage
+        self.config = config
+        self.bot = bot
         self.current_user_idx = 0
         self.current_round_idx = 0
+    
+    def on_mount(self):
+        self.check_api_status()
+        self.set_interval(30, self.check_api_status)
+    
+    async def check_api_status(self):
+        import httpx
+        
+        ai_online = False
+        try:
+            base_url = self.config.model.base_url if self.config and hasattr(self.config, 'model') else "https://api.deepseek.com/"
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{base_url}/models", timeout=5)
+                ai_online = resp.status_code in (200, 401)
+        except:
+            ai_online = False
+        
+        napcat_online = False
+        try:
+            if self.bot and self.bot.receiver and self.bot.receiver._ws:
+                napcat_online = True
+        except:
+            napcat_online = False
+        
+        self.update_status(ai_online, napcat_online, self.storage.message_count)
     
     def compose(self) -> ComposeResult:
         yield Static("Mutsumi's SYNC", id="header")
