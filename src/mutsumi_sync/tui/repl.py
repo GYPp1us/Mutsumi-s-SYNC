@@ -48,6 +48,7 @@ class REPL:
                  stats_provider=None, reload_handler=None,
                  conversation_callback=None, log_path="./logs/mutsumi.log"):
 
+        self._log_path = log_path
         self.registry = CommandRegistry()
         self._setup_commands(config_loader, status_provider, stats_provider,
                            reload_handler, conversation_callback)
@@ -57,7 +58,8 @@ class REPL:
                       "message_count": 0, "uptime": "00:00:00"}
         self._status_lock = threading.Lock()
         self._start_time = time.time()
-
+        self._log_path = log_path
+        
         self.history = FileHistory(".mutsumi_history")
         self.buffer = Buffer(completer=CommandCompleter(self.registry),
                             history=self.history,
@@ -69,11 +71,11 @@ class REPL:
     def _setup_commands(self, config_loader, status_provider, stats_provider,
                        reload_handler, conversation_callback):
         self.registry.register(ConfigCommand(config_loader))
-        self.registry.register(LogsCommand(log_path))
+        self.registry.register(LogsCommand(self._log_path))
         self.registry.register(StatusCommand(status_provider))
         self.registry.register(StatsCommand(stats_provider))
         self.registry.register(ReloadCommand(reload_handler))
-        self.registry.register(ExitCommand(lambda: self._exit()))
+        self.registry.register(ExitCommand())
         self.registry.register(HelpCommand(self.registry))
         self.registry.register(ConversationsCommand(conversation_callback))
 
