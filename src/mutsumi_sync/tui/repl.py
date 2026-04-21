@@ -8,6 +8,7 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.styles import Style
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.filters import Lambda
 
 import threading
 import time
@@ -91,18 +92,18 @@ class REPL:
         def _(event):
             event.app.exit()
 
-        @kb.add("enter")
+        @kb.add("enter", filter=Lambda(lambda: True))
         def _(event):
             self._execute()
             self.buffer.text = ""
 
         status_text = FormattedTextControl(
-            text=self._get_status_text(),
+            text=self._get_status_text,
             style="class:status-bar"
         )
 
         output_control = FormattedTextControl(
-            text=self._get_output_text(),
+            text=self._get_output_text,
             style="class:output"
         )
 
