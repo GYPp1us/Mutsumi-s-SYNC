@@ -164,8 +164,8 @@ class REPL:
         self._refresh_output()
 
     def _refresh_output(self):
-        if self._app:
-            self._app._loop._invalidate()
+        if self._app and hasattr(self._app, 'invalidate'):
+            self._app.invalidate()
 
     def update_status(self, **kwargs):
         with self._status_lock:
