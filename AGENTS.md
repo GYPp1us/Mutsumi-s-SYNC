@@ -21,19 +21,13 @@ python -m src.mutsumi_sync.main
 
 # 运行测试
 python -m pytest tests/ -v
-
-# 类型检查
-# (待配置)
-
-# 代码风格
-# (待配置)
 ```
 
 ## Git 约定
 
 - 当前分支: `feature/v3-rewrite`
 - v2 存档: `archive/legacy` tag
-- 提交消息: 英文，约定式提交风格（`feat:`, `fix:`, `refactor:`, `test:`, `docs:`）
+- 提交消息: 中文，约定式提交风格（`feat:`, `fix:`, `refactor:`, `test:`, `docs:`）
 - **绝不提交**: `config.yaml`（已被 `.gitignore`）
 
 ## 架构铁律
@@ -88,5 +82,5 @@ def system_prompt() -> str:
 
 ## 参考
 
-- NapCat API: [napcat-api.md](https://github.com/NapCatQQ/NapCatQQ) （项目 `bottle/docs/` 中无此文件，见 v2 存档 `PROMPT/napcat-api.md`）
+- NapCat API: `bottle/docs/napcat-api.md`
 - Python asyncio Task: <https://docs.python.org/3/library/asyncio-task.html>

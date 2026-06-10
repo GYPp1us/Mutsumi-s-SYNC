@@ -20,7 +20,6 @@
 | 向量检索 | FAISS | — |
 | 配置 | Pydantic + YAML | — |
 | 凭证 | `.env` + `config.yaml` (gitignored) | — |
-| TUI | **无**（v3 先不做，外部观察者模式） | ~~Textual, prompt_toolkit~~ |
 
 ## 3. 架构快速索引
 
@@ -30,8 +29,6 @@
 |------|------|
 | `architecture-for-humans.md` | 完整架构设计书，先读这个 |
 | `architecture-for-ai.md` | 结构化架构（供 AI Agent 消费） |
-| `overplanning-review.md` | 过度规划评审 + 修正建议 |
-| `01~03` | v2 代码评估（历史参考） |
 
 ### 核心设计决策复述
 
