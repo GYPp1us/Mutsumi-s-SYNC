@@ -1,0 +1,85 @@
+import pytest
+from src.mutsumi_sync.config import Config, NapcatConfig, ModelConfig, ContextConfig, SessionConfig
+
+
+class TestConfig:
+    def test_defaults(self):
+        c = Config()
+        assert c.napcat.ws_url == "ws://localhost:3000"
+        assert c.model.model == "deepseek-chat"
+        assert c.context.window_size == 20
+        assert c.session.timeout == 300
+        assert c.dirty is False
+
+    def test_load_missing_file(self):
+        c = Config.load("nonexistent.yaml")
+        assert isinstance(c, Config)
+        assert c._config_path is not None
+
+    def test_set_simple(self):
+        c = Config()
+        result = c.set("session.timeout", 60)
+        assert result.startswith("[OK]")
+        assert c.session.timeout == 60
+        assert c.dirty is True
+
+    def test_set_dot_path(self):
+        c = Config()
+        c.set("model.temperature", 0.5)
+        assert c.model.temperature == 0.5
+
+    def test_set_nested_model(self):
+        c = Config()
+        c.set("napcat.ws_url", "ws://example.com:3001")
+        assert c.napcat.ws_url == "ws://example.com:3001"
+
+    def test_set_invalid_key(self):
+        c = Config()
+        result = c.set("invalid.key", 1)
+        assert result.startswith("[Error: unknown config key")
+
+    def test_set_type_coercion_int(self):
+        c = Config()
+        c.set("context.window_size", "30")
+        assert c.context.window_size == 30
+
+    def test_set_type_coercion_float(self):
+        c = Config()
+        c.set("model.temperature", "0.3")
+        assert c.model.temperature == 0.3
+
+    def test_get_value(self):
+        c = Config()
+        assert c.get("model.temperature") == 0.7
+        assert c.get("context.window_size") == 20
+
+    def test_get_nonexistent(self):
+        c = Config()
+        result = c.get("nonexistent")
+        assert isinstance(result, str) and "Error" in result
+
+    def test_reload_no_file(self):
+        c = Config()
+        result = c.reload()
+        assert "no config file" in result.lower()
+
+
+class TestModelDefaults:
+    def test_napcat_defaults(self):
+        n = NapcatConfig()
+        assert n.ws_url == "ws://localhost:3000"
+        assert n.http_url == "http://localhost:3000"
+
+    def test_model_defaults(self):
+        m = ModelConfig()
+        assert m.provider == "deepseek"
+        assert m.model == "deepseek-chat"
+
+    def test_context_defaults(self):
+        c = ContextConfig()
+        assert c.window_size == 20
+        assert c.max_tokens == 4096
+
+    def test_session_defaults(self):
+        s = SessionConfig()
+        assert s.timeout == 300

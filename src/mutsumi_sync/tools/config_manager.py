@@ -42,8 +42,9 @@ async def config_manager(args: dict, *, config: "Config") -> str:
         return result
 
     elif action == "list":
+        model_fields = type(config).model_fields
         sections = [
-            k for k, v in config.model_fields.items()
+            k for k in model_fields
             if not k.startswith("_") and k not in ("system_prompt", "dirty")
         ]
         return f"Available sections: {', '.join(sections)}"
