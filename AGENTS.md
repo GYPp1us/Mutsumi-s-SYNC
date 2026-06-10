@@ -3,7 +3,8 @@
 ## 项目概况
 
 Mutsumi's SYNC v3 — QQ 聊天机器人。从 v2 代码库评估后完全重写。
-当前分支 `feature/v3-rewrite` 是 orphan 分支，只有漂流瓶 (`bottle/`) 和项目文件。
+当前 Phase 1 已完成：异步调度系统 + NapCat I/O 层 + 配置 + 工具注册表 + 交互式测试器。
+Pipeline 内 LLM 调用逻辑为 Phase 1 stub（留待后续实现）。
 
 ## 必须先读
 
@@ -13,15 +14,32 @@ Mutsumi's SYNC v3 — QQ 聊天机器人。从 v2 代码库评估后完全重写
 2. `bottle/docs/architecture-for-humans.md` — 架构设计书
 3. `bottle/docs/architecture-for-ai.md` — 结构化架构（供 AI 精确理解）
 
-## 运行命令
+## 初次运行
 
 ```bash
-# 启动（Phase 1 完成后）
-python -m src.mutsumi_sync.main
+# 1. 安装依赖
+pip install -r requirements.txt
 
-# 运行测试
-python -m pytest tests/ -v
+# 2. 创建配置文件（config.yaml 被 gitignored）
+cp config.example.yaml config.yaml
+# 编辑 config.yaml 填入 NapCat 连接信息和 LLM API Key
+
+# 3. 启动
+$env:PYTHONPATH = "."; python -m src.mutsumi_sync.main
+
+# 或启动交互式测试器（不需 NapCat，可手动 /inject 消息）
+$env:PYTHONPATH = "."; python -m src.mutsumi_sync.tui.tester
 ```
+
+> 无需 API Key 时 pipeline 自动降级为本地 stub：`[LLM Stub @ timestamp] I received: ...`
+
+## 运行测试
+
+```bash
+$env:PYTHONPATH = "."; python -m pytest tests/ -v
+```
+
+测试需要 `PYTHONPATH` 设置为项目根目录（当前无 `pyproject.toml` 可编辑安装）。
 
 ## Git 约定
 
