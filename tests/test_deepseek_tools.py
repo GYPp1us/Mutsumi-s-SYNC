@@ -1,17 +1,21 @@
 import asyncio
 import os
-
-os.environ["OPENAI_API_KEY"] = "YOUR_DEEPSEEK_API_KEY"
-
 import sys
-sys.path.insert(0, "/home/ubuntu/gits/mutsumi-sync")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from src.mutsumi_sync.processor.pipeline import ModelPipeline
-from src.mutsumi_sync.processor.tools import config_manager, http_api_call
+from mutsumi_sync.processor.pipeline import ModelPipeline
+from mutsumi_sync.processor.tools import config_manager, http_api_call
+
+API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/")
 
 
 async def test_tool_calling():
     print("=== 测试 Tool 调用功能 ===\n")
+    
+    if not API_KEY:
+        print("请设置环境变量 DEEPSEEK_API_KEY")
+        return
     
     tools = [config_manager, http_api_call]
     
@@ -20,8 +24,8 @@ async def test_tool_calling():
         provider="deepseek",
         model="deepseek-chat",
         temperature=0.7,
-        api_key="YOUR_DEEPSEEK_API_KEY",
-        base_url="https://api.deepseek.com/",
+        api_key=API_KEY,
+        base_url=BASE_URL,
         tools=tools
     )
     

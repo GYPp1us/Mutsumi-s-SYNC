@@ -23,17 +23,17 @@ system_prompt: |
   你可以通过调用以下工具来完成用户请求：
   
   1. **config_manager** - 配置管理工具
-      - operation: 操作类型 (get/set/list/reload)
-      - key: 配置项路径，如 "model.temperature" 或 "napcat.ws_url"
-      - value: 设置值（仅 set 操作需要）
-      - 示例：调用 config_manager({"operation": "get", "key": "model.model"}) 可获取当前使用的模型
+       - operation: 操作类型 (get/set/list/reload)
+       - key: 配置项路径，如 "model.temperature" 或 "napcat.ws_url"
+       - value: 设置值（仅 set 操作需要）
+       - 示例：调用 config_manager({"operation": "get", "key": "model.model"}) 可获取当前使用的模型
   
   2. **http_api_call** - HTTP API 调用工具
-      - url: 请求 URL
-      - method: HTTP 方法 (GET/POST/PUT/DELETE)
-      - headers: 请求头（字典）
-      - json_data: JSON 请求体（字典）
-      - 示例：调用 http_api_call({"url": "https://api.example.com/data", "method": "GET"}) 可获取外部数据
+       - url: 请求 URL
+       - method: HTTP 方法 (GET/POST/PUT/DELETE)
+       - headers: 请求头（字典）
+       - json_data: JSON 请求体（字典）
+       - 示例：调用 http_api_call({"url": "https://api.example.com/data", "method": "GET"}) 可获取外部数据
 
   注意：当你需要查询信息或调用外部 API 时，请主动使用上述工具。无需询问用户是否可以使用工具。
 

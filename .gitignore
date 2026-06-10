@@ -208,3 +208,6 @@ __marimo__/
 
 # Worktrees
 .worktrees/
+
+# Sensitive config
+config.yaml
