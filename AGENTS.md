@@ -17,7 +17,10 @@ Pipeline 内 LLM 调用逻辑为 Phase 1 stub（留待后续实现）。
 ## 初次运行
 
 ```bash
-# 1. 安装依赖
+# 1. 创建虚拟环境并安装依赖
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1    # Windows
+# source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 
 # 2. 创建配置文件（config.yaml 被 gitignored）
