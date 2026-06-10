@@ -1,0 +1,126 @@
+import asyncio
+from src.mutsumi_sync.config import Config
+from src.mutsumi_sync.message.sender import Peer
+from src.mutsumi_sync.message.receiver import MessageEvent
+from src.mutsumi_sync.scheduler import PipelineScheduler
+from src.mutsumi_sync.tools.registry import ToolRegistry
+
+
+class FakeSender:
+    def __init__(self):
+        self.sent: list[str] = []
+        self.pokes: list[str] = []
+
+    async def send(self, peer: Peer, msg: str | list) -> dict:
+        preview = str(msg)[:100]
+        print(f"  [FAKE SEND] to {peer.peer_uid}: {preview}")
+        self.sent.append(preview)
+        return {"status": "ok"}
+
+    async def send_poke(self, peer: Peer) -> dict:
+        print(f"  [FAKE POKE] {peer.peer_uid}")
+        self.pokes.append(peer.peer_uid)
+        return {"status": "ok"}
+
+
+async def test_scheduler():
+    config = Config.load("config.example.yaml")
+    config.session.timeout = 0  # force cold start
+
+    registry = ToolRegistry()
+    sender = FakeSender()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+
+    event = MessageEvent(
+        post_type="message",
+        message_type="private",
+        user_id=123456,
+        message=[{"type": "text", "data": {"text": "hello test"}}],
+        raw_message="hello test",
+        message_id=1,
+        sender={"user_id": 123456, "nickname": "test"},
+    )
+
+    print("Dispatching message...")
+    await scheduler.dispatch(event)
+    await asyncio.sleep(0.3)
+
+    print(f"Active keys: {scheduler.active_keys()}")
+    print(f"Status: {scheduler.status()}")
+    print(f"Session pending: {scheduler._sessions.get('private:123456')}")
+    print(f"Window len: {len(scheduler._windows.get('private:123456', []))}")
+    print(f"Sent messages: {len(sender.sent)}")
+    print(f"Pokes: {len(sender.pokes)}")
+
+    assert "private:123456" in scheduler._windows
+    assert "private:123456" in scheduler._sessions
+    print("ALL ASSERTIONS PASSED")
+
+
+async def test_cancel():
+    config = Config.load("config.example.yaml")
+    registry = ToolRegistry()
+    sender = FakeSender()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+
+    key = "private:999"
+    scheduler._ensure_user_state(key)
+
+    task_was_cancelled = False
+
+    async def slow_task():
+        nonlocal task_was_cancelled
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            task_was_cancelled = True
+            raise
+
+    task = asyncio.create_task(slow_task())
+    scheduler._tasks[key] = task
+    await asyncio.sleep(0)
+
+    print("\nCancelling task for key=%s..." % key)
+    await scheduler.cancel_user(key)
+    await asyncio.sleep(0)
+
+    assert task_was_cancelled, "Task should have been cancelled"
+    assert key not in scheduler._tasks or scheduler._tasks[key].done(), \
+        "Task should be removed or done"
+    print("CANCEL TEST PASSED")
+
+
+async def test_group_key():
+    config = Config.load("config.example.yaml")
+    registry = ToolRegistry()
+    sender = FakeSender()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+
+    group_event = MessageEvent(
+        post_type="message",
+        message_type="group",
+        user_id=111,
+        group_id=888,
+        message=[{"type": "text", "data": {"text": "group hello"}}],
+        raw_message="group hello",
+        message_id=4,
+        sender={"user_id": 111, "nickname": "group_user"},
+    )
+
+    print("\nDispatching group message...")
+    await scheduler.dispatch(group_event)
+    await asyncio.sleep(0.3)
+
+    assert "group:888:111" in scheduler._windows, f"Expected group:888:111, got {list(scheduler._windows.keys())}"
+    print("GROUP KEY TEST PASSED")
+
+
+async def main():
+    await test_scheduler()
+    await test_cancel()
+    await test_group_key()
+    print("\nALL TESTS PASSED")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

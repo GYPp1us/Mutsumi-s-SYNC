@@ -1,0 +1,15 @@
+context:
+  max_tokens: 4096
+  window_size: 20
+model:
+  api_key: ''
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-chat
+  provider: deepseek
+  temperature: 0.5
+napcat:
+  access_token: ''
+  http_url: http://localhost:3000
+  ws_url: ws://localhost:3000
+session:
+  timeout: 300

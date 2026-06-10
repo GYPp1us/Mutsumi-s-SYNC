@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+import threading
+from typing import TextIO
+
+from ..config import Config
+from ..message.classifier import MessageType
+from ..message.receiver import MessageEvent
+from ..message.sender import MessageSender
+from ..scheduler import PipelineScheduler
+from ..tools.registry import Tool, ToolRegistry
+from ..tools.http_api import http_api_call, HTTP_API_SCHEMA
+from ..tools.config_manager import config_manager, CONFIG_MANAGER_SCHEMA
+
+logger = logging.getLogger("mutsumi.tester")
+
+_BOLD = "\033[1m"
+_DIM = "\033[2m"
+_RED = "\033[31m"
+_GREEN = "\033[32m"
+_YELLOW = "\033[33m"
+_CYAN = "\033[36m"
+_RESET = "\033[0m"
+
+
+class _QueueHandler(logging.Handler):
+    def __init__(self, queue: asyncio.Queue[logging.LogRecord]):
+        super().__init__()
+        self.queue = queue
+        self.setFormatter(logging.Formatter(
+            fmt="%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        ))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.queue.put_nowait(record)
+        except asyncio.QueueFull:
+            pass
+
+
+def _level_color(record: logging.LogRecord) -> str:
+    if record.levelno >= logging.ERROR:
+        return _RED
+    if record.levelno >= logging.WARNING:
+        return _YELLOW
+    if record.levelno >= logging.INFO:
+        return _RESET
+    return _DIM
+
+
+def _format_log(record: logging.LogRecord) -> str:
+    color = _level_color(record)
+    msg = _DIM + record.name + _RESET + " " + color + record.getMessage() + _RESET
+    return f"{color}[{record.asctime}]{_RESET} {msg}"
+
+
+def setup_test_logging(queue: asyncio.Queue[logging.LogRecord]) -> None:
+    root = logging.getLogger("mutsumi")
+    root.setLevel(logging.DEBUG)
+    root.handlers.clear()
+    root.addHandler(_QueueHandler(queue))
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+
+def build_registry(config: Config) -> ToolRegistry:
+    registry = ToolRegistry()
+
+    registry.register(Tool(
+        name="http_api_call",
+        description="发送 HTTP 请求到任意 URL",
+        parameters=HTTP_API_SCHEMA,
+        handler=http_api_call,
+    ))
+
+    async def _config_manager(args: dict) -> str:
+        return config_manager(args, config=config)
+
+    registry.register(Tool(
+        name="config_manager",
+        description="读取、修改、热重载配置",
+        parameters=CONFIG_MANAGER_SCHEMA,
+        handler=_config_manager,
+    ))
+
+    return registry
+
+
+def _fake_event(user_id: int, group_id: int | None, text: str) -> MessageEvent:
+    msg_type = "group" if group_id else "private"
+    return MessageEvent(
+        post_type="message",
+        message_type=msg_type,
+        user_id=user_id,
+        group_id=group_id,
+        message=[{"type": "text", "data": {"text": text}}],
+        raw_message=text,
+        message_id=0,
+        sender={"user_id": user_id, "nickname": "test"},
+        time=int(asyncio.get_event_loop().time()),
+        self_id=0,
+    )
+
+
+def _inject_help() -> str:
+    return (
+        f"{_CYAN}用法:{_RESET} /inject [private <user_id> | group <group_id> <user_id>] <message>\n"
+        f"  示例: {_DIM}/inject private 123456 你好世界{_RESET}\n"
+        f"         {_DIM}/inject group 789000 123456 群聊测试{_RESET}"
+    )
+
+
+def _cmd_help() -> str:
+    return f"""{_CYAN}命令:{_RESET}
+  {_BOLD}/inject{_RESET} private <user_id> <msg>      注入私聊消息
+  {_BOLD}/inject{_RESET} group <group_id> <user_id> <msg>  注入群消息
+  {_BOLD}/break{_RESET} <user_id>                    取消该用户的 pipeline
+  {_BOLD}/break{_RESET} private <user_id>            取消私聊 pipeline
+  {_BOLD}/break{_RESET} group <group_id> <user_id>   取消群聊 pipeline
+  {_BOLD}/list{_RESET}                               列出活跃 task
+  {_BOLD}/status{_RESET}                             显示 scheduler 状态
+  {_BOLD}/connect{_RESET}                            连接 NapCat WebSocket
+  {_BOLD}/quit{_RESET}                               退出"""
+
+
+async def run_tester(config_path: str = "config.yaml") -> None:
+    config = Config.load(config_path)
+    registry = build_registry(config)
+    sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+
+    log_queue: asyncio.Queue[logging.LogRecord] = asyncio.Queue(maxsize=500)
+    setup_test_logging(log_queue)
+    logger.info("测试器启动 - 配置已加载")
+
+    receiver = None
+
+    print(f"{_GREEN}{_BOLD}Mutsumi's SYNC - 交互式测试器{_RESET}")
+    print(f"{_DIM}输入 /help 查看命令{_RESET}")
+    print()
+
+    cmd_queue: asyncio.Queue[str] = asyncio.Queue()
+    running = True
+
+    def stdin_reader() -> None:
+        nonlocal running
+        while running:
+            try:
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if line:
+                    try:
+                        cmd_queue.put_nowait(line)
+                    except asyncio.QueueFull:
+                        pass
+            except (EOFError, ValueError):
+                break
+
+    stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
+    stdin_thread.start()
+    print(f"{_DIM}> {_RESET}", end="", flush=True)
+
+    async def print_logs() -> None:
+        while True:
+            record = await log_queue.get()
+            print(f"\r{_format_log(record)}")
+            print(f"{_DIM}> {_RESET}", end="", flush=True)
+
+    log_task = asyncio.create_task(print_logs())
+
+    try:
+        while running:
+            try:
+                line = await asyncio.wait_for(cmd_queue.get(), timeout=0.1)
+            except asyncio.TimeoutError:
+                continue
+
+            parts = line.split(maxsplit=3)
+            cmd = parts[0].lower() if parts else ""
+
+            if cmd == "/quit":
+                running = False
+
+            elif cmd == "/help":
+                print(f"\r{_cmd_help()}")
+
+            elif cmd == "/list":
+                keys = scheduler.active_keys()
+                print(f"\r{_CYAN}活跃 tasks ({len(keys)}):{_RESET}")
+                for k in keys:
+                    print(f"  {k}")
+
+            elif cmd == "/status":
+                st = scheduler.status()
+                print(f"\r{_CYAN}Scheduler 状态:{_RESET}")
+                for k, v in st.items():
+                    print(f"  {k}: {v}")
+
+            elif cmd == "/break":
+                if len(parts) < 2:
+                    print(f"\r{_RED}用法:{_RESET} /break private <user_id>  或  /break group <group_id> <user_id>")
+                elif parts[1] == "private" and len(parts) >= 3:
+                    key = f"private:{parts[2]}"
+                    print(f"\r{_YELLOW}取消: {key}{_RESET}")
+                    await scheduler.cancel_user(key)
+                elif parts[1] == "group" and len(parts) >= 4:
+                    if len(parts) < 4:
+                        print(f"\r{_RED}用法:{_RESET} /break group <group_id> <user_id>")
+                    else:
+                        key = f"group:{parts[2]}:{parts[3]}"
+                        print(f"\r{_YELLOW}取消: {key}{_RESET}")
+                        await scheduler.cancel_user(key)
+                else:
+                    key = f"private:{parts[1]}"
+                    print(f"\r{_YELLOW}取消: {key}{_RESET}")
+                    await scheduler.cancel_user(key)
+
+            elif cmd == "/inject":
+                if len(parts) < 2:
+                    print(f"\r{_inject_help()}")
+                elif parts[1] == "private" and len(parts) >= 4:
+                    uid = int(parts[2])
+                    msg = parts[3] if len(parts) > 3 else " ".join(parts[3:]) if len(parts) > 3 else ""
+                    event = _fake_event(uid, None, parts[3])
+                    print(f"\r{_CYAN}注入私聊: user={uid} msg={parts[3][:30]}{_RESET}")
+                    await scheduler.dispatch(event)
+                elif parts[1] == "group" and len(parts) >= 5:
+                    gid = int(parts[2])
+                    uid = int(parts[3])
+                    msg = parts[4] if len(parts) > 4 else " "
+                    event = _fake_event(uid, gid, parts[4])
+                    print(f"\r{_CYAN}注入群消息: group={gid} user={uid} msg={parts[4][:30]}{_RESET}")
+                    await scheduler.dispatch(event)
+                else:
+                    print(f"\r{_inject_help()}")
+
+            elif cmd == "/connect":
+                if receiver is not None:
+                    print(f"\r{_YELLOW}已连接{_RESET}")
+                else:
+                    from ..message.receiver import MessageReceiver
+                    receiver = MessageReceiver(config.napcat.ws_url, config.napcat.access_token)
+                    receiver.on_message(scheduler.dispatch)
+                    asyncio.create_task(receiver.run())
+                    print(f"\r{_GREEN}正在连接 NapCat: {config.napcat.ws_url}{_RESET}")
+
+            else:
+                print(f"\r{_RED}未知命令: {cmd}{_RESET}  输入 /help 查看帮助")
+
+            print(f"{_DIM}> {_RESET}", end="", flush=True)
+
+    finally:
+        running = False
+        log_task.cancel()
+        try:
+            await log_task
+        except asyncio.CancelledError:
+            pass
+        if receiver:
+            await receiver.close()
+        logger.info("测试器退出")
+
+
+def main() -> None:
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    try:
+        asyncio.run(run_tester(config_path))
+    except KeyboardInterrupt:
+        print(f"\n{_YELLOW}中断{_RESET}")
+
+
+if __name__ == "__main__":
+    main()
