@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from datetime import date
 from typing import TYPE_CHECKING
 
 import httpx
 
 from .message.classifier import MessageType
+from .memory.store import StoredMessage
 
 if TYPE_CHECKING:
-    from .message.sender import Peer
     from .scheduler import PipelineDeps
 
 logger = logging.getLogger("mutsumi.pipeline")
@@ -26,6 +28,7 @@ async def pipeline(
     """端到端消息处理。目前为 Phase 1 stub：分类→去重→冷启动→真实 LLM 调用。"""
     if msg_type == MessageType.MEDIA:
         await deps.sender.send(deps.peer, "\u6682\u4e0d\u652f\u6301\u6b64\u6d88\u606f\u7c7b\u578b")
+        await _save_msg(deps, message, MessageType.MEDIA.value, None)
         return
 
     if msg_type == MessageType.IMAGE:
@@ -33,6 +36,8 @@ async def pipeline(
         deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
         deps.window.add(user_id=str(deps.peer.peer_uid), message="[\u56fe\u7247]", is_bot=True)
         deps.session.touch()
+        await _save_msg(deps, message, MessageType.IMAGE.value,
+                        f"image_file={image_file}, image_url={image_url}" if image_file or image_url else None)
         return
 
     try:
@@ -54,6 +59,8 @@ async def pipeline(
 
         deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
         deps.window.add(user_id=str(deps.peer.peer_uid), message=response, is_bot=True)
+
+        await _save_msg(deps, message, msg_type.value, response)
 
     except asyncio.CancelledError:
         logger.info("[PIPE] cancelled for %s", deps.peer.peer_uid)
@@ -125,7 +132,20 @@ async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
 
 
 def _stub_response(user_message: str) -> str:
-    import asyncio
     from datetime import datetime
     now = datetime.now().isoformat(timespec="seconds")
     return f"[LLM Stub @ {now}] I received: {user_message[:200]}"
+
+
+async def _save_msg(deps: PipelineDeps, message: str, category: str, response: str | None) -> None:
+    try:
+        today = date.today().isoformat()
+        content = json.dumps({"user": message, "bot": response}) if response else message
+        await deps.store.save(StoredMessage(
+            date=today,
+            group_key=deps.group_key,
+            category=category,
+            content=content,
+        ))
+    except Exception:
+        logger.exception("Failed to save message to store")

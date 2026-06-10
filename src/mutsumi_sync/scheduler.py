@@ -10,6 +10,7 @@ from .memory.session import SessionState
 
 if TYPE_CHECKING:
     from .config import Config
+    from .memory.store import MessageStore
     from .message.receiver import MessageEvent
     from .message.sender import MessageSender, Peer
     from .tools.registry import ToolRegistry
@@ -22,9 +23,11 @@ class PipelineDeps:
     config: Config
     registry: ToolRegistry
     sender: MessageSender
+    store: MessageStore
     window: MessageWindow
     session: SessionState
     peer: Peer
+    group_key: str
 
 
 class PipelineScheduler:
@@ -33,10 +36,12 @@ class PipelineScheduler:
         config: Config,
         registry: ToolRegistry,
         sender: MessageSender,
+        store: MessageStore,
     ):
         self.config = config
         self.registry = registry
         self.sender = sender
+        self.store = store
 
         self._windows: dict[str, MessageWindow] = {}
         self._sessions: dict[str, SessionState] = {}
@@ -74,9 +79,11 @@ class PipelineScheduler:
             config=self.config,
             registry=self.registry,
             sender=self.sender,
+            store=self.store,
             window=window,
             session=session,
             peer=peer,
+            group_key=key,
         )
 
         from .pipeline import pipeline

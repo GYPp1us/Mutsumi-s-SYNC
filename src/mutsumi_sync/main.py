@@ -5,6 +5,7 @@ import logging
 import sys
 
 from .config import Config
+from .memory.store import MessageStore
 from .message.receiver import MessageReceiver
 from .message.sender import MessageSender
 from .scheduler import PipelineScheduler
@@ -59,9 +60,12 @@ async def run(config_path: str = "config.yaml") -> None:
     config = Config.load(config_path)
     logger.info("Config loaded from %s", config_path)
 
+    store = MessageStore()
+    await store.initialize()
+
     registry = build_registry(config)
     sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
-    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
     receiver = MessageReceiver(config.napcat.ws_url, config.napcat.access_token)
     receiver.on_message(scheduler.dispatch)

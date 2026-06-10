@@ -1,5 +1,8 @@
 import asyncio
+import tempfile
+import os
 from src.mutsumi_sync.config import Config
+from src.mutsumi_sync.memory.store import MessageStore
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.receiver import MessageEvent
 from src.mutsumi_sync.scheduler import PipelineScheduler
@@ -23,13 +26,21 @@ class FakeSender:
         return {"status": "ok"}
 
 
+def make_store():
+    fd, path = tempfile.mkstemp(suffix=".db", prefix="mutsumi_test_")
+    os.close(fd)
+    return MessageStore(db_path=path)
+
+
 async def test_scheduler():
     config = Config.load("config.example.yaml")
-    config.session.timeout = 0  # force cold start
+    config.session.timeout = 0
 
     registry = ToolRegistry()
     sender = FakeSender()
-    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+    store = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
     event = MessageEvent(
         post_type="message",
@@ -45,23 +56,28 @@ async def test_scheduler():
     await scheduler.dispatch(event)
     await asyncio.sleep(0.3)
 
+    count = await store.count()
+    print(f"Store count: {count}")
+
     print(f"Active keys: {scheduler.active_keys()}")
     print(f"Status: {scheduler.status()}")
-    print(f"Session pending: {scheduler._sessions.get('private:123456')}")
-    print(f"Window len: {len(scheduler._windows.get('private:123456', []))}")
     print(f"Sent messages: {len(sender.sent)}")
     print(f"Pokes: {len(sender.pokes)}")
 
     assert "private:123456" in scheduler._windows
     assert "private:123456" in scheduler._sessions
+    assert count >= 1, f"Expected at least 1 message in store, got {count}"
     print("ALL ASSERTIONS PASSED")
+    await store.close()
 
 
 async def test_cancel():
     config = Config.load("config.example.yaml")
     registry = ToolRegistry()
     sender = FakeSender()
-    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+    store = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
     key = "private:999"
     scheduler._ensure_user_state(key)
@@ -88,13 +104,16 @@ async def test_cancel():
     assert key not in scheduler._tasks or scheduler._tasks[key].done(), \
         "Task should be removed or done"
     print("CANCEL TEST PASSED")
+    await store.close()
 
 
 async def test_group_key():
     config = Config.load("config.example.yaml")
     registry = ToolRegistry()
     sender = FakeSender()
-    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+    store = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
     group_event = MessageEvent(
         post_type="message",
@@ -111,8 +130,13 @@ async def test_group_key():
     await scheduler.dispatch(group_event)
     await asyncio.sleep(0.3)
 
+    msgs = await store.get_context_for_group("group:888:111")
+    print(f"Group messages: {len(msgs)}")
+    assert len(msgs) >= 1
+
     assert "group:888:111" in scheduler._windows, f"Expected group:888:111, got {list(scheduler._windows.keys())}"
     print("GROUP KEY TEST PASSED")
+    await store.close()
 
 
 async def main():

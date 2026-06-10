@@ -7,6 +7,7 @@ import threading
 from typing import TextIO
 
 from ..config import Config
+from ..memory.store import MessageStore
 from ..message.classifier import MessageType
 from ..message.receiver import MessageEvent
 from ..message.sender import MessageSender
@@ -133,7 +134,9 @@ async def run_tester(config_path: str = "config.yaml") -> None:
     config = Config.load(config_path)
     registry = build_registry(config)
     sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
-    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender)
+    store = MessageStore()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
     log_queue: asyncio.Queue[logging.LogRecord] = asyncio.Queue(maxsize=500)
     setup_test_logging(log_queue)
