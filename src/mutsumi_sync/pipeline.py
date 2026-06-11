@@ -120,7 +120,7 @@ async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
         "Content-Type": "application/json",
     }
 
-    logger.info("[LLM] calling %s model=%s tools=%d url=%s", config.model, len(tools), url if on_token else "")
+    logger.info("[LLM] calling url=%s model=%s tools=%d", url, config.model, len(tools))
 
     if on_token:
         payload["stream"] = True
