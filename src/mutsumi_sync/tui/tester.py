@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 import threading
+from typing import Callable
 
 from ..config import Config
 from ..memory.store import MessageStore
@@ -132,22 +133,12 @@ def _cmd_help() -> str:
 
 class _FakeSender:
     async def send(self, peer, message) -> dict:
-        preview = _preview_text(message)[:80]
-        logger.info("[FAKE SEND] %s: %s", peer.peer_uid, preview)
+        logger.info("[FAKE SEND] %s: %s", peer.peer_uid, message[:200] if isinstance(message, str) else message)
         return {"status": "ok"}
 
     async def send_poke(self, peer) -> dict:
         logger.info("[FAKE POKE] %s", peer.peer_uid)
         return {"status": "ok"}
-
-
-def _preview_text(message: str | list) -> str:
-    if isinstance(message, str):
-        return message
-    for seg in message if isinstance(message, list) else []:
-        if isinstance(seg, dict) and seg.get("type") == "text":
-            return seg.get("data", {}).get("text", "")
-    return "[non-text]"
 
 
 async def run_tester(config_path: str = "config.yaml") -> None:
@@ -157,6 +148,16 @@ async def run_tester(config_path: str = "config.yaml") -> None:
     await store.initialize()
     sender = _FakeSender()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+
+    stream_buffer: list[str] = []
+
+    def on_llm_token(text: str) -> None:
+        stream_buffer.append(text)
+        accumulated = "".join(stream_buffer)
+        sys.stdout.write(f"\r{_DIM}{accumulated}{_RESET}")
+        sys.stdout.flush()
+
+    scheduler.on_token = on_llm_token
 
     log_queue: asyncio.Queue[logging.LogRecord] = asyncio.Queue(maxsize=500)
     setup_test_logging(log_queue)
@@ -254,6 +255,7 @@ async def run_tester(config_path: str = "config.yaml") -> None:
                     await scheduler.cancel_user(key)
 
             elif cmd == "/inject":
+                stream_buffer.clear()
                 if len(parts) < 2:
                     print(f"\r{_inject_help()}")
                 elif parts[1] == "private" and len(parts) >= 4:

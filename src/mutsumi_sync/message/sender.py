@@ -83,6 +83,5 @@ class MessageSender:
 def _preview(segments: Iterable[dict]) -> str:
     for seg in segments:
         if seg.get("type") == "text":
-            text = seg.get("data", {}).get("text", "")
-            return text[:50]
+            return seg.get("data", {}).get("text", "")
     return "[non-text]"

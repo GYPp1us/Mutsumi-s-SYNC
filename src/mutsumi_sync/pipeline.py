@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -49,7 +50,10 @@ async def pipeline(
 
         deps.session.touch()
 
+        start_time = time.monotonic()
         response = await _call_llm(deps, message)
+        elapsed = time.monotonic() - start_time
+        _log_llm_result(deps, response, elapsed)
 
         ctx = deps.window.get_context()
         if ctx:
@@ -84,8 +88,9 @@ _MATH_PROMPT = """请详细、逐步地解答以下复杂数学问题。给出�
 
 
 async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
-    """真实 LLM 调用 — Phase 1 占位，使用复杂数学提示确保足够响应时间测试取消。"""
+    """真实 LLM 调用 — 支持流式 (on_token) 和非流式。"""
     config = deps.config.model
+    on_token = deps.on_token
 
     if not config.api_key:
         return _stub_response(user_message)
@@ -110,25 +115,58 @@ async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
         payload["tool_choice"] = "auto"
 
     url = f"{config.base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json",
+    }
 
-    logger.info("[LLM] calling %s model=%s tools=%d", url, config.model, len(tools))
+    logger.info("[LLM] calling %s model=%s tools=%d url=%s", config.model, len(tools), url if on_token else "")
 
+    if on_token:
+        payload["stream"] = True
+        return await _stream_llm(url, headers, payload, on_token)
+    else:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code != 200:
+                return f"[Error: LLM API returned {resp.status_code}: {resp.text[:500]}]"
+            data = resp.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return content or "[Error: empty LLM response]"
+
+
+async def _stream_llm(url: str, headers: dict, payload: dict, on_token) -> str:
+    """流式 LLM 调用 — SSE 逐 token 回调。"""
+    full_response = ""
     async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {config.api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        if resp.status_code != 200:
-            return f"[Error: LLM API returned {resp.status_code}: {resp.text[:500]}]"
+        async with client.stream("POST", url, headers=headers, json=payload) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                return f"[Error: LLM API returned {resp.status_code}: {body[:500]}]"
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                chunk = line[6:]
+                if chunk == "[DONE]":
+                    break
+                try:
+                    data = json.loads(chunk)
+                    delta = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        on_token(delta)
+                        full_response += delta
+                except json.JSONDecodeError:
+                    pass
+    return full_response or "[Error: empty LLM response]"
 
-        data = resp.json()
-        choice = data.get("choices", [{}])[0]
-        content = choice.get("message", {}).get("content", "")
-        return content or "[Error: empty LLM response]"
+
+def _log_llm_result(deps: PipelineDeps, text: str, elapsed: float) -> None:
+    provider = deps.config.model.provider
+    model = deps.config.model.model
+    logger.info("=========[%s][%s]=========", provider, model)
+    for line in text.split("\n"):
+        logger.info(line)
+    logger.info("=========[%.1fs][%d]=========", elapsed, len(text))
 
 
 def _stub_response(user_message: str) -> str:
