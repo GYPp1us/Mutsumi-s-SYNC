@@ -164,6 +164,12 @@ async def run_tester(config_path: str = "config.yaml") -> None:
     logger.info("测试器启动 - 配置已加载")
     logger.info("使用 FakeSender，输入 /connect 连接真实 NapCat")
 
+    m = config.model
+    if m.api_key:
+        logger.info("API 状态: %s @ %s model=%s temp=%s", m.provider, m.base_url, m.model, m.temperature)
+    else:
+        logger.info("API 状态: 未配置 — pipeline 将使用本地 stub")
+
     receiver = None
 
     print(f"{_GREEN}{_BOLD}Mutsumi's SYNC - 交互式测试器{_RESET}")
@@ -186,8 +192,8 @@ async def run_tester(config_path: str = "config.yaml") -> None:
                         cmd_queue.put_nowait(line)
                     except asyncio.QueueFull:
                         pass
-        except (EOFError, ValueError, OSError):
-            break
+            except (EOFError, ValueError, OSError):
+                break
 
     stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
     stdin_thread.start()
