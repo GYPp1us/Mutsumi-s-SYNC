@@ -95,7 +95,7 @@ class MessageReceiver:
                                      event.user_id, event.message_type,
                                      event.raw_message[:50])
                         if self._handler:
-                            asyncio.create_task(self._handler(event))
+                            asyncio.create_task(_safe_handler(self._handler, event))
                     elif post_type == "meta_event":
                         logger.debug("Meta event: %s", data.get("meta_event_type"))
                     elif post_type == "notice":
@@ -119,3 +119,12 @@ class MessageReceiver:
         if self._ws:
             await self._ws.close()
             logger.info("Connection closed")
+
+
+async def _safe_handler(handler, event: MessageEvent) -> None:
+    try:
+        await handler(event)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Unhandled error in message handler")

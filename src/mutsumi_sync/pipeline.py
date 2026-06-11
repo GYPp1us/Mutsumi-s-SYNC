@@ -74,7 +74,7 @@ async def pipeline(
 
 _MATH_PROMPT = """请详细、逐步地解答以下复杂数学问题。给出完整推导过程、每一步的计算和最终答案。
 
-问题: {message}
+问题: %s
 
 要求：
 1. 展示完整推导步骤
@@ -94,7 +94,7 @@ async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
         return "[Error: model.base_url not configured]"
 
     system_prompt = deps.config.system_prompt or "\u4f60\u662f\u4e00\u4e2a\u6570\u5b66\u52a9\u624b\uff0c\u8bf7\u8be6\u7ec6\u9010\u6b65\u89e3\u7b54\u95ee\u9898\u3002"
-    prompt_msg = _MATH_PROMPT.format(message=user_message)
+    prompt_msg = _MATH_PROMPT % user_message
 
     payload = {
         "model": config.model,

@@ -4,7 +4,6 @@ import asyncio
 import logging
 import sys
 import threading
-from typing import TextIO
 
 from ..config import Config
 from ..memory.store import MessageStore
@@ -38,6 +37,7 @@ class _QueueHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            self.format(record)
             self.queue.put_nowait(record)
         except asyncio.QueueFull:
             pass
@@ -130,17 +130,38 @@ def _cmd_help() -> str:
   {_BOLD}/quit{_RESET}                               退出"""
 
 
+class _FakeSender:
+    async def send(self, peer, message) -> dict:
+        preview = _preview_text(message)[:80]
+        logger.info("[FAKE SEND] %s: %s", peer.peer_uid, preview)
+        return {"status": "ok"}
+
+    async def send_poke(self, peer) -> dict:
+        logger.info("[FAKE POKE] %s", peer.peer_uid)
+        return {"status": "ok"}
+
+
+def _preview_text(message: str | list) -> str:
+    if isinstance(message, str):
+        return message
+    for seg in message if isinstance(message, list) else []:
+        if isinstance(seg, dict) and seg.get("type") == "text":
+            return seg.get("data", {}).get("text", "")
+    return "[non-text]"
+
+
 async def run_tester(config_path: str = "config.yaml") -> None:
     config = Config.load(config_path)
     registry = build_registry(config)
-    sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
     store = MessageStore()
     await store.initialize()
+    sender = _FakeSender()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
     log_queue: asyncio.Queue[logging.LogRecord] = asyncio.Queue(maxsize=500)
     setup_test_logging(log_queue)
     logger.info("测试器启动 - 配置已加载")
+    logger.info("使用 FakeSender，输入 /connect 连接真实 NapCat")
 
     receiver = None
 
@@ -164,8 +185,8 @@ async def run_tester(config_path: str = "config.yaml") -> None:
                         cmd_queue.put_nowait(line)
                     except asyncio.QueueFull:
                         pass
-            except (EOFError, ValueError):
-                break
+        except (EOFError, ValueError, OSError):
+            break
 
     stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
     stdin_thread.start()
@@ -173,9 +194,15 @@ async def run_tester(config_path: str = "config.yaml") -> None:
 
     async def print_logs() -> None:
         while True:
-            record = await log_queue.get()
-            print(f"\r{_format_log(record)}")
-            print(f"{_DIM}> {_RESET}", end="", flush=True)
+            try:
+                record = await log_queue.get()
+                print(f"\r{_format_log(record)}")
+                print(f"{_DIM}> {_RESET}", end="", flush=True)
+            except Exception:
+                try:
+                    print(f"\r{_RED}print_logs crashed{_RESET}", file=sys.__stdout__)
+                finally:
+                    pass
 
     log_task = asyncio.create_task(print_logs())
 
@@ -249,10 +276,13 @@ async def run_tester(config_path: str = "config.yaml") -> None:
                 if receiver is not None:
                     print(f"\r{_YELLOW}已连接{_RESET}")
                 else:
+                    real_sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
+                    scheduler.sender = real_sender
                     from ..message.receiver import MessageReceiver
                     receiver = MessageReceiver(config.napcat.ws_url, config.napcat.access_token)
                     receiver.on_message(scheduler.dispatch)
                     asyncio.create_task(receiver.run())
+                    logger.info("切换到真实 NapCat 连接: %s", config.napcat.ws_url)
                     print(f"\r{_GREEN}正在连接 NapCat: {config.napcat.ws_url}{_RESET}")
 
             else:
