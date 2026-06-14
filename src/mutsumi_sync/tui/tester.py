@@ -4,7 +4,6 @@ import asyncio
 import logging
 import sys
 import threading
-from typing import Callable
 
 from ..config import Config
 from ..memory.store import MessageStore
@@ -149,16 +148,6 @@ async def run_tester(config_path: str = "config.yaml") -> None:
     sender = _FakeSender()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
-    stream_buffer: list[str] = []
-
-    def on_llm_token(text: str) -> None:
-        stream_buffer.append(text)
-        accumulated = "".join(stream_buffer)
-        sys.stdout.write(f"\r{_DIM}{accumulated}{_RESET}")
-        sys.stdout.flush()
-
-    scheduler.on_token = on_llm_token
-
     log_queue: asyncio.Queue[logging.LogRecord] = asyncio.Queue(maxsize=500)
     setup_test_logging(log_queue)
     logger.info("测试器启动 - 配置已加载")
@@ -261,7 +250,6 @@ async def run_tester(config_path: str = "config.yaml") -> None:
                     await scheduler.cancel_user(key)
 
             elif cmd == "/inject":
-                stream_buffer.clear()
                 if len(parts) < 2:
                     print(f"\r{_inject_help()}")
                 elif parts[1] == "private" and len(parts) >= 4:

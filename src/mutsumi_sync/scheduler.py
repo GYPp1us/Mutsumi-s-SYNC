@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from typing import Callable, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .memory.window import MessageWindow
 from .memory.session import SessionState
@@ -28,7 +28,6 @@ class PipelineDeps:
     session: SessionState
     peer: Peer
     group_key: str
-    on_token: Callable[[str], None] | None = None
 
 
 class PipelineScheduler:
@@ -47,7 +46,6 @@ class PipelineScheduler:
         self._windows: dict[str, MessageWindow] = {}
         self._sessions: dict[str, SessionState] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        self.on_token: Callable[[str], None] | None = None
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
@@ -86,7 +84,6 @@ class PipelineScheduler:
             session=session,
             peer=peer,
             group_key=key,
-            on_token=self.on_token,
         )
 
         from .pipeline import pipeline
