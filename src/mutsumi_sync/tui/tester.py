@@ -132,12 +132,46 @@ def _cmd_help() -> str:
 
 class _FakeSender:
     async def send(self, peer, message) -> dict:
-        logger.info("[FAKE SEND] %s: %s", peer.peer_uid, message[:200] if isinstance(message, str) else message)
+        segments = _to_segments(message)
+        label = "private" if peer.chat_type == 1 else "group"
+        lines = [f"=========[SEND][{label}][{peer.peer_uid}]========="]
+        for seg in segments:
+            lines.append(f"  {_render_segment(seg)}")
+        lines.append(f"=========[{len(segments)} segment(s)]=========")
+        text = "\n".join(lines)
+        logger.info(f"{_DIM}{text}{_RESET}")
         return {"status": "ok"}
 
     async def send_poke(self, peer) -> dict:
-        logger.info("[FAKE POKE] %s", peer.peer_uid)
+        label = "private" if peer.chat_type == 1 else "group"
+        logger.info(f"{_DIM}[POKE] {label}:{peer.peer_uid}{_RESET}")
         return {"status": "ok"}
+
+
+def _render_segment(seg: dict) -> str:
+    seg_type = seg.get("type", "unknown")
+    data = seg.get("data", {})
+    if seg_type == "text":
+        return f"[text] {data.get('text', '')}"
+    if seg_type == "image":
+        return f"[image] file={data.get('file','')}"
+    if seg_type == "face":
+        return f"[face] id={data.get('id','')}"
+    if seg_type == "at":
+        return f"[at] @{data.get('qq','')}"
+    if seg_type == "reply":
+        return f"[reply] id={data.get('id','')}"
+    if seg_type in ("record", "video"):
+        return f"[{seg_type}] file={data.get('file','')}"
+    if seg_type == "forward":
+        return f"[forward] id={data.get('id','')}"
+    return f"[{seg_type}] {data}" if data else f"[{seg_type}]"
+
+
+def _to_segments(message: str | list) -> list[dict]:
+    if isinstance(message, str):
+        return [{"type": "text", "data": {"text": message}}]
+    return message
 
 
 async def run_tester(config_path: str = "config.yaml") -> None:

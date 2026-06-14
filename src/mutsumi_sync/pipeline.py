@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("mutsumi.pipeline")
 
+_DIM = "\033[2m"
+_RESET = "\033[0m"
+
 
 @dataclass
 class LLMResult:
@@ -159,14 +162,15 @@ def _log_llm_result(deps: PipelineDeps, result: LLMResult, elapsed: float) -> No
     lines = [f"=========[{provider}][{model}]========="]
 
     if result.reasoning_content:
-        lines.append(f"[reasoning]")
+        lines.append("[reasoning]")
         lines.append(result.reasoning_content)
-        lines.append(f"[/reasoning]")
+        lines.append("[/reasoning]")
 
     lines.append(result.content)
     lines.append(f"=========[↑:{result.input_tokens}][↓:{result.output_tokens}]=========")
 
-    logger.info("\n".join(lines))
+    text = "\n".join(lines)
+    logger.info(f"{_DIM}{text}{_RESET}")
 
 
 def _stub_response(user_message: str) -> LLMResult:
