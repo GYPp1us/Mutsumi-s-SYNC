@@ -159,7 +159,7 @@ def _log_llm_result(deps: PipelineDeps, result: LLMResult, elapsed: float) -> No
     provider = deps.config.model.provider
     model = deps.config.model.model
 
-    lines = [f"=========[{provider}][{model}]========="]
+    lines = ["", f"=========[{provider}][{model}]========="]
 
     if result.reasoning_content:
         lines.append(f"{_DIM}[reasoning]{_RESET}")

@@ -134,7 +134,7 @@ class _FakeSender:
     async def send(self, peer, message) -> dict:
         segments = _to_segments(message)
         label = "private" if peer.chat_type == 1 else "group"
-        lines = [f"=========[SEND][{label}][{peer.peer_uid}]========="]
+        lines = ["", f"=========[SEND][{label}][{peer.peer_uid}]========="]
         for seg in segments:
             lines.append(f"  {_DIM}{_render_segment(seg)}{_RESET}")
         lines.append(f"=========[{len(segments)} segment(s)]=========")
