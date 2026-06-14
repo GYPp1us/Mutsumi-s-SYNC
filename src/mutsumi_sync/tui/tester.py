@@ -136,15 +136,14 @@ class _FakeSender:
         label = "private" if peer.chat_type == 1 else "group"
         lines = [f"=========[SEND][{label}][{peer.peer_uid}]========="]
         for seg in segments:
-            lines.append(f"  {_render_segment(seg)}")
+            lines.append(f"  {_DIM}{_render_segment(seg)}{_RESET}")
         lines.append(f"=========[{len(segments)} segment(s)]=========")
-        text = "\n".join(lines)
-        logger.info(f"{_DIM}{text}{_RESET}")
+        logger.info("\n".join(lines))
         return {"status": "ok"}
 
     async def send_poke(self, peer) -> dict:
         label = "private" if peer.chat_type == 1 else "group"
-        logger.info(f"{_DIM}[POKE] {label}:{peer.peer_uid}{_RESET}")
+        logger.info(f"[POKE] {label}:{peer.peer_uid}")
         return {"status": "ok"}
 
 

@@ -162,15 +162,14 @@ def _log_llm_result(deps: PipelineDeps, result: LLMResult, elapsed: float) -> No
     lines = [f"=========[{provider}][{model}]========="]
 
     if result.reasoning_content:
-        lines.append("[reasoning]")
-        lines.append(result.reasoning_content)
-        lines.append("[/reasoning]")
+        lines.append(f"{_DIM}[reasoning]{_RESET}")
+        lines.append(f"{_DIM}{result.reasoning_content}{_RESET}")
+        lines.append(f"{_DIM}[/reasoning]{_RESET}")
 
-    lines.append(result.content)
+    lines.append(f"{_DIM}{result.content}{_RESET}")
     lines.append(f"=========[↑:{result.input_tokens}][↓:{result.output_tokens}]=========")
 
-    text = "\n".join(lines)
-    logger.info(f"{_DIM}{text}{_RESET}")
+    logger.info("\n".join(lines))
 
 
 def _stub_response(user_message: str) -> LLMResult:
