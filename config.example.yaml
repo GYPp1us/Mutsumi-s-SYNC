@@ -7,6 +7,7 @@ model:
   model: deepseek-chat
   provider: deepseek
   temperature: 0.5
+  reasoning_effort: max
 napcat:
   access_token: ''
   http_url: http://localhost:3000

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,15 @@ if TYPE_CHECKING:
     from .scheduler import PipelineDeps
 
 logger = logging.getLogger("mutsumi.pipeline")
+
+
+@dataclass
+class LLMResult:
+    content: str
+    reasoning_content: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
 
 
 async def pipeline(
@@ -51,20 +61,20 @@ async def pipeline(
         deps.session.touch()
 
         start_time = time.monotonic()
-        response = await _call_llm(deps, message)
+        result = await _call_llm(deps, message)
         elapsed = time.monotonic() - start_time
-        _log_llm_result(deps, response, elapsed)
+        _log_llm_result(deps, result, elapsed)
 
         ctx = deps.window.get_context()
         if ctx:
-            await deps.sender.send(deps.peer, f"[LLM] {response}")
+            await deps.sender.send(deps.peer, f"[LLM] {result.content}")
         else:
-            await deps.sender.send(deps.peer, response)
+            await deps.sender.send(deps.peer, result.content)
 
         deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
-        deps.window.add(user_id=str(deps.peer.peer_uid), message=response, is_bot=True)
+        deps.window.add(user_id=str(deps.peer.peer_uid), message=result.content, is_bot=True)
 
-        await _save_msg(deps, message, msg_type.value, response)
+        await _save_msg(deps, message, msg_type.value, result.content)
 
     except asyncio.CancelledError:
         logger.info("[PIPE] cancelled for %s", deps.peer.peer_uid)
@@ -87,15 +97,15 @@ _MATH_PROMPT = """请详细、逐步地解答以下复杂数学问题。给出�
 4. 验证答案的正确性"""
 
 
-async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
-    """真实 LLM 调用。"""
+async def _call_llm(deps: PipelineDeps, user_message: str) -> LLMResult:
+    """真实 LLM 调用 — 思考模式 + tool calls。"""
     config = deps.config.model
 
     if not config.api_key:
         return _stub_response(user_message)
 
     if not config.base_url:
-        return "[Error: model.base_url not configured]"
+        return LLMResult(content="[Error: model.base_url not configured]")
 
     system_prompt = deps.config.system_prompt or "\u4f60\u662f\u4e00\u4e2a\u6570\u5b66\u52a9\u624b\uff0c\u8bf7\u8be6\u7ec6\u9010\u6b65\u89e3\u7b54\u95ee\u9898\u3002"
     prompt_msg = _MATH_PROMPT % user_message
@@ -106,6 +116,8 @@ async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_msg},
         ],
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": config.reasoning_effort,
         "temperature": config.temperature,
     }
 
@@ -119,30 +131,45 @@ async def _call_llm(deps: PipelineDeps, user_message: str) -> str:
         "Content-Type": "application/json",
     }
 
-    logger.info("[LLM] calling url=%s model=%s tools=%d", url, config.model, len(tools))
+    logger.info("[LLM] calling url=%s model=%s tools=%d effort=%s",
+                url, config.model, len(tools), config.reasoning_effort)
 
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(url, headers=headers, json=payload)
         if resp.status_code != 200:
-            return f"[Error: LLM API returned {resp.status_code}: {resp.text[:500]}]"
+            return LLMResult(content=f"[Error: LLM API returned {resp.status_code}: {resp.text[:500]}]")
+
         data = resp.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        return content or "[Error: empty LLM response]"
+        msg = data.get("choices", [{}])[0].get("message", {})
+        usage = data.get("usage", {})
+
+        return LLMResult(
+            content=msg.get("content", "") or "[Error: empty LLM response]",
+            reasoning_content=msg.get("reasoning_content"),
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+            reasoning_tokens=usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0),
+        )
 
 
-def _log_llm_result(deps: PipelineDeps, text: str, elapsed: float) -> None:
+def _log_llm_result(deps: PipelineDeps, result: LLMResult, elapsed: float) -> None:
     provider = deps.config.model.provider
     model = deps.config.model.model
-    logger.info("=========[%s][%s]=========", provider, model)
-    for line in text.split("\n"):
-        logger.info(line)
-    logger.info("=========[%.1fs][%d]=========", elapsed, len(text))
+    logger.info(
+        f"=========[{provider}][{model}]=========\n"
+        + result.content + "\n"
+        + f"=========[↑:{result.input_tokens}][↓:{result.output_tokens}]========="
+    )
 
 
-def _stub_response(user_message: str) -> str:
+def _stub_response(user_message: str) -> LLMResult:
     from datetime import datetime
     now = datetime.now().isoformat(timespec="seconds")
-    return f"[LLM Stub @ {now}] I received: {user_message[:200]}"
+    return LLMResult(
+        content=f"[LLM Stub @ {now}] I received: {user_message[:200]}",
+        input_tokens=0,
+        output_tokens=0,
+    )
 
 
 async def _save_msg(deps: PipelineDeps, message: str, category: str, response: str | None) -> None:

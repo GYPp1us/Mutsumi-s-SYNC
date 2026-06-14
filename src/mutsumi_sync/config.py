@@ -20,6 +20,7 @@ class ModelConfig(BaseModel):
     temperature: float = 0.7
     api_key: str = ""
     base_url: str = "https://api.deepseek.com/v1"
+    reasoning_effort: str = "max"
 
 
 class ContextConfig(BaseModel):
