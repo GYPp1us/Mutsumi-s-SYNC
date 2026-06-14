@@ -155,11 +155,18 @@ async def _call_llm(deps: PipelineDeps, user_message: str) -> LLMResult:
 def _log_llm_result(deps: PipelineDeps, result: LLMResult, elapsed: float) -> None:
     provider = deps.config.model.provider
     model = deps.config.model.model
-    logger.info(
-        f"=========[{provider}][{model}]=========\n"
-        + result.content + "\n"
-        + f"=========[↑:{result.input_tokens}][↓:{result.output_tokens}]========="
-    )
+
+    lines = [f"=========[{provider}][{model}]========="]
+
+    if result.reasoning_content:
+        lines.append(f"[reasoning]")
+        lines.append(result.reasoning_content)
+        lines.append(f"[/reasoning]")
+
+    lines.append(result.content)
+    lines.append(f"=========[↑:{result.input_tokens}][↓:{result.output_tokens}]=========")
+
+    logger.info("\n".join(lines))
 
 
 def _stub_response(user_message: str) -> LLMResult:
