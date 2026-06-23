@@ -41,7 +41,19 @@ async def http_api_call(args: dict) -> str:
                 return f"[Error: unsupported method: {method}]"
 
             resp.raise_for_status()
-            return resp.text[:4000]
+
+            content_type = resp.headers.get("content-type", "")
+            if "application/json" in (content_type or "").lower():
+                body = resp.text[:2000]
+            elif "text/" in (content_type or "").lower():
+                body = resp.text[:500]
+            else:
+                body = resp.text[:200]
+                if len(resp.text) > 200:
+                    ct_short = (content_type or "unknown").split(";")[0]
+                    body += f"\n...[truncated {len(resp.text)} chars, {ct_short}]"
+
+            return body
     except httpx.HTTPStatusError as e:
         return f"[Error: HTTP {e.response.status_code}: {e.response.text[:500]}]"
     except Exception as e:

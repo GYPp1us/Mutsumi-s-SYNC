@@ -17,10 +17,12 @@ class TestMessageWindow:
         w.add(user_id="u", message="a")
         w.add(user_id="u", message="b")
         w.add(user_id="u", message="c")
-        assert len(w) == 2
+        assert len(w) == 3
+        assert w.max_size == 2
         ctx = w.get_context()
-        assert ctx[0]["content"] == "b"
-        assert ctx[1]["content"] == "c"
+        assert ctx[0]["content"] == "a"
+        assert ctx[1]["content"] == "b"
+        assert ctx[2]["content"] == "c"
 
     def test_clear(self):
         w = MessageWindow(max_size=10)

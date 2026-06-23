@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ class Tool:
     name: str
     description: str
     parameters: dict  # JSON Schema
-    handler: Callable[[dict], Awaitable[str]]
+    handler: Callable[..., Awaitable[str]]
     source: str = "builtin"
 
 
@@ -25,13 +26,21 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         logger.info("Registered tool: %s", tool.name)
 
-    async def execute(self, name: str, args: dict | None = None) -> str:
+    async def execute(self, name: str, args: dict | None = None, **deps) -> str:
         args = args or {}
         tool = self._tools.get(name)
         if tool is None:
             return f"[Error: unknown tool: {name}]"
         try:
-            result = await tool.handler(args)
+            sig = inspect.signature(tool.handler)
+            accepts_deps = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+            if accepts_deps:
+                result = await tool.handler(args, **deps)
+            else:
+                result = await tool.handler(args)
             return str(result)
         except Exception as e:
             logger.exception("Tool %s failed", name)

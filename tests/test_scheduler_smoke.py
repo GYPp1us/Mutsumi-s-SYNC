@@ -29,16 +29,18 @@ class FakeSender:
 def make_store():
     fd, path = tempfile.mkstemp(suffix=".db", prefix="mutsumi_test_")
     os.close(fd)
-    return MessageStore(db_path=path)
+    store = MessageStore(db_path=path)
+    return store, path
 
 
 async def test_scheduler():
     config = Config.load("config.example.yaml")
     config.session.timeout = 0
+    config.context.debounce_timeout = 0.05
 
     registry = ToolRegistry()
     sender = FakeSender()
-    store = make_store()
+    store, store_path = make_store()
     await store.initialize()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
@@ -69,13 +71,14 @@ async def test_scheduler():
     assert count >= 1, f"Expected at least 1 message in store, got {count}"
     print("ALL ASSERTIONS PASSED")
     await store.close()
+    os.unlink(store_path)
 
 
 async def test_cancel():
     config = Config.load("config.example.yaml")
     registry = ToolRegistry()
     sender = FakeSender()
-    store = make_store()
+    store, store_path = make_store()
     await store.initialize()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
@@ -105,13 +108,15 @@ async def test_cancel():
         "Task should be removed or done"
     print("CANCEL TEST PASSED")
     await store.close()
+    os.unlink(store_path)
 
 
 async def test_group_key():
     config = Config.load("config.example.yaml")
+    config.context.debounce_timeout = 0.05
     registry = ToolRegistry()
     sender = FakeSender()
-    store = make_store()
+    store, store_path = make_store()
     await store.initialize()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
 
@@ -137,6 +142,7 @@ async def test_group_key():
     assert "group:888:111" in scheduler._windows, f"Expected group:888:111, got {list(scheduler._windows.keys())}"
     print("GROUP KEY TEST PASSED")
     await store.close()
+    os.unlink(store_path)
 
 
 async def main():

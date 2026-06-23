@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -31,6 +34,8 @@ async def config_manager(args: dict, *, config: "Config") -> str:
         if not key:
             return "[Error: key required for get]"
         result = config.get(key)
+        if isinstance(result, BaseModel):
+            return result.model_dump_json(indent=2)
         return str(result)
 
     elif action == "set":

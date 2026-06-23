@@ -46,6 +46,8 @@ class PipelineScheduler:
         self._windows: dict[str, MessageWindow] = {}
         self._sessions: dict[str, SessionState] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._pending_events: dict[str, list[MessageEvent]] = {}
+        self._debounce_timers: dict[str, asyncio.Task[None]] = {}
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
@@ -61,37 +63,115 @@ class PipelineScheduler:
 
     def _ensure_user_state(self, key: str) -> None:
         if key not in self._windows:
-            self._windows[key] = MessageWindow(max_size=self.config.context.window_size)
+            self._windows[key] = MessageWindow()
         if key not in self._sessions:
             self._sessions[key] = SessionState()
 
+    def _cancel_debounce_timer(self, key: str) -> None:
+        timer = self._debounce_timers.pop(key, None)
+        if timer and not timer.done():
+            timer.cancel()
+
+    def _cleanup_debounce(self, key: str) -> None:
+        self._cancel_debounce_timer(key)
+        self._pending_events.pop(key, None)
+
     async def dispatch(self, event: MessageEvent) -> None:
         key = self._make_key(event)
-        peer = self._make_peer(event)
+
+        from .message.classifier import classify_message
+        classified = classify_message(event.message, event.raw_message)
+        if classified.msg_type.value in ("image", "media"):
+            self._cleanup_debounce(key)
+            await self._dispatch_direct(key, event, classified)
+            return
+
+        if key not in self._pending_events:
+            self._pending_events[key] = []
+        self._pending_events[key].append(event)
+
+        self._cancel_debounce_timer(key)
+        self._debounce_timers[key] = asyncio.create_task(self._debounce_expire(key))
+
+    async def _debounce_expire(self, key: str) -> None:
+        await asyncio.sleep(self.config.context.debounce_timeout)
+        events = self._pending_events.pop(key, [])
+        self._debounce_timers.pop(key, None)
+        if not events:
+            return
+
+        from .message.classifier import classify_message, MessageType
+
+        texts: list[str] = []
+        final_type = MessageType.SHORT_TEXT
+        final_image_file: str | None = None
+        final_image_url: str | None = None
+        for ev in events:
+            c = classify_message(ev.message, ev.raw_message)
+            if c.content:
+                texts.append(c.content)
+            if c.msg_type == MessageType.IMAGE:
+                final_type = MessageType.IMAGE
+                final_image_file = c.image_file or final_image_file
+                final_image_url = c.image_url or final_image_url
+
+        merged_message = "\n".join(texts)
+        if len(merged_message) >= 50:
+            final_type = MessageType.LONG_TEXT
+
+        PEER = self._make_peer(events[0])
 
         await self.cancel_user(key)
-
         self._ensure_user_state(key)
-        window = self._windows[key]
-        session = self._sessions[key]
+
+        from .pipeline import pipeline
 
         deps = PipelineDeps(
             config=self.config,
             registry=self.registry,
             sender=self.sender,
             store=self.store,
-            window=window,
-            session=session,
-            peer=peer,
+            window=self._windows[key],
+            session=self._sessions[key],
+            peer=PEER,
             group_key=key,
         )
 
+        logger.info("[SCHED] dispatching merged key=%s type=%s msgs=%d", key, final_type.value, len(events))
+
+        task = asyncio.create_task(
+            _task_wrapper(
+                pipeline(
+                    message=merged_message,
+                    msg_type=final_type,
+                    image_file=final_image_file,
+                    image_url=final_image_url,
+                    deps=deps,
+                ),
+                key,
+            )
+        )
+        self._tasks[key] = task
+
+    async def _dispatch_direct(self, key: str, event: MessageEvent, classified) -> None:
+        PEER = self._make_peer(event)
+        await self.cancel_user(key)
+        self._ensure_user_state(key)
+
         from .pipeline import pipeline
-        from .message.classifier import classify_message
 
-        classified = classify_message(event.message, event.raw_message)
+        deps = PipelineDeps(
+            config=self.config,
+            registry=self.registry,
+            sender=self.sender,
+            store=self.store,
+            window=self._windows[key],
+            session=self._sessions[key],
+            peer=PEER,
+            group_key=key,
+        )
 
-        logger.info("[SCHED] dispatching key=%s type=%s", key, classified.msg_type.value)
+        logger.info("[SCHED] dispatching direct key=%s type=%s", key, classified.msg_type.value)
 
         task = asyncio.create_task(
             _task_wrapper(
@@ -108,6 +188,7 @@ class PipelineScheduler:
         self._tasks[key] = task
 
     async def cancel_user(self, key: str) -> None:
+        self._cleanup_debounce(key)
         task = self._tasks.pop(key, None)
         if task is None:
             return

@@ -5,23 +5,25 @@ from src.mutsumi_sync.memory.store import MessageStore, StoredMessage, MessageCa
 
 
 class TestMessageStore:
-    async def make_store(self) -> MessageStore:
+    @staticmethod
+    async def make_store() -> tuple[MessageStore, str]:
         fd, path = tempfile.mkstemp(suffix=".db", prefix="mutsumi_test_")
         os.close(fd)
         store = MessageStore(db_path=path)
         await store.initialize()
-        return store
+        return store, path
 
     async def test_initialize_creates_tables(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             messages = await store.get_messages(limit=1)
             assert messages == []
         finally:
             await store.close()
+            os.unlink(store_path)
 
     async def test_save_and_retrieve(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             msg = StoredMessage(
                 date="2026-06-10",
@@ -39,9 +41,10 @@ class TestMessageStore:
             assert results[0].category == MessageCategory.TEXT
         finally:
             await store.close()
+            os.unlink(store_path)
 
     async def test_get_context_for_group(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             await store.save(StoredMessage(date="2026-06-10", group_key="private:1", category="text", content="msg1"))
             await store.save(StoredMessage(date="2026-06-10", group_key="private:1", category="text", content="msg2"))
@@ -53,9 +56,10 @@ class TestMessageStore:
             assert results[1].content == "msg1"
         finally:
             await store.close()
+            os.unlink(store_path)
 
     async def test_filter_by_date(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             await store.save(StoredMessage(date="2026-06-09", group_key="g", category="text", content="old"))
             await store.save(StoredMessage(date="2026-06-10", group_key="g", category="text", content="new"))
@@ -66,9 +70,10 @@ class TestMessageStore:
             assert results[0].content == "new"
         finally:
             await store.close()
+            os.unlink(store_path)
 
     async def test_filter_by_category(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             await store.save(StoredMessage(date="2026-06-10", group_key="g", category="text", content="t1"))
             await store.save(StoredMessage(date="2026-06-10", group_key="g", category="image", content="img1"))
@@ -78,9 +83,10 @@ class TestMessageStore:
             assert len(results) == 2
         finally:
             await store.close()
+            os.unlink(store_path)
 
     async def test_save_media(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             data = b"\x89PNG test image data"
             msg_id = await store.save_media(group_key="g1", category="image", data=data, ext="png")
@@ -92,9 +98,10 @@ class TestMessageStore:
             assert "file" in results[0].content
         finally:
             await store.close()
+            os.unlink(store_path)
 
     async def test_count(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             assert await store.count() == 0
             await store.save(StoredMessage(date="2026-06-10", group_key="g", category="text", content="x"))
@@ -104,6 +111,7 @@ class TestMessageStore:
             assert await store.count(group_key="other") == 0
         finally:
             await store.close()
+            os.unlink(store_path)
 
     async def test_not_initialized_raises(self):
         store = MessageStore(db_path="/tmp/nonexistent_test.db")
@@ -114,7 +122,7 @@ class TestMessageStore:
             pass
 
     async def test_limit_and_offset(self):
-        store = await self.make_store()
+        store, store_path = await self.make_store()
         try:
             for i in range(5):
                 await store.save(StoredMessage(date="2026-06-10", group_key="g", category="text", content=f"msg{i}"))
@@ -126,3 +134,4 @@ class TestMessageStore:
             assert len(results) == 2
         finally:
             await store.close()
+            os.unlink(store_path)

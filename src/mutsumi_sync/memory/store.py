@@ -59,6 +59,40 @@ class MessageStore:
             ON messages(group_key);
         CREATE INDEX IF NOT EXISTS idx_messages_category
             ON messages(category);
+
+        CREATE TABLE IF NOT EXISTS summaries (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_key   TEXT    NOT NULL,
+            seq         INTEGER NOT NULL,
+            source      TEXT    NOT NULL,
+            summary     TEXT    NOT NULL,
+            created_at  REAL    NOT NULL DEFAULT (julianday('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_summaries_group
+            ON summaries(group_key, seq);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+            content, group_key, category,
+            content=messages
+        );
+
+        CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, content, group_key, category)
+            VALUES (new.rowid, new.content, new.group_key, new.category);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content, group_key, category)
+            VALUES ('delete', old.rowid, old.content, old.group_key, old.category);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content, group_key, category)
+            VALUES ('delete', old.rowid, old.content, old.group_key, old.category);
+            INSERT INTO messages_fts(rowid, content, group_key, category)
+            VALUES (new.rowid, new.content, new.group_key, new.category);
+        END;
     """
 
     def __init__(self, db_path: str = "data/mutsumi.db", media_dir: str = "data/media"):
@@ -158,6 +192,107 @@ class MessageStore:
             cursor = await self._conn.execute("SELECT COUNT(*) FROM messages")
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    async def add_summary(self, group_key: str, source: str, summary: str) -> int:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM summaries WHERE group_key = ?",
+            (group_key,)
+        )
+        row = await cursor.fetchone()
+        next_seq = row[0] if row else 1
+
+        cursor = await self._conn.execute(
+            "INSERT INTO summaries (group_key, seq, source, summary) VALUES (?, ?, ?, ?)",
+            (group_key, next_seq, source, summary),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_summaries(self, group_key: str, limit: int = 180) -> list[dict]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, group_key, seq, source, summary FROM summaries WHERE group_key = ? ORDER BY seq ASC LIMIT ?",
+            (group_key, limit),
+        )
+        rows = await cursor.fetchall()
+        return [{"id": r["id"], "seq": r["seq"], "source": r["source"], "summary": r["summary"]} for r in rows]
+
+    async def trim_summaries(self, group_key: str, max_count: int = 180, min_count: int = 90) -> int:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) FROM summaries WHERE group_key = ?", (group_key,)
+        )
+        row = await cursor.fetchone()
+        count = row[0] if row else 0
+        if count <= max_count:
+            return 0
+
+        target_to_keep = min_count
+        to_delete = count - target_to_keep
+        cursor = await self._conn.execute(
+            "DELETE FROM summaries WHERE id IN (SELECT id FROM summaries WHERE group_key = ? ORDER BY seq ASC LIMIT ?)",
+            (group_key, to_delete),
+        )
+        await self._conn.commit()
+        return cursor.rowcount
+
+    async def get_current_self_note(self, group_key: str) -> dict | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, content FROM messages WHERE group_key = ? AND category = 'self_note' ORDER BY id DESC LIMIT 1",
+            (group_key,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "content": row["content"]}
+
+    async def upsert_self_note(self, group_key: str, content: str) -> None:
+        self._ensure_initialized()
+        today = date.today().isoformat()
+        await self._conn.execute(
+            "INSERT INTO messages (date, group_key, category, content) VALUES (?, ?, 'self_note', ?)",
+            (today, group_key, content),
+        )
+        await self._conn.commit()
+
+    async def search_memory(self, group_key: str, query: str, limit: int = 5) -> list[dict]:
+        self._ensure_initialized()
+        try:
+            cursor = await self._conn.execute(
+                "SELECT m.id, m.date, m.group_key, m.category, m.content "
+                "FROM messages_fts f JOIN messages m ON f.rowid = m.rowid "
+                "WHERE f.content MATCH ? AND m.group_key = ? "
+                "ORDER BY rank LIMIT ?",
+                (query, group_key, limit),
+            )
+        except Exception:
+            cursor = await self._conn.execute(
+                "SELECT id, date, group_key, category, content FROM messages "
+                "WHERE group_key = ? AND content LIKE ? ORDER BY id DESC LIMIT ?",
+                (group_key, f"%{query}%", limit),
+            )
+        rows = await cursor.fetchall()
+        return [
+            {"id": r["id"], "date": r["date"], "category": r["category"], "content": r["content"]}
+            for r in rows
+        ]
+
+    async def get_messages_by_ids(self, ids: list[int]) -> list[dict]:
+        self._ensure_initialized()
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        cursor = await self._conn.execute(
+            f"SELECT id, date, group_key, category, content FROM messages WHERE id IN ({placeholders}) ORDER BY id ASC",
+            ids,
+        )
+        rows = await cursor.fetchall()
+        return [
+            {"id": r["id"], "date": r["date"], "category": r["category"], "content": r["content"]}
+            for r in rows
+        ]
 
     async def close(self) -> None:
         if self._conn:

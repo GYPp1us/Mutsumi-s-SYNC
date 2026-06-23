@@ -1,5 +1,5 @@
 import pytest
-from src.mutsumi_sync.config import Config, NapcatConfig, ModelConfig, ContextConfig, SessionConfig
+from src.mutsumi_sync.config import Config, NapcatConfig, ModelConfig, ContextConfig, SessionConfig, MemoryConfig, SummarizerConfig
 
 
 class TestConfig:
@@ -7,7 +7,7 @@ class TestConfig:
         c = Config()
         assert c.napcat.ws_url == "ws://localhost:3000"
         assert c.model.model == "deepseek-chat"
-        assert c.context.window_size == 20
+        assert c.context.window_max_tokens == 100000
         assert c.session.timeout == 300
         assert c.dirty is False
 
@@ -40,8 +40,8 @@ class TestConfig:
 
     def test_set_type_coercion_int(self):
         c = Config()
-        c.set("context.window_size", "30")
-        assert c.context.window_size == 30
+        c.set("context.window_max_tokens", "30000")
+        assert c.context.window_max_tokens == 30000
 
     def test_set_type_coercion_float(self):
         c = Config()
@@ -51,7 +51,7 @@ class TestConfig:
     def test_get_value(self):
         c = Config()
         assert c.get("model.temperature") == 0.7
-        assert c.get("context.window_size") == 20
+        assert c.get("context.window_max_tokens") == 100000
 
     def test_get_nonexistent(self):
         c = Config()
@@ -77,8 +77,12 @@ class TestModelDefaults:
 
     def test_context_defaults(self):
         c = ContextConfig()
-        assert c.window_size == 20
+        assert c.window_max_tokens == 100000
+        assert c.window_min_tokens == 50000
         assert c.max_tokens == 4096
+        assert c.summaries_max_count == 180
+        assert c.summaries_min_count == 90
+        assert c.debounce_timeout == 1.5
 
     def test_session_defaults(self):
         s = SessionConfig()

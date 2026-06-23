@@ -1,6 +1,10 @@
 context:
   max_tokens: 4096
-  window_size: 20
+  window_max_tokens: 100000
+  window_min_tokens: 50000
+  summaries_max_count: 180
+  summaries_min_count: 90
+  debounce_timeout: 1.5
 model:
   api_key: ''
   base_url: https://api.deepseek.com/v1
@@ -14,3 +18,13 @@ napcat:
   ws_url: ws://localhost:3000
 session:
   timeout: 300
+memory:
+  archive_threshold_tokens: 100
+  self_note_target_tokens: 1000
+  self_note_max_multiplier: 2.0
+summarizer:
+  provider: deepseek
+  model: deepseek-chat
+  api_key: ''
+  base_url: https://api.deepseek.com/v1
+  temperature: 0.3

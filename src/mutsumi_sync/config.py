@@ -24,8 +24,26 @@ class ModelConfig(BaseModel):
 
 
 class ContextConfig(BaseModel):
-    window_size: int = 20
     max_tokens: int = 4096
+    window_max_tokens: int = 100000
+    window_min_tokens: int = 50000
+    summaries_max_count: int = 180
+    summaries_min_count: int = 90
+    debounce_timeout: float = 1.5
+
+
+class MemoryConfig(BaseModel):
+    archive_threshold_tokens: int = 100
+    self_note_target_tokens: int = 1000
+    self_note_max_multiplier: float = 2.0
+
+
+class SummarizerConfig(BaseModel):
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com/v1"
+    temperature: float = 0.3
 
 
 class SessionConfig(BaseModel):
@@ -37,6 +55,8 @@ class Config(BaseModel):
     model: ModelConfig = ModelConfig()
     context: ContextConfig = ContextConfig()
     session: SessionConfig = SessionConfig()
+    memory: MemoryConfig = MemoryConfig()
+    summarizer: SummarizerConfig = SummarizerConfig()
     system_prompt: str = ""
 
     _config_path: str | None = None
