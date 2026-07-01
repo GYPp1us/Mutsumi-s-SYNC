@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from ..config import Config
+from ..lab.core import default_lab_prompt, load_lab_config, load_scenario
+from ..lab.memory_bench import build_memory_pressure_steps
+from ..lab.reporting import RunReport
 from ..message.classifier import MessageType
 from ..message.sender import Peer
 from ..memory.window import MessageWindow
@@ -131,34 +133,17 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     return registry
 
 
-def load_scenario(path: str) -> dict:
-    path = Path(path)
-    if not path.exists():
-        alt = Path("scenarios") / path.name
-        if alt.exists():
-            path = alt
-    if not path.exists():
-        print(f"{_RED}场景文件不存在: {path}{_RESET}")
-        sys.exit(1)
-    with open(path, encoding="utf-8") as f:
-        scenario = yaml.safe_load(f)
-    if not scenario or "steps" not in scenario:
-        print(f"{_RED}场景格式错误: 需要 steps 字段{_RESET}")
-        sys.exit(1)
-    return scenario
-
-
 async def run_scenario(scenario_path: str) -> None:
     setup_logging()
 
     scenario = load_scenario(scenario_path)
-    scenario_name = scenario.get("name", Path(scenario_path).stem)
+    scenario_name = scenario.name
     print(f"\n{_BOLD}{_CYAN}=========[SCENARIO] {scenario_name}========={_RESET}\n")
 
-    config = Config.load("config.yaml")
+    config = load_lab_config("config.yaml")
     original_prompt = config.system_prompt
-    if scenario.get("prompt"):
-        config.system_prompt = scenario["prompt"]
+    if scenario.prompt:
+        config.system_prompt = scenario.prompt
 
     store = MessageStore()
     await store.initialize()
@@ -169,10 +154,11 @@ async def run_scenario(scenario_path: str) -> None:
     session = SessionState()
     peer = Peer(chat_type=1, peer_uid="playground")
     group_key = "private:playground"
+    report = RunReport()
 
-    steps = scenario["steps"]
+    steps = scenario.steps
     for i, step in enumerate(steps):
-        text = step.get("text", "")
+        text = step.text
         if not text:
             continue
 
@@ -187,6 +173,14 @@ async def run_scenario(scenario_path: str) -> None:
             session=session,
             peer=peer,
             group_key=group_key,
+            usage_callback=lambda result: report.add_usage(
+                result.input_tokens,
+                result.output_tokens,
+                result.cache_hit_tokens,
+                result.cache_miss_tokens,
+            ),
+            content_bridge=True,
+            content_bridge_callback=report.add_bridged_content,
         )
 
         try:
@@ -200,8 +194,74 @@ async def run_scenario(scenario_path: str) -> None:
     print(f"{_BOLD}{_CYAN}=========[SCENARIO COMPLETE] {scenario_name}========={_RESET}")
     print(f"{_DIM}Steps:  {len(steps)}{_RESET}")
     print(f"{_DIM}Sends:  {len(sender.sends)}{_RESET}")
+    print(f"{_DIM}Bridged content: {report.bridged_contents}{_RESET}")
+    print(f"{_DIM}Tokens: ↑{report.input_tokens} ↓{report.output_tokens} cache={report.cache_hit_rate:.1%}{_RESET}")
     for s in sender.sends:
         print(f"  {_DIM}→ {s[:120]}{_RESET}")
+
+    await store.close()
+
+
+async def run_memory_pressure(rounds: int = 24, chunk_tokens: int = 4096) -> None:
+    setup_logging()
+
+    config = load_lab_config("config.yaml")
+    config.system_prompt = default_lab_prompt()
+    store = MessageStore()
+    await store.initialize()
+    registry = build_registry(config, store)
+    sender = CaptureSender()
+    window = MessageWindow()
+    session = SessionState()
+    peer = Peer(chat_type=1, peer_uid="memory-pressure")
+    group_key = "private:memory-pressure"
+    steps = build_memory_pressure_steps(rounds=rounds, chunk_tokens=chunk_tokens)
+    report = RunReport()
+
+    print(f"\n{_BOLD}{_CYAN}=========[MEMORY PRESSURE] rounds={rounds} chunk={chunk_tokens}========={_RESET}\n")
+
+    for i, step in enumerate(steps):
+        start = time.monotonic()
+        deps = PipelineDeps(
+            config=config,
+            registry=registry,
+            sender=sender,
+            store=store,
+            window=window,
+            session=session,
+            peer=peer,
+            group_key=group_key,
+            usage_callback=lambda result: report.add_usage(
+                result.input_tokens,
+                result.output_tokens,
+                result.cache_hit_tokens,
+                result.cache_miss_tokens,
+            ),
+            content_bridge=True,
+            content_bridge_callback=report.add_bridged_content,
+        )
+        print(f"{_BOLD}{_YELLOW}--- Step {i+1}/{len(steps)}: {step.kind} ---{_RESET}\n")
+        try:
+            await pipeline(step.text, MessageType.SHORT_TEXT, None, None, deps=deps)
+        except Exception:
+            logger.exception("Memory pressure step %d failed", i + 1)
+        report.steps += 1
+        report.elapsed_seconds += time.monotonic() - start
+
+    print()
+    report.sends = len(sender.sends)
+    report.window_items = len(window)
+    report.store_messages = await store.count(group_key)
+    report.summaries = len(await store.get_summaries(group_key, limit=10000))
+    print(f"{_BOLD}{_CYAN}=========[MEMORY PRESSURE COMPLETE]========={_RESET}")
+    print(f"{_DIM}Steps:  {report.steps}{_RESET}")
+    print(f"{_DIM}Sends:  {report.sends}{_RESET}")
+    print(f"{_DIM}Bridged content: {report.bridged_contents}{_RESET}")
+    print(f"{_DIM}Window: {report.window_items}{_RESET}")
+    print(f"{_DIM}Store:  {report.store_messages} messages{_RESET}")
+    print(f"{_DIM}Summaries: {report.summaries}{_RESET}")
+    print(f"{_DIM}Tokens: ↑{report.input_tokens} ↓{report.output_tokens} cache={report.cache_hit_rate:.1%}{_RESET}")
+    print(f"{_DIM}Elapsed: {report.elapsed_seconds:.2f}s{_RESET}")
 
     await store.close()
 
@@ -211,7 +271,12 @@ def main() -> None:
         print(f"用法: python -m src.mutsumi_sync.tui.playground <scenario.yaml>")
         sys.exit(1)
     try:
-        asyncio.run(run_scenario(sys.argv[1]))
+        if sys.argv[1] == "--memory-pressure":
+            rounds = int(sys.argv[2]) if len(sys.argv) > 2 else 24
+            chunk_tokens = int(sys.argv[3]) if len(sys.argv) > 3 else 4096
+            asyncio.run(run_memory_pressure(rounds=rounds, chunk_tokens=chunk_tokens))
+        else:
+            asyncio.run(run_scenario(sys.argv[1]))
     except KeyboardInterrupt:
         print(f"\n{_YELLOW}中断{_RESET}")
 

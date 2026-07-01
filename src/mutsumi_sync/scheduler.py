@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from .memory.window import MessageWindow
 from .memory.session import SessionState
@@ -28,6 +28,9 @@ class PipelineDeps:
     session: SessionState
     peer: Peer
     group_key: str
+    usage_callback: Callable[[Any], None] | None = None
+    content_bridge: bool = False
+    content_bridge_callback: Callable[[str], None] | None = None
 
 
 class PipelineScheduler:

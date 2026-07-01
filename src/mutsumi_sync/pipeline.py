@@ -196,6 +196,17 @@ async def _save_msg(deps: PipelineDeps, message: str, category: str, response: s
         logger.exception("Failed to save message to store")
 
 
+async def _handle_content_only(deps: PipelineDeps, content: str) -> None:
+    if not deps.content_bridge:
+        logger.warning("[PIPE] direct content send disabled; ignoring content-only response")
+        return
+
+    await send_tool({"text": content}, sender=deps.sender, peer=deps.peer)
+    log_send(deps, "content_bridge", content)
+    if deps.content_bridge_callback is not None:
+        deps.content_bridge_callback(content)
+
+
 def _log_context_size(messages: list[dict], deps: PipelineDeps) -> None:
     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
     total_tokens = total_chars // ESTIMATE_CHARS_PER_TOKEN
@@ -334,6 +345,8 @@ async def pipeline(
             result = await _do_llm_call(messages, deps)
             elapsed = time.monotonic() - start_time
             log_llm_result(deps, result, elapsed)
+            if deps.usage_callback is not None:
+                deps.usage_callback(result)
 
             if not result.tool_calls and not result.content:
                 if not responded and is_cold:
@@ -343,8 +356,7 @@ async def pipeline(
                 break
 
             if not result.tool_calls and result.content:
-                await deps.sender.send(deps.peer, result.content)
-                log_send(deps, "content", result.content)
+                await _handle_content_only(deps, result.content)
                 responded = True
                 bot_replies.append(result.content)
                 await _save_msg(deps, message, msg_type.value, result.content)
@@ -359,7 +371,10 @@ async def pipeline(
                 try:
                     reply_result = await send_tool(tc["arguments"], sender=deps.sender, peer=deps.peer)
                     log_send(deps, "tool", tc["arguments"])
-                    bot_replies.append(str(tc["arguments"].get("text", "")))
+                    reply_text = str(tc["arguments"].get("text", ""))
+                    bot_replies.append(reply_text)
+                    if reply_text:
+                        await _save_msg(deps, message, msg_type.value, reply_text)
                     responded = True
                 except Exception as e:
                     logger.exception("send_tool failed")
@@ -439,11 +454,6 @@ async def pipeline(
                 messages.append(msg)
 
             if not other_calls:
-                if result.content:
-                    await deps.sender.send(deps.peer, result.content)
-                    log_send(deps, "content", result.content)
-                    responded = True
-                    bot_replies.append(result.content)
                 break
         else:
             logger.warning("[LOOP] tool loop exhausted after %d steps, context ~%d msgs",

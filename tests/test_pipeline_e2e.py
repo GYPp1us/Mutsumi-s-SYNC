@@ -14,7 +14,8 @@ from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.classifier import MessageType
 from src.mutsumi_sync.scheduler import PipelineDeps
 from src.mutsumi_sync.main import build_registry
-from src.mutsumi_sync.pipeline import pipeline, _build_context, _recycle_window_if_needed
+from src.mutsumi_sync.pipeline import LLMResult, pipeline, _build_context, _recycle_window_if_needed
+import src.mutsumi_sync.pipeline as pipeline_module
 
 
 class CaptureSender:
@@ -73,7 +74,7 @@ class TestPipelineE2EMultiRound:
             msg = f"round {i} " + "hello " * 10
             await pipeline(msg, MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert len(sender.sent) >= rounds, f"Expected >= {rounds} replies, got {len(sender.sent)}"
+        assert len(sender.sent) == 0, "Content-only replies should not be sent directly"
 
         window_size = len(window)
         total_estimate = sum(
@@ -123,7 +124,7 @@ class TestPipelineE2EMultiRound:
         )
         await pipeline(long_msg, MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert len(sender.sent) >= 1, "Should receive a reply"
+        assert len(sender.sent) == 0, "Content-only reply should be logged/stored, not sent"
 
         all_msgs = await store.get_messages(group_key=group_key)
         assert len(all_msgs) >= 1, "Message should be saved to store"
@@ -224,10 +225,128 @@ class TestPipelineE2EDebounce:
         )
 
         await pipeline("hi", MessageType.SHORT_TEXT, None, None, deps=deps)
-        assert len(sender.sent) >= 1
+        assert len(sender.sent) == 0
 
         await pipeline("how are you", MessageType.SHORT_TEXT, None, None, deps=deps)
-        assert len(sender.sent) >= 2
+        assert len(sender.sent) == 0
         assert len(window) >= 2
+
+        await store.close()
+
+    async def test_content_is_not_sent_directly(self, caplog):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        window = MessageWindow()
+        session = SessionState()
+        peer = Peer(chat_type=1, peer_uid="content_only_test")
+        group_key = "private:content_only_test"
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=window, session=session,
+            peer=peer, group_key=group_key,
+        )
+
+        with caplog.at_level("WARNING", logger="mutsumi.pipeline"):
+            await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert len(sender.sent) == 0
+        assert len(window) == 2
+        assert any("direct content send disabled" in record.message for record in caplog.records)
+
+        await store.close()
+
+    async def test_content_bridge_sends_and_reports_content(self):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        bridged: list[str] = []
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="content_bridge_test"),
+            group_key="private:content_bridge_test",
+            content_bridge=True,
+            content_bridge_callback=bridged.append,
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert len(sender.sent) == 1
+        assert sender.sent[0]["message"][0]["data"]["text"].startswith("[LLM Stub")
+        assert len(bridged) == 1
+
+        await store.close()
+
+    async def test_usage_callback_receives_llm_usage(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(
+                content="usage accounting probe",
+                input_tokens=123,
+                output_tokens=45,
+                cache_hit_tokens=67,
+                cache_miss_tokens=56,
+            )
+
+        seen: list[LLMResult] = []
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="usage_test"),
+            group_key="private:usage_test",
+            usage_callback=seen.append,
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert len(seen) == 1
+        assert seen[0].input_tokens == 123
+        assert seen[0].cache_hit_tokens == 67
+
+        await store.close()
+
+    async def test_send_tool_call_sends_message(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(tool_calls=[{
+                "id": "call_send",
+                "name": "send",
+                "arguments": {"text": "hello through send"},
+            }])
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="send_tool_test"),
+            group_key="private:send_tool_test",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert len(sender.sent) == 1
+        assert sender.sent[0]["message"][0]["data"]["text"] == "hello through send"
+        assert await store.count("private:send_tool_test") == 1
 
         await store.close()

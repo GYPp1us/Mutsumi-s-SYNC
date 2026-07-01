@@ -21,10 +21,18 @@ class Tool:
 @dataclass
 class ToolRegistry:
     _tools: dict[str, Tool] = field(default_factory=dict)
+    version: int = 0
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
+        self.version += 1
         logger.info("Registered tool: %s", tool.name)
+
+    def remove(self, name: str) -> None:
+        if name in self._tools:
+            del self._tools[name]
+            self.version += 1
+            logger.info("Removed tool: %s", name)
 
     async def execute(self, name: str, args: dict | None = None, **deps) -> str:
         args = args or {}
@@ -60,4 +68,4 @@ class ToolRegistry:
         ]
 
     def snapshot(self) -> tuple[list[Tool], int]:
-        return list(self._tools.values()), 0
+        return list(self._tools.values()), self.version
