@@ -2,29 +2,45 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
+
+from .markdown_renderer import render_markdown_image
 
 if TYPE_CHECKING:
+    from ..config import Config
     from ..message.sender import MessageSender, Peer
 
 logger = logging.getLogger("mutsumi.tools.send")
 
+MarkdownRenderer = Callable[..., Awaitable[str]]
+
 SEND_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
-        "text": {"type": "string", "description": "纯文本回复"},
-        "image": {"type": "string", "description": "图片 file 路径"},
-        "image_url": {"type": "string", "description": "图片 URL"},
-        "face": {"type": "integer", "description": "QQ 小表情 ID"},
-        "at_user": {"type": "string", "description": "QQ 用户 ID，群聊 @人"},
-        "reply_to": {"type": "integer", "description": "引用消息的 message_id"},
-        "forward": {"type": "string", "description": "转发消息 ID"},
+        "text": {"type": "string", "description": "Plain text reply"},
+        "image": {"type": "string", "description": "Image file path"},
+        "image_url": {"type": "string", "description": "Image URL"},
+        "markdown_image": {
+            "type": "string",
+            "description": "Markdown source to render into a PNG image and send as an image segment",
+        },
+        "face": {"type": "integer", "description": "QQ face ID"},
+        "at_user": {"type": "string", "description": "QQ user ID for group @ mention"},
+        "reply_to": {"type": "integer", "description": "message_id to reply to"},
+        "forward": {"type": "string", "description": "Forward message ID"},
     },
 }
 
 
-async def send_tool(args: dict, *, sender: "MessageSender", peer: "Peer") -> str:
-    """Execute send tool — builds message segments and sends via sender."""
+async def send_tool(
+    args: dict,
+    *,
+    sender: "MessageSender",
+    peer: "Peer",
+    config: "Config | None" = None,
+    markdown_renderer: MarkdownRenderer = render_markdown_image,
+) -> str:
+    """Execute send tool by building message segments and sending via sender."""
     segments = []
     if args.get("text"):
         segments.append({"type": "text", "data": {"text": args["text"]}})
@@ -32,6 +48,15 @@ async def send_tool(args: dict, *, sender: "MessageSender", peer: "Peer") -> str
         segments.append({"type": "image", "data": {"file": args["image"]}})
     if args.get("image_url"):
         segments.append({"type": "image", "data": {"url": args["image_url"]}})
+    if args.get("markdown_image"):
+        if config is None:
+            return "[Error: markdown image renderer requires config]"
+        try:
+            image_path = await markdown_renderer(args["markdown_image"], config=config)
+        except Exception as e:
+            logger.exception("markdown image render failed")
+            return f"[Error: {e}]"
+        segments.append({"type": "image", "data": {"file": image_path}})
     if args.get("face"):
         segments.append({"type": "face", "data": {"id": str(args["face"])}})
     if args.get("at_user"):
