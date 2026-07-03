@@ -43,7 +43,7 @@ async def config_manager(args: dict, *, config: "Config") -> str:
             return "[Error: key and value required for set]"
         result = config.set(key, value)
         if result.startswith("[OK]"):
-            config.save()
+            config.save_key(key)
         return result
 
     elif action == "list":

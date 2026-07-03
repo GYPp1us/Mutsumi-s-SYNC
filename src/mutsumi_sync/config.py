@@ -142,6 +142,81 @@ class Config(BaseModel):
                     default_flow_style=False,
                 )
 
+    def save_key(self, key: str) -> None:
+        if not self._config_path:
+            return
+
+        path = Path(self._config_path)
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True) if path.exists() else []
+        parts = key.split(".")
+        if not parts:
+            return
+
+        value = self.get(key)
+        if isinstance(value, str) and value.startswith("[Error:"):
+            return
+
+        if len(parts) == 1:
+            self._save_top_level_key(path, lines, parts[0], value)
+            return
+
+        self._save_nested_key(path, lines, parts, value)
+
+    def _format_yaml_scalar(self, value: Any, indent: int = 0) -> str:
+        dumped = yaml.safe_dump(
+            value,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ).strip()
+        if "\n...\n" in f"\n{dumped}\n" or dumped.endswith("\n..."):
+            dumped = "\n".join(line for line in dumped.splitlines() if line != "...")
+        if "\n" not in dumped:
+            return dumped
+        pad = " " * indent
+        return "\n".join(pad + line if line else line for line in dumped.splitlines())
+
+    def _save_top_level_key(self, path: Path, lines: list[str], key: str, value: Any) -> None:
+        replacement = f"{key}: {self._format_yaml_scalar(value)}\n"
+        for i, line in enumerate(lines):
+            if line.startswith(f"{key}:"):
+                lines[i] = replacement
+                path.write_text("".join(lines), encoding="utf-8")
+                return
+        lines.append(replacement)
+        path.write_text("".join(lines), encoding="utf-8")
+
+    def _save_nested_key(self, path: Path, lines: list[str], parts: list[str], value: Any) -> None:
+        section = parts[0]
+        leaf = parts[-1]
+        section_idx = None
+        for i, line in enumerate(lines):
+            if line.startswith(f"{section}:"):
+                section_idx = i
+                break
+
+        if section_idx is None:
+            lines.append(f"{section}:\n")
+            lines.append(f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n")
+            path.write_text("".join(lines), encoding="utf-8")
+            return
+
+        insert_at = len(lines)
+        for i in range(section_idx + 1, len(lines)):
+            line = lines[i]
+            stripped = line.lstrip(" ")
+            indent = len(line) - len(stripped)
+            if stripped and indent == 0 and not stripped.startswith("#"):
+                insert_at = i
+                break
+            if indent == 2 and stripped.startswith(f"{leaf}:"):
+                lines[i] = f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n"
+                path.write_text("".join(lines), encoding="utf-8")
+                return
+
+        lines.insert(insert_at, f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n")
+        path.write_text("".join(lines), encoding="utf-8")
+
     def reload(self) -> str:
         if not self._config_path or not Path(self._config_path).exists():
             return "[Error: no config file to reload]"

@@ -25,6 +25,12 @@ MAX_SENDS_PER_LOOP = 5
 WRITE_TOOLS = {"self_note", "memory_save"}
 
 
+def _report_state(deps: PipelineDeps, state: str) -> None:
+    logger.info("[PIPE] state=%s peer=%s group=%s", state, deps.peer.peer_uid, deps.group_key)
+    if deps.report_state:
+        deps.report_state(state)
+
+
 @dataclass
 class LLMResult:
     content: str = ""
@@ -45,15 +51,33 @@ def _estimate_msg_tokens(msg: dict) -> int:
     return _estimate_tokens(str(msg.get("content", "")))
 
 
+def _is_placeholder_summary(summary: str) -> bool:
+    normalized = summary.strip().lower()
+    return (
+        "messages archived on shutdown" in normalized
+        and (
+            normalized.startswith("[会话结束]")
+            or normalized.startswith("[會話結束]")
+            or normalized.startswith("[conversation ended]")
+        )
+    )
+
+
 def _build_default_system_prompt(config) -> str:
     system = config.system_prompt or "You are a helpful assistant."
+    system += (
+        "\n当前平台是由Mutsumi's SYNC构建的，基于napcat-QQ bot的虚拟社交对话平台。" 
+    )
     system += (
         "\n你拥有一个 [私人印象] 空间用于维护对用户的私人印象和关键信息。"
         "\n[私人印象] 标签标注了当前长度与目标上限。"
         "\n请保持内容精炼，优先保留长期价值高的信息。"
-        "\n使用 self_note(add) 追加新信息，使用 self_note(replace) 重新整理。"
-        "\n如果当前已接近或超出目标长度，请在下一轮对话中主动用 replace 模式精简。"
+        "\n使用 tool 维护和整理印象。"
         "\n如果同一个工具调用连续失败 3 次以上，停止重试并向用户汇报失败原因。"
+    )
+    system += (
+        "\n**所有面向用户的输出都需要通过 send 工具**，**所有面向用户的输出都需要通过 send 工具**，**所有面向用户的输出都需要通过 send 工具**留在content中的内容代表你的窃窃私语，系统不会转发。"
+        "\n回复需要合理、得体、简洁，尽可能符合人类在社交平台聊天的规律。" 
     )
     return system
 
@@ -92,6 +116,8 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     if summaries:
         summary_texts = []
         for s in summaries:
+            if _is_placeholder_summary(str(s["summary"])):
+                continue
             source_label = "user" if s["source"] == "user" else "assistant"
             summary_texts.append(f"[{source_label}]: {s['summary']}")
         if summary_texts:
@@ -192,6 +218,7 @@ async def _save_msg(deps: PipelineDeps, message: str, category: str, response: s
             category=category,
             content=content,
         ))
+        logger.info("[PIPE] saved message category=%s response=%s", category, "yes" if response else "no")
     except Exception:
         logger.exception("Failed to save message to store")
 
@@ -245,7 +272,11 @@ async def _generate_and_save_summary(deps: PipelineDeps, source: str, text: str,
                 data = resp.json()
                 summary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                 if summary:
-                    await deps.store.add_summary(deps.group_key, source, summary.strip())
+                    max_id = await deps.store.get_max_message_id(deps.group_key)
+                    summary_id = await deps.store.add_summary(
+                        deps.group_key, source, summary.strip(),
+                        last_message_id=max_id,
+                    )
                     await deps.store.trim_summaries(
                         deps.group_key,
                         max_count=deps.config.context.summaries_max_count,
@@ -296,12 +327,18 @@ async def pipeline(
     *,
     deps: PipelineDeps,
 ) -> None:
+    _report_state(deps, "INIT")
+
     if msg_type == MessageType.MEDIA:
+        _report_state(deps, "MEDIA")
+        logger.info("[PIPE] branch=media unsupported")
         await deps.sender.send(deps.peer, "暂不支持此消息类型")
         await _save_msg(deps, message, MessageType.MEDIA.value, None)
         return
 
     if msg_type == MessageType.IMAGE:
+        _report_state(deps, "IMAGE")
+        logger.info("[PIPE] branch=image unsupported image_file=%s image_url=%s", bool(image_file), bool(image_url))
         await deps.sender.send(deps.peer, "收到图片，暂不支持图片识别")
         deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
         deps.window.add(user_id=str(deps.peer.peer_uid), message="[图片]", is_bot=True)
@@ -319,23 +356,46 @@ async def pipeline(
 
         is_cold = deps.session.is_cold(deps.config.session.timeout)
         if is_cold:
+            _report_state(deps, "POKE")
+            logger.info("[PIPE] cold session; sending poke")
             await deps.sender.send_poke(deps.peer)
         deps.session.touch()
 
+        _report_state(deps, "CTX_build")
         messages = await _build_context(message, deps)
         _log_context_size(messages, deps)
+        logger.info("[PIPE] context built msgs=%d", len(messages))
         send_count = 0
         last_tool_name = ""
         consecutive_fails = 0
 
         for step in range(MAX_TOOL_STEPS):
             log_context(messages, deps)
+            _report_state(deps, f"LOOP_{step + 1}:Pending_LLM")
             start_time = time.monotonic()
             result = await _do_llm_call(messages, deps)
             elapsed = time.monotonic() - start_time
             log_llm_result(deps, result, elapsed)
+            logger.info(
+                "[PIPE] LLM result step=%d elapsed=%.2fs content=%s tool_calls=%d input=%d output=%d",
+                step + 1,
+                elapsed,
+                "yes" if result.content else "no",
+                len(result.tool_calls),
+                result.input_tokens,
+                result.output_tokens,
+            )
+
+            if deps.token_counter is not None:
+                deps.token_counter["input"] += result.input_tokens
+                deps.token_counter["output"] += result.output_tokens
+                deps.token_counter["cache_hit"] += result.cache_hit_tokens
+                deps.token_counter["cache_miss"] += result.cache_miss_tokens
+            if deps.report_llm_health:
+                deps.report_llm_health(not result.content.startswith("[Error:"))
 
             if not result.tool_calls and not result.content:
+                logger.info("[PIPE] branch=empty_response responded=%s cold=%s", responded, is_cold)
                 if not responded and is_cold:
                     await deps.sender.send(deps.peer, "在的，请说。")
                     responded = True
@@ -343,8 +403,8 @@ async def pipeline(
                 break
 
             if not result.tool_calls and result.content:
-                await deps.sender.send(deps.peer, result.content)
-                log_send(deps, "content", result.content)
+                logger.info("[PIPE] branch=content_only chars=%d", len(result.content))
+                logger.warning("[PIPE] direct content send disabled; ignoring content-only response")
                 responded = True
                 bot_replies.append(result.content)
                 await _save_msg(deps, message, msg_type.value, result.content)
@@ -352,9 +412,15 @@ async def pipeline(
 
             send_calls = [tc for tc in result.tool_calls if tc["name"] == "send"]
             other_calls = [tc for tc in result.tool_calls if tc["name"] != "send"]
+            logger.info(
+                "[PIPE] branch=tool_calls send=%d other=%d",
+                len(send_calls),
+                len(other_calls),
+            )
 
             for tc in send_calls:
                 if send_count >= MAX_SENDS_PER_LOOP:
+                    logger.warning("[PIPE] send limit reached max=%d", MAX_SENDS_PER_LOOP)
                     break
                 try:
                     reply_result = await send_tool(tc["arguments"], sender=deps.sender, peer=deps.peer)
@@ -366,7 +432,10 @@ async def pipeline(
                 send_count += 1
 
             tc_results: dict[str, str] = {}
+            if other_calls:
+                _report_state(deps, f"LOOP_{step + 1}:Exec_Tools")
             for tc in other_calls:
+                logger.info("[PIPE] executing tool name=%s queued=%s", tc["name"], tc["name"] in WRITE_TOOLS)
                 if tc["name"] == last_tool_name:
                     consecutive_fails += 1
                 else:
@@ -407,6 +476,7 @@ async def pipeline(
                     log_tool_call(deps, tc["name"], tc["arguments"], tr)
 
             if other_calls:
+                logger.info("[PIPE] appended %d tool results to context", len(other_calls))
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
                     "content": result.content or "",
@@ -433,17 +503,18 @@ async def pipeline(
                         "content": tc_results[tc["id"]],
                     })
             elif result.content:
+                logger.info("[PIPE] appended assistant content to context chars=%d", len(result.content))
                 msg: dict[str, Any] = {"role": "assistant", "content": result.content}
                 if result.reasoning_content:
                     msg["reasoning_content"] = result.reasoning_content
                 messages.append(msg)
 
             if not other_calls:
+                logger.info("[PIPE] no remaining tools; ending loop step=%d", step + 1)
                 if result.content:
-                    await deps.sender.send(deps.peer, result.content)
-                    log_send(deps, "content", result.content)
                     responded = True
                     bot_replies.append(result.content)
+                    await _save_msg(deps, message, msg_type.value, result.content)
                 break
         else:
             logger.warning("[LOOP] tool loop exhausted after %d steps, context ~%d msgs",
@@ -455,6 +526,11 @@ async def pipeline(
             last_bot_reply = bot_replies[-1] if bot_replies else ""
             if last_bot_reply:
                 deps.window.add(user_id=str(deps.peer.peer_uid), message=last_bot_reply, is_bot=True)
+            logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
+        else:
+            logger.info("[PIPE] no response produced; window unchanged")
+
+        _report_state(deps, "DONE")
 
     except asyncio.CancelledError:
         logger.info("[PIPE] cancelled for %s", deps.peer.peer_uid)
@@ -465,6 +541,7 @@ async def pipeline(
             await deps.sender.send(deps.peer, f"模型暂时不可用: {e}")
     finally:
         deps.session.clear_pending()
+        logger.info("[PIPE] cleanup start pending_writes=%d", len(_pending_writes))
 
         for tool_name, tool_args, write_fn in _pending_writes:
             try:
@@ -482,3 +559,4 @@ async def pipeline(
             await _recycle_window_if_needed(deps)
         except Exception:
             logger.exception("Window recycle failed")
+        logger.info("[PIPE] cleanup complete")

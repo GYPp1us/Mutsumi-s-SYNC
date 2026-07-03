@@ -113,8 +113,12 @@ async def run(config_path: str = "config.yaml") -> None:
     receiver = MessageReceiver(config.napcat.ws_url, config.napcat.access_token)
     receiver.on_message(scheduler.dispatch)
 
+    await scheduler.startup()
     logger.info("Starting receiver on %s", config.napcat.ws_url)
-    await receiver.run()
+    try:
+        await receiver.run()
+    finally:
+        await scheduler.shutdown()
 
 
 def main() -> None:

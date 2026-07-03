@@ -223,6 +223,7 @@ async def run_tester(config_path: str = "config.yaml") -> None:
     registry = build_registry(config, store)
     sender = _FakeSender()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+    await scheduler.startup()
 
     log_queue: asyncio.Queue[logging.LogRecord] = asyncio.Queue(maxsize=500)
     setup_test_logging(log_queue)
@@ -371,7 +372,7 @@ async def run_tester(config_path: str = "config.yaml") -> None:
             pass
         if receiver:
             await receiver.close()
-        logger.info("测试器退出")
+        await scheduler.shutdown()
 
 
 def main() -> None:

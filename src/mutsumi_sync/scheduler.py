@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .memory.window import MessageWindow
 from .memory.session import SessionState
@@ -28,6 +29,9 @@ class PipelineDeps:
     session: SessionState
     peer: Peer
     group_key: str
+    token_counter: dict | None = None
+    report_state: Callable[[str], None] | None = None
+    report_llm_health: Callable[[bool], None] | None = None
 
 
 class PipelineScheduler:
@@ -48,6 +52,11 @@ class PipelineScheduler:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._pending_events: dict[str, list[MessageEvent]] = {}
         self._debounce_timers: dict[str, asyncio.Task[None]] = {}
+        self._pipeline_states: dict[str, str] = {}
+        self._last_active_key: str | None = None
+        self.llm_healthy: bool = True
+        self.token_usage: dict = {"input": 0, "output": 0, "cache_hit": 0, "cache_miss": 0}
+        self.on_state_change: Callable[[], None] | None = None
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
@@ -60,6 +69,31 @@ class PipelineScheduler:
         if event.message_type == "group" and event.group_id:
             return Peer(chat_type=2, peer_uid=str(event.group_id))
         return Peer(chat_type=1, peer_uid=str(event.user_id))
+
+    def _notify(self) -> None:
+        if self.on_state_change:
+            self.on_state_change()
+
+    def _make_report_state(self, key: str) -> Callable[[str], None]:
+        def report(state: str) -> None:
+            self._pipeline_states[key] = state
+            self._last_active_key = key
+            self._notify()
+        return report
+
+    def _make_report_llm_health(self) -> Callable[[bool], None]:
+        def report(healthy: bool) -> None:
+            self.llm_healthy = healthy
+            self._notify()
+        return report
+
+    def set_pipeline_state(self, key: str, state: str) -> None:
+        self._pipeline_states[key] = state
+        self._notify()
+
+    def clear_pipeline_state(self, key: str) -> None:
+        self._pipeline_states.pop(key, None)
+        self._notify()
 
     def _ensure_user_state(self, key: str) -> None:
         if key not in self._windows:
@@ -135,22 +169,31 @@ class PipelineScheduler:
             session=self._sessions[key],
             peer=PEER,
             group_key=key,
+            token_counter=self.token_usage,
+            report_state=self._make_report_state(key),
+            report_llm_health=self._make_report_llm_health(),
         )
 
         logger.info("[SCHED] dispatching merged key=%s type=%s msgs=%d", key, final_type.value, len(events))
 
-        task = asyncio.create_task(
-            _task_wrapper(
-                pipeline(
+        async def _run():
+            try:
+                await pipeline(
                     message=merged_message,
                     msg_type=final_type,
                     image_file=final_image_file,
                     image_url=final_image_url,
                     deps=deps,
-                ),
-                key,
-            )
-        )
+                )
+            except asyncio.CancelledError:
+                self.set_pipeline_state(key, "CANCELLED")
+                raise
+            except Exception:
+                logger.exception("[SCHED] unhandled error in pipeline for %s", key)
+            finally:
+                self.clear_pipeline_state(key)
+
+        task = asyncio.create_task(_run())
         self._tasks[key] = task
 
     async def _dispatch_direct(self, key: str, event: MessageEvent, classified) -> None:
@@ -169,22 +212,31 @@ class PipelineScheduler:
             session=self._sessions[key],
             peer=PEER,
             group_key=key,
+            token_counter=self.token_usage,
+            report_state=self._make_report_state(key),
+            report_llm_health=self._make_report_llm_health(),
         )
 
         logger.info("[SCHED] dispatching direct key=%s type=%s", key, classified.msg_type.value)
 
-        task = asyncio.create_task(
-            _task_wrapper(
-                pipeline(
+        async def _run():
+            try:
+                await pipeline(
                     message=classified.content or event.raw_message,
                     msg_type=classified.msg_type,
                     image_file=classified.image_file,
                     image_url=classified.image_url,
                     deps=deps,
-                ),
-                key,
-            )
-        )
+                )
+            except asyncio.CancelledError:
+                self.set_pipeline_state(key, "CANCELLED")
+                raise
+            except Exception:
+                logger.exception("[SCHED] unhandled error in pipeline for %s", key)
+            finally:
+                self.clear_pipeline_state(key)
+
+        task = asyncio.create_task(_run())
         self._tasks[key] = task
 
     async def cancel_user(self, key: str) -> None:
@@ -199,6 +251,7 @@ class PipelineScheduler:
                 await task
             except asyncio.CancelledError:
                 pass
+        self._notify()
 
     def active_keys(self) -> list[str]:
         return [k for k, t in self._tasks.items() if not t.done()]
@@ -210,14 +263,56 @@ class PipelineScheduler:
             "total_sessions": len(self._sessions),
             "task_keys": list(self._tasks.keys()),
             "config_dirty": self.config.dirty,
+            "registry_version": self.registry.version,
+            "token_usage": dict(self.token_usage),
+            "pipeline_states": dict(self._pipeline_states),
+            "last_active_key": self._last_active_key,
+            "llm_healthy": self.llm_healthy,
         }
 
+    async def startup(self) -> None:
+        logger.info("[STARTUP] restoring windows from database")
+        group_keys = await self.store.get_message_group_keys()
 
-async def _task_wrapper(coro, key: str) -> None:
-    try:
-        await coro
-    except asyncio.CancelledError:
-        logger.info("[SCHED] task cancelled: %s", key)
-        raise
-    except Exception:
-        logger.exception("[SCHED] unhandled error in pipeline for %s", key)
+        for gk in group_keys:
+            boundary = await self.store.get_newest_summary(gk)
+            after_id = boundary["last_message_id"] if boundary else 0
+
+            uncovered = await self.store.get_messages_after(gk, after_id, limit=200)
+            if not uncovered:
+                continue
+
+            window = MessageWindow()
+            for msg in uncovered:
+                try:
+                    parsed = json.loads(msg["content"])
+                except (json.JSONDecodeError, TypeError):
+                    window.add(user_id=gk, message=msg["content"][:500])
+                    continue
+
+                if isinstance(parsed, dict):
+                    user_text = parsed.get("user", "")
+                    bot_text = parsed.get("bot", "")
+                    if user_text:
+                        window.add(user_id=gk, message=str(user_text))
+                    if bot_text:
+                        window.add(user_id=gk, message=str(bot_text), is_bot=True)
+                else:
+                    window.add(user_id=gk, message=str(parsed)[:500])
+
+            self._windows[gk] = window
+            self._ensure_user_state(gk)
+            logger.info("[STARTUP] restored window %s: %d items (after id %d)", gk, len(window), after_id)
+
+    async def shutdown(self) -> None:
+        logger.info("[SHUTDOWN] stopping scheduler with %d windows", len(self._windows))
+
+        for key in list(self._keys()):
+            self._cleanup_debounce(key)
+            await self.cancel_user(key)
+
+        await self.store.close()
+        logger.info("[SHUTDOWN] complete")
+
+    def _keys(self) -> list[str]:
+        return list(self._windows.keys())

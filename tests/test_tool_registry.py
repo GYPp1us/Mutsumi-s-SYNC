@@ -67,7 +67,31 @@ class TestToolRegistry:
         ))
         tools, version = r.snapshot()
         assert len(tools) == 1
-        assert version == 0
+        assert version == 1
+
+    def test_version_increments_on_mutation(self):
+        r = ToolRegistry()
+        assert r.version == 0
+
+        r.register(Tool(
+            name="t1",
+            description="",
+            parameters={},
+            handler=self._echo,
+        ))
+        first_version = r.version
+        assert first_version == 1
+
+        r.register(Tool(
+            name="t2",
+            description="",
+            parameters={},
+            handler=self._echo,
+        ))
+        assert r.version == 2
+
+        r.remove("t1")
+        assert r.version == 3
 
     async def test_execute_error(self):
         async def bad_handler(args: dict) -> str:

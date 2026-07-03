@@ -41,6 +41,10 @@ class MessageReceiver:
         self._handler: Callable[[MessageEvent], Awaitable[None]] | None = None
         self._running = False
 
+    @property
+    def is_connected(self) -> bool:
+        return self._ws is not None and self._running
+
     def on_message(self, handler: Callable[[MessageEvent], Awaitable[None]]) -> None:
         self._handler = handler
 

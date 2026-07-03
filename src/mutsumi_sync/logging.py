@@ -35,8 +35,6 @@ def log_context(messages: list[dict], deps: PipelineDeps) -> None:
             ]
             tc_info = f" {_DIM}[tc: {', '.join(tc_names)}]{_RESET}"
         preview = content_str.replace("\n", "\\n")
-        if len(preview) > 150:
-            preview = preview[:147] + "..."
         lines.append(f"{_DIM}[{role}]{_RESET} {preview}{tc_info}")
         if "tool_call_id" in msg:
             lines.append(f"{_DIM}  \u21b3 id={msg['tool_call_id']}{_RESET}")

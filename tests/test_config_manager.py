@@ -1,4 +1,5 @@
 import pytest
+import yaml
 from src.mutsumi_sync.config import Config
 from src.mutsumi_sync.tools.config_manager import config_manager
 
@@ -21,21 +22,22 @@ class TestConfigManager:
 
     async def test_set(self):
         c = self.make_config()
-        orig_save = c.save
+        orig_save_key = c.save_key
         called = False
 
-        def fake_save():
+        def fake_save_key(key: str):
             nonlocal called
             called = True
+            assert key == "session.timeout"
 
-        object.__setattr__(c, "save", fake_save)
+        object.__setattr__(c, "save_key", fake_save_key)
         try:
             result = await config_manager(
                 {"action": "set", "key": "session.timeout", "value": 120},
                 config=c,
             )
         finally:
-            object.__setattr__(c, "save", orig_save)
+            object.__setattr__(c, "save_key", orig_save_key)
 
         assert result.startswith("[OK]")
         assert c.session.timeout == 120
@@ -63,3 +65,33 @@ class TestConfigManager:
         c = self.make_config()
         result = await config_manager({"action": "delete"}, config=c)
         assert result.startswith("[Error:")
+
+    async def test_set_updates_only_target_yaml_line(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "# keep this comment\n"
+            "model:\n"
+            "  provider: deepseek\n"
+            "  temperature: 0.7\n"
+            "napcat:\n"
+            "  ws_url: ws://example\n",
+            encoding="utf-8",
+        )
+        c = Config.load(str(path))
+
+        result = await config_manager(
+            {"action": "set", "key": "model.temperature", "value": "0.2"},
+            config=c,
+        )
+
+        assert result.startswith("[OK]")
+        saved = path.read_text(encoding="utf-8")
+        assert saved == (
+            "# keep this comment\n"
+            "model:\n"
+            "  provider: deepseek\n"
+            "  temperature: 0.2\n"
+            "napcat:\n"
+            "  ws_url: ws://example\n"
+        )
+        assert yaml.safe_load(saved)["model"]["temperature"] == 0.2

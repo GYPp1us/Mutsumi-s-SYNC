@@ -145,6 +145,32 @@ async def test_group_key():
     os.unlink(store_path)
 
 
+async def test_shutdown_does_not_write_placeholder_summaries():
+    config = Config.load("config.example.yaml")
+    registry = ToolRegistry()
+    sender = FakeSender()
+    store, store_path = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+
+    key = "private:shutdown"
+    scheduler._ensure_user_state(key)
+    scheduler._windows[key].add(user_id=key, message="important user context")
+    scheduler._windows[key].add(user_id=key, message="important assistant context", is_bot=True)
+
+    await scheduler.shutdown()
+
+    reopened = MessageStore(db_path=store_path)
+    await reopened.initialize()
+    try:
+        summaries = await reopened.get_summaries(key)
+        assert all("archived on shutdown" not in s["summary"] for s in summaries)
+        assert summaries == []
+    finally:
+        await reopened.close()
+        os.unlink(store_path)
+
+
 async def main():
     await test_scheduler()
     await test_cancel()

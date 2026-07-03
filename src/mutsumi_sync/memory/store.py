@@ -66,6 +66,7 @@ class MessageStore:
             seq         INTEGER NOT NULL,
             source      TEXT    NOT NULL,
             summary     TEXT    NOT NULL,
+            last_message_id INTEGER DEFAULT 0,
             created_at  REAL    NOT NULL DEFAULT (julianday('now'))
         );
 
@@ -107,6 +108,14 @@ class MessageStore:
         self._conn = await aiosqlite.connect(str(self.db_path))
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(self._DDL)
+
+        try:
+            await self._conn.execute(
+                "ALTER TABLE summaries ADD COLUMN last_message_id INTEGER DEFAULT 0"
+            )
+        except Exception:
+            pass
+
         await self._conn.commit()
         logger.info("MessageStore initialized at %s", self.db_path)
 
@@ -193,7 +202,7 @@ class MessageStore:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
-    async def add_summary(self, group_key: str, source: str, summary: str) -> int:
+    async def add_summary(self, group_key: str, source: str, summary: str, last_message_id: int = 0) -> int:
         self._ensure_initialized()
         cursor = await self._conn.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM summaries WHERE group_key = ?",
@@ -203,8 +212,8 @@ class MessageStore:
         next_seq = row[0] if row else 1
 
         cursor = await self._conn.execute(
-            "INSERT INTO summaries (group_key, seq, source, summary) VALUES (?, ?, ?, ?)",
-            (group_key, next_seq, source, summary),
+            "INSERT INTO summaries (group_key, seq, source, summary, last_message_id) VALUES (?, ?, ?, ?, ?)",
+            (group_key, next_seq, source, summary, last_message_id),
         )
         await self._conn.commit()
         return cursor.lastrowid
@@ -212,7 +221,7 @@ class MessageStore:
     async def get_summaries(self, group_key: str, limit: int = 180) -> list[dict]:
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT id, group_key, seq, source, summary FROM summaries WHERE group_key = ? ORDER BY seq ASC LIMIT ?",
+            "SELECT id, group_key, seq, source, summary, last_message_id FROM summaries WHERE group_key = ? ORDER BY seq ASC LIMIT ?",
             (group_key, limit),
         )
         rows = await cursor.fetchall()
@@ -299,6 +308,57 @@ class MessageStore:
             await self._conn.close()
             self._conn = None
             logger.info("MessageStore closed")
+
+    async def get_message_group_keys(self) -> list[str]:
+        """Return all distinct group_keys from messages table."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute("SELECT DISTINCT group_key FROM messages")
+        rows = await cursor.fetchall()
+        return [r["group_key"] for r in rows]
+
+    async def get_newest_summary(self, group_key: str) -> dict | None:
+        """Return the summary with the highest last_message_id for a group."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, seq, source, summary, last_message_id FROM summaries "
+            "WHERE group_key = ? ORDER BY last_message_id DESC LIMIT 1",
+            (group_key,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "seq": row["seq"], "source": row["source"],
+                "summary": row["summary"], "last_message_id": row["last_message_id"]}
+
+    async def get_messages_after(self, group_key: str, after_id: int, limit: int = 200) -> list[dict]:
+        """Return messages with id > after_id, ordered by id ASC."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, date, group_key, category, content FROM messages "
+            "WHERE group_key = ? AND id > ? ORDER BY id ASC LIMIT ?",
+            (group_key, after_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [{"id": r["id"], "date": r["date"], "category": r["category"], "content": r["content"]}
+                for r in rows]
+
+    async def get_max_message_id(self, group_key: str) -> int:
+        """Return the highest message id for a group, or 0 if none."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT MAX(id) FROM messages WHERE group_key = ?", (group_key,)
+        )
+        row = await cursor.fetchone()
+        return row[0] or 0
+
+    async def set_last_message_id(self, summary_id: int, last_message_id: int) -> None:
+        """Set the coverage boundary for a summary row."""
+        self._ensure_initialized()
+        await self._conn.execute(
+            "UPDATE summaries SET last_message_id = ? WHERE id = ?",
+            (last_message_id, summary_id),
+        )
+        await self._conn.commit()
 
     def _ensure_initialized(self) -> None:
         if self._conn is None:
