@@ -124,11 +124,11 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     ))
 
     async def _send(args: dict, **deps) -> str:
-        return await send_tool(args, sender=deps.get("sender"), peer=deps.get("peer"))
+        return await send_tool(args, sender=deps.get("sender"), peer=deps.get("peer"), config=config)
 
     registry.register(Tool(
         name="send",
-        description="发送消息到用户。支持 text/image/face/at/reply/forward 段类型。",
+        description="发送消息到用户。支持 text/image/markdown_image/face/at/reply/forward 段类型。",
         parameters=SEND_TOOL_SCHEMA,
         handler=_send,
     ))

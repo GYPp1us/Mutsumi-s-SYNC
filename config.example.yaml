@@ -28,3 +28,12 @@ summarizer:
   api_key: ''
   base_url: https://api.deepseek.com/v1
   temperature: 0.3
+render:
+  markdown_image:
+    enabled: false
+    node_path: node
+    script_path: tools/markdown-renderer/render.mjs
+    output_dir: data/generated/markdown
+    timeout_seconds: 20
+    viewport_width: 960
+    max_height: 12000

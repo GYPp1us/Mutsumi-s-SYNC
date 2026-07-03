@@ -1,0 +1,181 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  font-family:
+    "KaTeX_Main",
+    "CMU Serif",
+    "Latin Modern Roman",
+    "Noto Serif CJK SC",
+    "Source Han Serif SC",
+    "Songti SC",
+    "SimSun",
+    serif;
+}
+
+.markdown-body {
+  width: 920px;
+  padding: 34px 38px;
+  color: #1f2937;
+  background: #fffdfa;
+  border: 1px solid #ddd8cf;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1.62;
+  font-family:
+    "KaTeX_Main",
+    "CMU Serif",
+    "Latin Modern Roman",
+    "Noto Serif CJK SC",
+    "Source Han Serif SC",
+    "Songti SC",
+    "SimSun",
+    serif;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+h1,
+h2,
+h3 {
+  color: #111827;
+  line-height: 1.22;
+  margin: 1.2em 0 0.55em;
+  font-family:
+    "KaTeX_Main",
+    "Noto Serif CJK SC",
+    "Source Han Serif SC",
+    "Songti SC",
+    "SimSun",
+    serif;
+}
+
+h1 {
+  font-size: 34px;
+  border-bottom: 2px solid #ebe3d5;
+  padding-bottom: 0.25em;
+}
+
+h2 {
+  font-size: 27px;
+}
+
+h3 {
+  font-size: 22px;
+}
+
+p,
+ul,
+ol,
+blockquote,
+pre,
+table {
+  margin: 0.8em 0;
+}
+
+blockquote {
+  padding: 0.4em 1em;
+  color: #4b5563;
+  background: #f6f1e7;
+  border-left: 5px solid #d2b48c;
+}
+
+code {
+  font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", "Noto Sans Mono CJK SC", monospace;
+  font-size: 0.92em;
+}
+
+p code,
+li code {
+  padding: 0.1em 0.35em;
+  color: #9a3412;
+  background: #fff1e7;
+  border-radius: 5px;
+}
+
+em,
+i {
+  font-family:
+    "KaTeX_Main",
+    "CMU Serif",
+    "Latin Modern Roman",
+    "Noto Serif CJK SC",
+    "Source Han Serif SC",
+    "Songti SC",
+    "SimSun",
+    serif;
+  font-style: italic;
+}
+
+pre.hljs {
+  padding: 18px 20px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+pre.hljs code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border: 1px solid #d9d2c8;
+  padding: 8px 10px;
+}
+
+th {
+  background: #f6f1e7;
+}
+
+.katex-display {
+  overflow: hidden;
+  padding: 0.45em 0;
+  margin: 1em 0;
+  font-size: 1.16em;
+}
+
+.katex {
+  font-size: 1.06em;
+}
+
+.katex,
+.katex * {
+  text-rendering: geometricPrecision;
+}
+
+.katex .mathnormal,
+.katex .mord.mathnormal {
+  font-family: "KaTeX_Math", "KaTeX_Main", "Times New Roman", serif;
+}
+
+.katex .amsrm,
+.katex .mathbb,
+.katex .textbb {
+  font-family: "KaTeX_AMS", "KaTeX_Main", "Times New Roman", serif;
+}
+
+.mermaid {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #d6dde8;
+  border-radius: 8px;
+}

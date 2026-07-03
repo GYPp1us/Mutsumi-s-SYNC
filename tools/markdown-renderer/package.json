@@ -1,0 +1,16 @@
+{
+  "name": "mutsumi-markdown-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node render.mjs --check"
+  },
+  "dependencies": {
+    "@vscode/markdown-it-katex": "^1.1.1",
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.1.0",
+    "mermaid": "^11.4.1",
+    "playwright": "^1.49.1"
+  }
+}

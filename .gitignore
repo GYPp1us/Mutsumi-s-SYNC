@@ -35,3 +35,6 @@ data/
 
 # Worktrees
 .worktrees/
+
+# Node renderer dependencies
+tools/markdown-renderer/node_modules/

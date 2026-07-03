@@ -50,6 +50,20 @@ class SessionConfig(BaseModel):
     timeout: int = 300
 
 
+class MarkdownImageRenderConfig(BaseModel):
+    enabled: bool = False
+    node_path: str = "node"
+    script_path: str = "tools/markdown-renderer/render.mjs"
+    output_dir: str = "data/generated/markdown"
+    timeout_seconds: float = 20.0
+    viewport_width: int = 960
+    max_height: int = 12000
+
+
+class RenderConfig(BaseModel):
+    markdown_image: MarkdownImageRenderConfig = MarkdownImageRenderConfig()
+
+
 class Config(BaseModel):
     napcat: NapcatConfig = NapcatConfig()
     model: ModelConfig = ModelConfig()
@@ -57,6 +71,7 @@ class Config(BaseModel):
     session: SessionConfig = SessionConfig()
     memory: MemoryConfig = MemoryConfig()
     summarizer: SummarizerConfig = SummarizerConfig()
+    render: RenderConfig = RenderConfig()
     system_prompt: str = ""
 
     _config_path: str | None = None

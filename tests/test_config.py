@@ -9,12 +9,32 @@ class TestConfig:
         assert c.model.model == "deepseek-chat"
         assert c.context.window_max_tokens == 100000
         assert c.session.timeout == 300
+        assert c.render.markdown_image.enabled is False
+        assert c.render.markdown_image.node_path == "node"
+        assert c.render.markdown_image.output_dir == "data/generated/markdown"
         assert c.dirty is False
 
     def test_load_missing_file(self):
         c = Config.load("nonexistent.yaml")
         assert isinstance(c, Config)
         assert c._config_path is not None
+
+    def test_load_render_config(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "render:\n"
+            "  markdown_image:\n"
+            "    enabled: true\n"
+            "    node_path: node-custom\n"
+            "    output_dir: out/markdown\n",
+            encoding="utf-8",
+        )
+
+        c = Config.load(str(path))
+
+        assert c.render.markdown_image.enabled is True
+        assert c.render.markdown_image.node_path == "node-custom"
+        assert c.render.markdown_image.output_dir == "out/markdown"
 
     def test_set_simple(self):
         c = Config()
