@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from enum import Enum
-from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -7,38 +9,51 @@ class MessageType(Enum):
     SHORT_TEXT = "short_text"
     LONG_TEXT = "long_text"
     IMAGE = "image"
-    MEME = "meme"
+    MEDIA = "media"
 
 
 class ClassifiedMessage(BaseModel):
     raw: str
     msg_type: MessageType
-    content: Optional[str] = None
-    image_md5: Optional[str] = None
+    content: str | None = None
+    image_file: str | None = None
+    image_url: str | None = None
 
 
-def classify_message(message: list, raw_message: str) -> ClassifiedMessage:
-    """分类消息类型"""
-    # 检查图片
+def classify_message(message: list[dict], raw_message: str) -> ClassifiedMessage:
+    text_parts: list[str] = []
+
     for seg in message:
-        if seg.get("type") == "image":
+        seg_type = seg.get("type", "")
+
+        if seg_type == "text":
+            text_parts.append(seg.get("data", {}).get("text", ""))
+
+        elif seg_type == "image":
+            data = seg.get("data", {})
             return ClassifiedMessage(
                 raw=raw_message,
                 msg_type=MessageType.IMAGE,
-                image_md5=seg.get("data", {}).get("file", "").split(".")[-1]
+                image_file=data.get("file"),
+                image_url=data.get("url"),
             )
-    
-    # 检查文字长度
-    text_len = len(raw_message)
-    if text_len < 50:
+
+        elif seg_type in ("record", "video", "forward"):
+            return ClassifiedMessage(
+                raw=raw_message,
+                msg_type=MessageType.MEDIA,
+            )
+
+    combined = "".join(text_parts)
+    if len(combined) < 50:
         return ClassifiedMessage(
             raw=raw_message,
             msg_type=MessageType.SHORT_TEXT,
-            content=raw_message
+            content=combined,
         )
     else:
         return ClassifiedMessage(
             raw=raw_message,
             msg_type=MessageType.LONG_TEXT,
-            content=raw_message
+            content=combined,
         )

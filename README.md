@@ -1,109 +1,227 @@
-# Mutsumi's SYNC
+# Mutsumi's SYNC v3
 
-QQ LLM 聊天机器人，基于 NapCat 框架，支持函数调用和窗口化 TUI。
+Mutsumi's SYNC v3 is an asynchronous QQ chatbot built on NapCat. It provides an OpenAI-compatible LLM pipeline, cancellable per-session scheduling, tool calling, long-term memory, and TUI tooling for local debugging.
 
-## 功能特性
+The project was rewritten from the legacy v2 codebase. The current v3 line focuses on a maintainable core: one async pipeline function, scheduler-owned state, explicit dependency injection, and observable logs.
 
-- **消息接收** - WebSocket 监听 NapCat 消息
-- **消息发送** - HTTP API 发送回复
-- **函数调用** - LangChain Tool 装饰器支持多轮函数调用
-  - `config_manager` - 配置管理（get/set/list/reload）
-  - `http_api_call` - 通用 HTTP 请求
-- **窗口化 TUI** - 交互式终端界面
-  - 多对话管理（按用户分组）
-  - 实时状态监控（AI API、NapCat、消息计数）
-  - 详情查看（Tool Calls 详情）
+## Features
 
-## 快速开始
+- NapCat WebSocket message receiving and HTTP sending.
+- Per-user/per-group cancellable pipeline tasks.
+- OpenAI-compatible LLM provider with DeepSeek reasoning support.
+- Built-in tool registry with hot snapshot/version tracking.
+- SQLite message store, summaries, self notes, and media storage.
+- Context assembly with non-truncated CONTEXT logs.
+- Interactive tester with `/inject` and `/break`.
+- Dashboard TUI with selectable colored logs, scrolling, copy support, command history, config commands, and memory view.
+- `send` tool support for text, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
+- Optional Node/Playwright Markdown renderer for LaTeX, highlighted code blocks, and Mermaid diagrams.
 
-### 安装依赖
+## Repository Layout
 
-```bash
-pip install -r requirements.txt
+```text
+src/mutsumi_sync/
+  main.py                  # production entry and tool registration
+  scheduler.py             # PipelineScheduler, task lifecycle, shared state
+  pipeline.py              # single async message-processing function
+  config.py                # Pydantic config and YAML persistence
+  logging.py               # logging helpers
+  message/                 # NapCat receiver/sender/classifier
+  memory/                  # window/session/store
+  tools/                   # built-in tools
+  tui/
+    tester.py              # interactive test runner
+    dashboard.py           # full-screen dashboard
+tools/markdown-renderer/   # optional Node renderer for Markdown images
+scripts/                   # optional install scripts
+tests/                     # pytest suite
+bottle/docs/               # original v3 architecture design references
 ```
 
-### 配置
+## Requirements
 
-编辑 `config.yaml`：
+- Python 3.11+
+- NapCat for real QQ I/O
+- Node.js 20+ only if `send.markdown_image` is enabled
+
+Python dependencies are listed in `requirements.txt`.
+
+## Quick Start
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+Copy-Item config.example.yaml config.yaml
+# Edit config.yaml.
+
+$env:PYTHONPATH = "."
+python -m src.mutsumi_sync.main
+```
+
+Linux/macOS:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp config.example.yaml config.yaml
+# Edit config.yaml.
+
+PYTHONPATH=. python -m src.mutsumi_sync.main
+```
+
+## Configuration
+
+`config.yaml` is gitignored. Start from `config.example.yaml`.
+
+Important sections:
 
 ```yaml
 napcat:
-  ws_url: "ws://localhost:3001/ws"
-  http_url: "http://localhost:3000"
-  access_token: "your_token"
+  ws_url: ws://localhost:3000
+  http_url: http://localhost:3000
+  access_token: ""
 
 model:
-  provider: "deepseek"
-  model: "deepseek-chat"
-  api_key: "your_api_key"
-  base_url: "https://api.deepseek.com/"
-
-system_prompt: |
-  你是一个友好、热情的 AI 助手...
+  provider: deepseek
+  model: deepseek-chat
+  api_key: ""
+  base_url: https://api.deepseek.com/v1
+  temperature: 0.5
+  reasoning_effort: max
 
 context:
-  window_size: 20
-  max_tokens: 4096
+  window_max_tokens: 100000
+  window_min_tokens: 50000
+  summaries_max_count: 180
+  summaries_min_count: 90
+
+render:
+  markdown_image:
+    enabled: false
 ```
 
-### 运行
+If no LLM API key is configured, the pipeline can still run in local stub/testing flows.
+
+## Interactive Tester
+
+The tester is the fastest way to exercise the pipeline without NapCat:
+
+```powershell
+$env:PYTHONPATH = "."
+python -m src.mutsumi_sync.tui.tester
+```
+
+Examples:
+
+```text
+/inject private 123 hello
+/inject group 456 123 hello from group
+/break private 123
+/connect
+```
+
+`/connect` switches from FakeSender to real NapCat I/O.
+
+## Dashboard TUI
+
+```powershell
+$env:PYTHONPATH = "."
+python -m src.mutsumi_sync.tui.dashboard config.yaml
+```
+
+Dashboard highlights:
+
+- Real-time colored logs.
+- Log selection and Ctrl+C copy.
+- PageUp/PageDown scrolling independent from command cursor focus.
+- Command history with Up/Down.
+- `/watch`, `/auto`, `/memory`, `/config`, `/inject`, `/break`, `/connect`.
+
+## Markdown Image Sending
+
+The `send` tool can render Markdown source into a PNG and send it as an image segment:
+
+```json
+{
+  "markdown_image": "# Report\n\n$$E=mc^2$$\n\n```python\nprint('hello')\n```\n\n```mermaid\ngraph TD; A-->B\n```"
+}
+```
+
+Install the optional renderer:
+
+Windows:
+
+```powershell
+.\scripts\install_markdown_renderer.ps1
+```
+
+Linux:
 
 ```bash
-# 启动 TUI（窗口化界面）
-python start_tui.py
-
-# 或启动简单模式
-python start.py
+sh scripts/install_markdown_renderer.sh
 ```
 
-## TUI 操作
+Then enable:
 
-| 按键 | 功能 |
-|------|------|
-| ← → | 切换用户/对话 |
-| ↑ ↓ | 切换对话轮次 |
-| Enter | 查看详情 |
-| Esc | 返回 |
-
-## 项目结构
-
-```
-src/mutsumi_sync/
-├── bot.py              # 主机器人
-├── config.py           # 配置加载
-├── message/
-│   ├── receiver.py    # WebSocket 接收
-│   ├── sender.py      # HTTP 发送
-│   └── classifier.py  # 消息分类
-├── processor/
-│   ├── pipeline.py    # LLM 对话管道
-│   ├── tools.py       # Tool 定义
-│   ├── vector.py      # 向量匹配
-│   ├── dedup.py       # 消息防抖
-│   └── auth.py        # 权限管理
-├── tui/               # 窗口化 TUI
-│   ├── app.py         # 主应用
-│   ├── storage.py     # 对话存储
-│   ├── widgets/       # 组件
-│   └── screens/       # 屏幕
-├── memory/
-│   ├── window.py     # 滑动窗口
-│   └── postgres.py   # PostgreSQL
-└── cache/
-    └── meme.py       # 表情包缓存
+```yaml
+render:
+  markdown_image:
+    enabled: true
 ```
 
-## 日志
+The renderer uses:
 
-- 日志文件: `./logs/mutsumi.log`
-- 级别: DEBUG（写入文件）/ INFO（TUI 显示）
+- `markdown-it`
+- KaTeX fonts and rendering
+- `highlight.js`
+- Mermaid
+- Playwright Chromium screenshots
 
-## 测试
+The generated PNG files are written to `data/generated/markdown/` by default.
 
-```bash
-pytest tests/ -v
+## Tests
+
+```powershell
+$env:PYTHONPATH = "."
+python -m pytest tests/ -q
 ```
 
-## 许可证
+Optional renderer check:
 
-MIT
+```powershell
+cd tools/markdown-renderer
+npm run check
+```
+
+## Architecture Notes
+
+The core invariant is that `pipeline()` remains one async function. It receives all dependencies through `PipelineDeps` and should not own global state. Scheduler owns shared config/tool/store/sender state plus per-session windows, sessions, and tasks.
+
+Cancellation is native asyncio cancellation: a newer message cancels the previous task for the same key via `Task.cancel()`.
+
+Tool registry changes are tracked by a monotonic `registry.version`. Pipelines compare their snapshot version after tool calls so same-invocation tool changes are visible on the next LLM round.
+
+## Git Hygiene
+
+Do not commit:
+
+- `config.yaml`
+- `.env`
+- `data/`
+- `tools/markdown-renderer/node_modules/`
+- local logs or generated cache files
+
+Use Chinese conventional commit style, for example:
+
+```text
+feat: 支持send工具渲染Markdown图片
+fix: 完善dashboard日志与上下文管理
+docs: 更新v3说明文档
+```
+

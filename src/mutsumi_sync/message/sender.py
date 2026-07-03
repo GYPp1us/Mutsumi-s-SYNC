@@ -1,8 +1,9 @@
-import asyncio
+from __future__ import annotations
+
 import logging
+from typing import Iterable
+
 import httpx
-from typing import Union, Optional
-from urllib.parse import urljoin
 from pydantic import BaseModel
 
 logger = logging.getLogger("mutsumi.sender")
@@ -14,41 +15,73 @@ class Peer(BaseModel):
 
 
 class MessageSender:
-    def __init__(self, http_url: str, access_token: str = None):
-        self.http_url = http_url.rstrip('/')
+    def __init__(self, http_url: str, access_token: str = ""):
+        self.http_url = http_url.rstrip("/")
         self.access_token = access_token
 
-    async def send(self, peer: Peer, message: Union[str, list]) -> dict:
-        if isinstance(message, str):
-            message = [{"type": "text", "data": {"text": message}}]
-        
-        url = f"{self.http_url}/send_private_msg" if peer.chat_type == 1 else f"{self.http_url}/send_group_msg"
-        
-        params = {}
-        if peer.chat_type == 1:
-            params["user_id"] = peer.peer_uid
-        else:
-            params["group_id"] = peer.peer_uid
-        params["message"] = message
-        
+    def _token_url(self, path: str) -> str:
+        url = f"{self.http_url}{path}"
         if self.access_token:
             url = f"{url}?access_token={self.access_token}"
-            logger.info(f"\033[33m[TOKEN]\033[0m HTTP URL with token: {url}")
-        
-        msg_type = "private" if peer.chat_type == 1 else "group"
-        logger.info(f"[SEND] Sending to {msg_type}: {message[0]['data']['text'][:30]}...")
-        
+        return url
+
+    async def send(self, peer: Peer, message: str | list[dict]) -> dict:
+        if isinstance(message, str):
+            segments = [{"type": "text", "data": {"text": message}}]
+        else:
+            segments = message
+
+        if peer.chat_type == 1:
+            url = self._token_url("/send_private_msg")
+            body = {"user_id": peer.peer_uid, "message": segments}
+        else:
+            url = self._token_url("/send_group_msg")
+            body = {"group_id": peer.peer_uid, "message": segments}
+
+        label = "private" if peer.chat_type == 1 else "group"
+        preview = _preview(segments)
+        logger.info("[SEND] %s: %s", label, preview)
+
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json=params, timeout=10)
+                resp = await client.post(url, json=body, timeout=10)
                 result = resp.json()
-                
                 if resp.status_code == 200 and result.get("status") == "ok":
-                    logger.info(f"\033[32m[SEND OK]\033[0m message_id: {result.get('data', {}).get('message_id', 'unknown')}")
+                    logger.info("[SEND OK] message_id:%s",
+                                result.get("data", {}).get("message_id", "?"))
                 else:
-                    logger.error(f"\033[31m[SEND FAIL]\033[0m status: {resp.status_code}, result: {result}")
-                
+                    logger.error("[SEND FAIL] status:%s result:%s",
+                                 resp.status_code, result)
                 return result
-        except Exception as e:
-            logger.error(f"\033[31m[SEND ERROR]\033[0m {e}")
-            return {"status": "error", "message": str(e)}
+        except Exception:
+            logger.exception("[SEND ERROR]")
+            return {"status": "error"}
+
+    async def send_poke(self, peer: Peer) -> dict:
+        label = "private" if peer.chat_type == 1 else "group"
+        logger.info("[POKE] %s:%s", label, peer.peer_uid)
+
+        if peer.chat_type == 1:
+            url = self._token_url("/friend_poke")
+            body = {"user_id": peer.peer_uid}
+        else:
+            url = self._token_url("/group_poke")
+            body = {"group_id": peer.peer_uid, "user_id": peer.peer_uid}
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json=body, timeout=10)
+                result = resp.json()
+                if resp.status_code != 200 or result.get("status") != "ok":
+                    logger.warning("[POKE FAIL] %s", result)
+                return result
+        except Exception:
+            logger.exception("[POKE ERROR]")
+            return {"status": "error"}
+
+
+def _preview(segments: Iterable[dict]) -> str:
+    for seg in segments:
+        if seg.get("type") == "text":
+            return seg.get("data", {}).get("text", "")
+    return "[non-text]"

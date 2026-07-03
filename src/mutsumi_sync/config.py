@@ -1,98 +1,253 @@
-import yaml
-import json
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any
+
+import yaml
+from dotenv import dotenv_values
 from pydantic import BaseModel
-from typing import Optional, Any
 
 
 class NapcatConfig(BaseModel):
     ws_url: str = "ws://localhost:3000"
     http_url: str = "http://localhost:3000"
-    access_token: Optional[str] = None
+    access_token: str = ""
 
 
 class ModelConfig(BaseModel):
-    provider: str = "openai"
-    model: str = "gpt-4"
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
     temperature: float = 0.7
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com/v1"
+    reasoning_effort: str = "max"
 
 
 class ContextConfig(BaseModel):
-    window_size: int = 20
     max_tokens: int = 4096
+    window_max_tokens: int = 100000
+    window_min_tokens: int = 50000
+    summaries_max_count: int = 180
+    summaries_min_count: int = 90
+    debounce_timeout: float = 1.5
 
 
 class MemoryConfig(BaseModel):
-    pg_connection: str = "postgresql://user:pass@localhost:5432/mutsumi"
-    vector_dim: int = 1536
+    archive_threshold_tokens: int = 100
+    self_note_target_tokens: int = 1000
+    self_note_max_multiplier: float = 2.0
 
 
-class DeduplicationConfig(BaseModel):
-    wait_time: float = 1.0
+class SummarizerConfig(BaseModel):
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com/v1"
+    temperature: float = 0.3
 
 
-class CacheConfig(BaseModel):
-    image_md5: str = "./cache/image_md5.json"
-    meme_desc: str = "./cache/meme_desc.json"
+class SessionConfig(BaseModel):
+    timeout: int = 300
+
+
+class MarkdownImageRenderConfig(BaseModel):
+    enabled: bool = False
+    node_path: str = "node"
+    script_path: str = "tools/markdown-renderer/render.mjs"
+    output_dir: str = "data/generated/markdown"
+    timeout_seconds: float = 20.0
+    viewport_width: int = 960
+    max_height: int = 12000
+
+
+class RenderConfig(BaseModel):
+    markdown_image: MarkdownImageRenderConfig = MarkdownImageRenderConfig()
 
 
 class Config(BaseModel):
     napcat: NapcatConfig = NapcatConfig()
     model: ModelConfig = ModelConfig()
-    system_prompt: str = ""
     context: ContextConfig = ContextConfig()
+    session: SessionConfig = SessionConfig()
     memory: MemoryConfig = MemoryConfig()
-    deduplication: DeduplicationConfig = DeduplicationConfig()
-    cache: CacheConfig = CacheConfig()
-    _config_path: Optional[str] = None
+    summarizer: SummarizerConfig = SummarizerConfig()
+    render: RenderConfig = RenderConfig()
+    system_prompt: str = ""
 
-    def save(self):
+    _config_path: str | None = None
+    dirty: bool = False
+
+    @classmethod
+    def load(cls, config_path: str) -> Config:
+        path = Path(config_path)
+        if not path.exists():
+            path = Path.cwd() / config_path
+
+        if path.exists():
+            raw = yaml.safe_load(open(path, encoding="utf-8")) or {}
+
+            env = dotenv_values(Path(path.parent, ".env"))
+
+            def resolve_env(value: Any) -> Any:
+                if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+                    key = value[2:-1]
+                    return env.get(key, value)
+                if isinstance(value, dict):
+                    return {k: resolve_env(v) for k, v in value.items()}
+                return value
+
+            raw = resolve_env(raw)
+            instance = cls(**raw)
+        else:
+            instance = cls()
+
+        instance._config_path = str(path)
+        return instance
+
+    def set(self, key: str, value: Any) -> str:
+        parts = key.split(".")
+        if not parts:
+            return "[Error: empty key]"
+        if not hasattr(self, parts[0]):
+            return f"[Error: unknown config key: {parts[0]}]"
+
+        current: Any = self
+        for i, part in enumerate(parts[:-1]):
+            current = getattr(current, part, None)
+            if current is None or not isinstance(current, BaseModel):
+                return f"[Error: invalid config path: {key}]"
+
+        last_part = parts[-1]
+        target = getattr(current, last_part, None)
+        if target is None and not hasattr(current, last_part):
+            return f"[Error: unknown config key: {key}]"
+
+        if isinstance(value, str):
+            if isinstance(target, float):
+                value = float(value)
+            elif isinstance(target, int):
+                value = int(value)
+            elif isinstance(target, bool):
+                value = value.lower() in ("true", "1", "yes")
+
+        try:
+            setattr(current, last_part, value)
+        except (TypeError, ValueError) as e:
+            return f"[Error: cannot set {key} to {value}: {e}]"
+
+        self.dirty = True
+        return f"[OK] {key} = {value}"
+
+    def get(self, key: str) -> Any:
+        parts = key.split(".")
+        current: Any = self
+        for part in parts:
+            current = getattr(current, part, None)
+            if current is None:
+                return f"[Error: unknown config key: {key}]"
+        return current
+
+    def save(self) -> None:
         if self._config_path:
-            with open(self._config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(self.model_dump(exclude_none=True), f, allow_unicode=True, default_flow_style=False)
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                yaml.dump(
+                    self.model_dump(exclude_none=True, exclude={"_config_path", "dirty", "system_prompt"}),
+                    f,
+                    allow_unicode=True,
+                    default_flow_style=False,
+                )
 
-    def reload(self):
-        if self._config_path and Path(self._config_path).exists():
-            with open(self._config_path, encoding='utf-8') as f:
-                data = yaml.safe_load(f)
-                if data:
-                    for key, value in data.items():
-                        if hasattr(self, key):
-                            if isinstance(value, dict):
-                                obj = getattr(self, key)
-                                for k, v in value.items():
-                                    if hasattr(obj, k):
-                                        setattr(obj, k, v)
-                            else:
-                                setattr(self, key, value)
+    def save_key(self, key: str) -> None:
+        if not self._config_path:
+            return
 
+        path = Path(self._config_path)
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True) if path.exists() else []
+        parts = key.split(".")
+        if not parts:
+            return
 
-_config_instance: Optional[Config] = None
+        value = self.get(key)
+        if isinstance(value, str) and value.startswith("[Error:"):
+            return
 
+        if len(parts) == 1:
+            self._save_top_level_key(path, lines, parts[0], value)
+            return
 
-def load_config(config_path: str = None) -> Config:
-    global _config_instance
-    
-    if config_path is None:
-        config_path = "config.yaml"
-    
-    path = Path(config_path)
-    if not path.exists():
-        path = Path.cwd() / config_path
-    
-    if path.exists():
-        with open(path, encoding='utf-8') as f:
+        self._save_nested_key(path, lines, parts, value)
+
+    def _format_yaml_scalar(self, value: Any, indent: int = 0) -> str:
+        dumped = yaml.safe_dump(
+            value,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ).strip()
+        if "\n...\n" in f"\n{dumped}\n" or dumped.endswith("\n..."):
+            dumped = "\n".join(line for line in dumped.splitlines() if line != "...")
+        if "\n" not in dumped:
+            return dumped
+        pad = " " * indent
+        return "\n".join(pad + line if line else line for line in dumped.splitlines())
+
+    def _save_top_level_key(self, path: Path, lines: list[str], key: str, value: Any) -> None:
+        replacement = f"{key}: {self._format_yaml_scalar(value)}\n"
+        for i, line in enumerate(lines):
+            if line.startswith(f"{key}:"):
+                lines[i] = replacement
+                path.write_text("".join(lines), encoding="utf-8")
+                return
+        lines.append(replacement)
+        path.write_text("".join(lines), encoding="utf-8")
+
+    def _save_nested_key(self, path: Path, lines: list[str], parts: list[str], value: Any) -> None:
+        section = parts[0]
+        leaf = parts[-1]
+        section_idx = None
+        for i, line in enumerate(lines):
+            if line.startswith(f"{section}:"):
+                section_idx = i
+                break
+
+        if section_idx is None:
+            lines.append(f"{section}:\n")
+            lines.append(f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n")
+            path.write_text("".join(lines), encoding="utf-8")
+            return
+
+        insert_at = len(lines)
+        for i in range(section_idx + 1, len(lines)):
+            line = lines[i]
+            stripped = line.lstrip(" ")
+            indent = len(line) - len(stripped)
+            if stripped and indent == 0 and not stripped.startswith("#"):
+                insert_at = i
+                break
+            if indent == 2 and stripped.startswith(f"{leaf}:"):
+                lines[i] = f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n"
+                path.write_text("".join(lines), encoding="utf-8")
+                return
+
+        lines.insert(insert_at, f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n")
+        path.write_text("".join(lines), encoding="utf-8")
+
+    def reload(self) -> str:
+        if not self._config_path or not Path(self._config_path).exists():
+            return "[Error: no config file to reload]"
+        with open(self._config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-            _config_instance = Config(**data) if data else Config()
-            _config_instance._config_path = str(path)
-    else:
-        _config_instance = Config()
-        _config_instance._config_path = str(path)
-    
-    return _config_instance
-
-
-def get_config() -> Config:
-    return _config_instance
+        if not data:
+            return "[OK] config file empty, unchanged"
+        for key, value in data.items():
+            if hasattr(self, key):
+                if isinstance(value, dict):
+                    obj = getattr(self, key)
+                    if isinstance(obj, BaseModel):
+                        for k, v in value.items():
+                            if hasattr(obj, k):
+                                setattr(obj, k, v)
+                else:
+                    setattr(self, key, value)
+        self.dirty = True
+        return "[OK] config reloaded"

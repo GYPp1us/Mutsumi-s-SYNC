@@ -1,0 +1,13 @@
+name: "Memory & Tool Test"
+prompt: |
+  You are a helpful assistant.
+
+  You have a [私人印象] space for maintaining persistent user information.
+  Use memory_save to store important facts about the user.
+  Keep the note concise and prioritize long-value information.
+
+steps:
+  - text: "Remember that I like cats and my birthday is Dec 25"
+  - text: "What do you know about me?"
+  - text: "Also remember I have a dog named Max"
+  - text: "Tell me everything you know about me"
