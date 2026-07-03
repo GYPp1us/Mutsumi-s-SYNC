@@ -23,6 +23,7 @@ logger = logging.getLogger("mutsumi.pipeline")
 MAX_TOOL_STEPS = 10
 MAX_SENDS_PER_LOOP = 5
 WRITE_TOOLS = {"self_note", "memory_save"}
+NO_REPLY_TOOL = "no_reply"
 
 
 def _report_state(deps: PipelineDeps, state: str) -> None:
@@ -76,8 +77,15 @@ def _build_default_system_prompt(config) -> str:
         "\n如果同一个工具调用连续失败 3 次以上，停止重试并向用户汇报失败原因。"
     )
     system += (
-        "\n**所有面向用户的输出都需要通过 send 工具**，**所有面向用户的输出都需要通过 send 工具**，**所有面向用户的输出都需要通过 send 工具**留在content中的内容代表你的窃窃私语，系统不会转发。"
-        "\n回复需要合理、得体、简洁，尽可能符合人类在社交平台聊天的规律。" 
+        "\n[输出协议]"
+        "\nassistant content 是用户可见回复，系统只会发送最终一轮没有 tool_calls 的 content。"
+        "\n如果你想发送多条 QQ 消息，用未转义的 | 分隔每条消息；如果正文里需要字面量竖线，写成 \\|。"
+        "\n只有当你想分条发送时才使用未转义的 |；Markdown 表格、代码、正则和命令中的 | 必须转义或避免使用分条。"
+        "\n不要为了普通文字回复调用 send 工具。工具只用于记忆、配置、查询、外部 API、特殊消息段或静默控制。"
+        "\nsend 工具保留给 image、markdown_image、face、at、reply、forward 等特殊发送场景。"
+        "\n如果本轮不应回复用户，调用 no_reply 工具，并保持 content 为空。"
+        "\nreasoning_content 永远不会发送给用户。"
+        "\n回复需要合理、得体、简洁，尽可能符合人类在社交平台聊天的规律。"
     )
     return system
 
@@ -319,6 +327,44 @@ async def _recycle_window_if_needed(deps: PipelineDeps) -> None:
     logger.warning("[RECYCLE] window %d→%d items", len(items), len(kept))
 
 
+def _split_visible_content(content: str) -> list[str]:
+    parts: list[str] = []
+    buffer: list[str] = []
+    i = 0
+    while i < len(content):
+        if content.startswith("\\|", i):
+            buffer.append("|")
+            i += 2
+            continue
+        char = content[i]
+        if char == "|":
+            part = "".join(buffer).strip()
+            if part:
+                parts.append(part)
+            buffer = []
+        else:
+            buffer.append(char)
+        i += 1
+
+    part = "".join(buffer).strip()
+    if part:
+        parts.append(part)
+    return parts
+
+
+async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
+    parts = _split_visible_content(content)
+    if not parts:
+        logger.info("[PIPE] visible content empty after split")
+        return []
+
+    for part in parts:
+        await deps.sender.send(deps.peer, part)
+        log_send(deps, "content", part)
+    logger.info("[PIPE] sent visible content parts=%d chars=%d", len(parts), len(content))
+    return parts
+
+
 async def pipeline(
     message: str,
     msg_type: MessageType,
@@ -396,26 +442,25 @@ async def pipeline(
 
             if not result.tool_calls and not result.content:
                 logger.info("[PIPE] branch=empty_response responded=%s cold=%s", responded, is_cold)
-                if not responded and is_cold:
-                    await deps.sender.send(deps.peer, "在的，请说。")
-                    responded = True
-                    bot_replies.append("在的，请说。")
                 break
 
             if not result.tool_calls and result.content:
                 logger.info("[PIPE] branch=content_only chars=%d", len(result.content))
-                logger.warning("[PIPE] direct content send disabled; ignoring content-only response")
-                responded = True
-                bot_replies.append(result.content)
-                await _save_msg(deps, message, msg_type.value, result.content)
+                visible_parts = await _send_visible_content(deps, result.content)
+                if visible_parts:
+                    responded = True
+                    bot_replies.extend(visible_parts)
+                    await _save_msg(deps, message, msg_type.value, "\n".join(visible_parts))
                 break
 
             send_calls = [tc for tc in result.tool_calls if tc["name"] == "send"]
             other_calls = [tc for tc in result.tool_calls if tc["name"] != "send"]
+            no_reply_called = any(tc["name"] == NO_REPLY_TOOL for tc in other_calls)
             logger.info(
-                "[PIPE] branch=tool_calls send=%d other=%d",
+                "[PIPE] branch=tool_calls send=%d no_reply=%d other=%d",
                 len(send_calls),
-                len(other_calls),
+                1 if no_reply_called else 0,
+                len([tc for tc in other_calls if tc["name"] != NO_REPLY_TOOL]),
             )
 
             for tc in send_calls:
@@ -423,10 +468,19 @@ async def pipeline(
                     logger.warning("[PIPE] send limit reached max=%d", MAX_SENDS_PER_LOOP)
                     break
                 try:
-                    reply_result = await send_tool(tc["arguments"], sender=deps.sender, peer=deps.peer)
+                    reply_result = await send_tool(
+                        tc["arguments"],
+                        sender=deps.sender,
+                        peer=deps.peer,
+                        config=deps.config,
+                    )
                     log_send(deps, "tool", tc["arguments"])
-                    bot_replies.append(str(tc["arguments"].get("text", "")))
-                    responded = True
+                    log_tool_call(deps, "send", tc["arguments"], reply_result)
+                    if not str(reply_result).startswith("[Error:"):
+                        text_reply = str(tc["arguments"].get("text", ""))
+                        if text_reply:
+                            bot_replies.append(text_reply)
+                        responded = True
                 except Exception as e:
                     logger.exception("send_tool failed")
                 send_count += 1
@@ -509,12 +563,12 @@ async def pipeline(
                     msg["reasoning_content"] = result.reasoning_content
                 messages.append(msg)
 
+            if no_reply_called:
+                logger.info("[PIPE] branch=no_reply suppressing assistant content and ending loop step=%d", step + 1)
+                break
+
             if not other_calls:
                 logger.info("[PIPE] no remaining tools; ending loop step=%d", step + 1)
-                if result.content:
-                    responded = True
-                    bot_replies.append(result.content)
-                    await _save_msg(deps, message, msg_type.value, result.content)
                 break
         else:
             logger.warning("[LOOP] tool loop exhausted after %d steps, context ~%d msgs",
@@ -523,9 +577,9 @@ async def pipeline(
 
         if responded:
             deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
-            last_bot_reply = bot_replies[-1] if bot_replies else ""
-            if last_bot_reply:
-                deps.window.add(user_id=str(deps.peer.peer_uid), message=last_bot_reply, is_bot=True)
+            combined_bot_reply = "\n".join(bot_replies)
+            if combined_bot_reply:
+                deps.window.add(user_id=str(deps.peer.peer_uid), message=combined_bot_reply, is_bot=True)
             logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
         else:
             logger.info("[PIPE] no response produced; window unchanged")

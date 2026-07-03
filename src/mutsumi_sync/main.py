@@ -15,6 +15,7 @@ from .tools.config_manager import config_manager, CONFIG_MANAGER_SCHEMA
 from .tools.memory import memory_search, memory_save, MEMORY_SEARCH_SCHEMA, MEMORY_SAVE_SCHEMA
 from .tools.self_note import self_note_tool, SELF_NOTE_SCHEMA
 from .tools.send import send_tool, SEND_TOOL_SCHEMA
+from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 
 logger = logging.getLogger("mutsumi.main")
 
@@ -91,9 +92,22 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="send",
-        description="发送消息到用户。支持 text/image/markdown_image/face/at/reply/forward 段类型。",
+        description=(
+            "特殊发送工具。普通文字回复请直接写 assistant content；仅在需要发送图片、"
+            "markdown_image、QQ 表情、@、reply 或 forward 等特殊消息段时使用。"
+        ),
         parameters=SEND_TOOL_SCHEMA,
         handler=_send,
+    ))
+
+    registry.register(Tool(
+        name="no_reply",
+        description=(
+            "当本轮不应该向用户发送任何消息时调用。调用后 pipeline 会结束本轮并保持静默。"
+            "例如只需更新记忆、静默处理定时任务或忽略无需回复的消息。"
+        ),
+        parameters=NO_REPLY_SCHEMA,
+        handler=no_reply_tool,
     ))
 
     return registry

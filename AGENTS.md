@@ -17,7 +17,9 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | 上下文拼接与窗口回收 | 可用，CONTEXT 日志不截断 |
 | Dashboard TUI | 可用，支持彩色日志、滚动、选择复制、命令历史 |
 | 交互式 tester | 可用，支持 `/inject`、`/break`、FakeSender |
-| `send` 工具 | 支持 text/image/image_url/face/at/reply/forward/markdown_image |
+| 输出协议 | assistant `content` 是用户可见回复，未转义 `|` 分成多条 QQ 消息 |
+| `no_reply` 工具 | 可用，用于本轮故意静默 |
+| `send` 工具 | 特殊发送与兼容工具，支持 text/image/image_url/face/at/reply/forward/markdown_image |
 | Markdown 图片渲染 | 可选能力，Node + Playwright 渲染 Markdown/LaTeX/code/Mermaid 为 PNG |
 
 ## 必须先读
@@ -82,7 +84,7 @@ Dashboard 常用命令：
 
 ## Markdown 图片渲染
 
-`send` 工具支持：
+普通文字回复应直接写 assistant `content`。需要发送富文本图片时，`send` 工具支持：
 
 ```json
 {
@@ -116,6 +118,14 @@ Linux 若 Chromium 缺系统依赖，按安装脚本提示执行：
 cd tools/markdown-renderer
 npx playwright install-deps chromium
 ```
+
+## LLM 输出协议
+
+- 最终轮 assistant `content` 会发送给用户；reasoning_content 永远不发送。
+- 如果要分多条 QQ 消息，使用未转义的 `|` 分隔；正文里的字面量竖线写成 `\|`。
+- 有 `tool_calls` 的轮次只执行工具并回填结果，中间 content 不发送；没有工具的最终 content 才发送。
+- 普通文字不要调用 `send` 工具。`send` 只用于 `markdown_image`、图片、表情、@、回复、转发等特殊消息段，或旧兼容路径。
+- 本轮不应回复时调用 `no_reply`，并保持 content 为空。
 
 ## 运行测试
 
@@ -191,8 +201,8 @@ registry.register(Tool(
 | `src/mutsumi_sync/config.py` | Pydantic 配置与 YAML 保存 |
 | `src/mutsumi_sync/memory/store.py` | SQLite 长期记忆 |
 | `src/mutsumi_sync/tools/send.py` | send 工具 |
+| `src/mutsumi_sync/tools/no_reply.py` | 静默回复控制工具 |
 | `src/mutsumi_sync/tools/markdown_renderer.py` | Python 调 Node renderer |
 | `tools/markdown-renderer/` | Markdown -> PNG Node renderer |
 | `src/mutsumi_sync/tui/dashboard.py` | Dashboard TUI |
 | `src/mutsumi_sync/tui/tester.py` | 交互式测试器 |
-

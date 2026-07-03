@@ -14,7 +14,9 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Context assembly with non-truncated CONTEXT logs.
 - Interactive tester with `/inject` and `/break`.
 - Dashboard TUI with selectable colored logs, scrolling, copy support, command history, config commands, and memory view.
-- `send` tool support for text, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
+- Assistant `content` is the normal user-visible reply channel, with `|` splitting for multiple QQ messages.
+- `no_reply` tool for deliberate silent turns.
+- `send` tool support for special message segments, legacy text sends, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
 - Optional Node/Playwright Markdown renderer for LaTeX, highlighted code blocks, and Mermaid diagrams.
 
 ## Repository Layout
@@ -143,9 +145,29 @@ Dashboard highlights:
 - Command history with Up/Down.
 - `/watch`, `/auto`, `/memory`, `/config`, `/inject`, `/break`, `/connect`.
 
+## LLM Output Protocol
+
+Assistant `content` is user-visible. The pipeline sends only the final LLM round that has no `tool_calls`.
+
+Use an unescaped `|` to split one assistant `content` into multiple QQ messages:
+
+```text
+第一条|第二条|第三条
+```
+
+Use `\|` when the reply needs a literal pipe character:
+
+```text
+a \| b|下一条
+```
+
+Reasoning content is logged for debugging but is never sent to users. Tools are for memory, config, queries, external APIs, special message segments, or silent control. For ordinary text replies, write assistant `content`; do not call `send`.
+
+Use `no_reply` when the turn should intentionally produce no visible message. The `send` tool remains available for special segments such as `markdown_image`, image, face, mention, reply, and forward.
+
 ## Markdown Image Sending
 
-The `send` tool can render Markdown source into a PNG and send it as an image segment:
+For rich content, the `send` tool can render Markdown source into a PNG and send it as an image segment:
 
 ```json
 {
@@ -224,4 +246,3 @@ feat: 支持send工具渲染Markdown图片
 fix: 完善dashboard日志与上下文管理
 docs: 更新v3说明文档
 ```
-

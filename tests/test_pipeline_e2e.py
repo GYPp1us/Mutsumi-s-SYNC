@@ -75,7 +75,7 @@ class TestPipelineE2EMultiRound:
             msg = f"round {i} " + "hello " * 10
             await pipeline(msg, MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert len(sender.sent) == 0
+        assert len(sender.sent) == rounds
 
         window_size = len(window)
         total_estimate = sum(
@@ -125,7 +125,7 @@ class TestPipelineE2EMultiRound:
         )
         await pipeline(long_msg, MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert len(sender.sent) == 0
+        assert len(sender.sent) == 1
 
         all_msgs = await store.get_messages(group_key=group_key)
         assert len(all_msgs) >= 1, "Message should be saved to store"
@@ -225,20 +225,25 @@ class TestPipelineE2EDebounce:
         )
 
         await pipeline("hi", MessageType.SHORT_TEXT, None, None, deps=deps)
-        assert len(sender.sent) == 0
+        assert len(sender.sent) == 1
 
         await pipeline("how are you", MessageType.SHORT_TEXT, None, None, deps=deps)
-        assert len(sender.sent) == 0
+        assert len(sender.sent) == 2
         assert len(window) >= 2
 
         await store.close()
 
-    async def test_content_is_not_sent_directly(self, caplog):
+    async def test_content_is_sent_directly(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
         await store.initialize()
         registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content="hello from content", input_tokens=3, output_tokens=2)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
 
         window = MessageWindow()
         session = SessionState()
@@ -251,11 +256,182 @@ class TestPipelineE2EDebounce:
             peer=peer, group_key=group_key,
         )
 
-        with caplog.at_level("WARNING", logger="mutsumi.pipeline"):
-            await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert len(sender.sent) == 0
-        assert any("direct content send disabled" in record.message for record in caplog.records)
+        assert [item["message"] for item in sender.sent] == ["hello from content"]
+
+        await store.close()
+
+    async def test_content_pipe_splits_into_multiple_messages(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content="first | second|third ", input_tokens=3, output_tokens=2)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="split_test"),
+            group_key="private:split_test",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert [item["message"] for item in sender.sent] == ["first", "second", "third"]
+
+        await store.close()
+
+    async def test_escaped_pipe_is_not_a_message_split(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content=r"a \| b|c", input_tokens=3, output_tokens=2)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="escape_split_test"),
+            group_key="private:escape_split_test",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert [item["message"] for item in sender.sent] == ["a | b", "c"]
+
+        await store.close()
+
+    async def test_reasoning_content_is_never_sent(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(
+                content="visible reply",
+                reasoning_content="private chain of thought",
+                input_tokens=3,
+                output_tokens=2,
+            )
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="reasoning_test"),
+            group_key="private:reasoning_test",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert [item["message"] for item in sender.sent] == ["visible reply"]
+        assert "private chain of thought" not in str(sender.sent)
+
+        await store.close()
+
+    async def test_tool_round_only_sends_final_content(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        calls = iter([
+            LLMResult(
+                content="intermediate content",
+                tool_calls=[{
+                    "id": "call_1",
+                    "name": "memory_search",
+                    "arguments": {"query": "anything"},
+                }],
+                input_tokens=3,
+                output_tokens=2,
+            ),
+            LLMResult(content="final content", input_tokens=3, output_tokens=2),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            return next(calls)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="tool_final_test"),
+            group_key="private:tool_final_test",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert [item["message"] for item in sender.sent] == ["final content"]
+
+        await store.close()
+
+    async def test_no_reply_tool_is_registered(self):
+        config = make_config()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        tool_names = [
+            item["function"]["name"]
+            for item in registry.to_openai_schema()
+        ]
+
+        assert "no_reply" in tool_names
+
+        await store.close()
+
+    async def test_no_reply_tool_suppresses_reply_without_another_llm_round(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        calls = []
+
+        async def fake_llm_call(messages, deps):
+            calls.append(messages)
+            return LLMResult(
+                content="this must not be sent",
+                tool_calls=[{
+                    "id": "call_1",
+                    "name": "no_reply",
+                    "arguments": {"reason": "silent maintenance"},
+                }],
+                input_tokens=3,
+                output_tokens=2,
+            )
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="no_reply_test"),
+            group_key="private:no_reply_test",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert sender.sent == []
+        assert len(calls) == 1
 
         await store.close()
 
