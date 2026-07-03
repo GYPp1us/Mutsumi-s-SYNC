@@ -1,148 +1,198 @@
-# AGENTS.md — AI Agent 协作指南
+# AGENTS.md - AI Agent 协作指南
 
 ## 项目概况
 
-Mutsumi's SYNC v3 — QQ 聊天机器人。从 v2 代码库评估后完全重写。
-当前 Phase 1 已完成：异步调度系统 + NapCat I/O 层 + 配置 + 工具注册表 + 交互式测试器。
-Pipeline 内 LLM 调用逻辑为 Phase 1 stub（留待后续实现）。
+Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧版代码评估后重写，核心目标是：用清晰的异步调度器、单函数 Pipeline、可热更新工具系统、长期记忆与可观察 TUI，把机器人做成可维护的个人 Agent。
 
-### 已实现的特性
+当前主线已经具备：
 
-| 特性 | 说明 |
-|------|------|
-| **SQLite 消息存储** | `memory/store.py` — 按日期/消息组/类别筛选，二进制媒体文件存到 `data/media/` |
-| **思考模式** | DeepSeek thinking mode + `reasoning_effort` 控制（默认 max） |
-| **格式化输出块** | LLM 回应和 SEND 操作均以 `=====[...]=====` 框包裹，分隔线白色、内容灰色 |
-| **消息段渲染** | `text`/`image`/`face`/`at`/`reply`/`record`/`video`/`forward` 自动解析 |
-| **交互式测试器** | 无 NapCat 可 `/inject` 模拟消息，`/break` 打断 pipeline，实时彩色日志 |
-| **异常防护** | 所有 `create_task` 有包装，stdin 线程覆盖 OSError，日志队列设 asctime |
+| 能力 | 状态 |
+| --- | --- |
+| NapCat WebSocket/HTTP I/O | 可用 |
+| `PipelineScheduler` 异步调度 | 可用，每个会话 key 一个 cancellable task |
+| 单函数 `pipeline()` | 可用，所有处理逻辑集中在一个异步函数 |
+| OpenAI-compatible LLM 调用 | 可用，支持 DeepSeek reasoning_content |
+| 工具循环 | 可用，支持 registry version 热更新 |
+| SQLite 消息/摘要/自我印象存储 | 可用 |
+| 上下文拼接与窗口回收 | 可用，CONTEXT 日志不截断 |
+| Dashboard TUI | 可用，支持彩色日志、滚动、选择复制、命令历史 |
+| 交互式 tester | 可用，支持 `/inject`、`/break`、FakeSender |
+| `send` 工具 | 支持 text/image/image_url/face/at/reply/forward/markdown_image |
+| Markdown 图片渲染 | 可选能力，Node + Playwright 渲染 Markdown/LaTeX/code/Mermaid 为 PNG |
 
 ## 必须先读
 
-开始任何工作前，按顺序读：
+开始任何代码工作前，按顺序阅读：
 
-1. `init.md` — 项目章程（技术栈、模块、阶段）
-2. `bottle/docs/architecture-for-humans.md` — 架构设计书
-3. `bottle/docs/architecture-for-ai.md` — 结构化架构（供 AI 精确理解）
+1. `README.md` - 面向用户和维护者的当前说明。
+2. `init.md` - 当前项目章程与架构约束。
+3. `bottle/docs/architecture-for-humans.md` - 原始人类版架构设计书。
+4. `bottle/docs/architecture-for-ai.md` - 原始结构化架构设计书。
+
+`bottle/docs/` 是 v3 重写的设计来源；如果它与当前代码冲突，以 `README.md`、`init.md` 和源码测试为准。
 
 ## 初次运行
 
-```bash
-# 1. 创建虚拟环境并安装依赖
+```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1    # Windows
-# source .venv/bin/activate     # macOS/Linux
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-# 2. 创建配置文件（config.yaml 被 gitignored）
-cp config.example.yaml config.yaml
-# 编辑 config.yaml 填入 NapCat 连接信息和 LLM API Key
+Copy-Item config.example.yaml config.yaml
+# 编辑 config.yaml，填入 NapCat 与 LLM 配置
 
-# 3. 启动
-$env:PYTHONPATH = "."; python -m src.mutsumi_sync.main
-
-# 或启动交互式测试器（不需 NapCat，可手动 /inject 消息）
-$env:PYTHONPATH = "."; python -m src.mutsumi_sync.tui.tester
+$env:PYTHONPATH = "."
+python -m src.mutsumi_sync.main
 ```
 
-> 无需 API Key 时 pipeline 自动降级为本地 stub：`[LLM Stub @ timestamp] I received: ...`
+Linux/macOS:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp config.example.yaml config.yaml
+PYTHONPATH=. python -m src.mutsumi_sync.main
+```
+
+## 开发入口
+
+```powershell
+# 交互式测试器，无需真实 NapCat
+$env:PYTHONPATH = "."
+python -m src.mutsumi_sync.tui.tester
+
+# Dashboard TUI
+$env:PYTHONPATH = "."
+python -m src.mutsumi_sync.tui.dashboard config.yaml
+```
+
+Dashboard 常用命令：
+
+| 命令 | 作用 |
+| --- | --- |
+| `/inject private <uid> <msg>` | 注入私聊消息 |
+| `/inject group <gid> <uid> <msg>` | 注入群聊消息 |
+| `/break private <uid>` | 取消指定 pipeline |
+| `/watch <key>` | 固定观察一个实例 |
+| `/auto` | 自动跟随最新实例 |
+| `/memory [key]` | 查看当前记忆快照 |
+| `/config <key> [value]` | 读取或局部修改配置 |
+
+## Markdown 图片渲染
+
+`send` 工具支持：
+
+```json
+{
+  "markdown_image": "# 标题\n\n$$E=mc^2$$\n\n```mermaid\ngraph TD; A-->B\n```"
+}
+```
+
+启用方式：
+
+```powershell
+.\scripts\install_markdown_renderer.ps1
+```
+
+Linux:
+
+```bash
+sh scripts/install_markdown_renderer.sh
+```
+
+然后在 `config.yaml` 中打开：
+
+```yaml
+render:
+  markdown_image:
+    enabled: true
+```
+
+Linux 若 Chromium 缺系统依赖，按安装脚本提示执行：
+
+```bash
+cd tools/markdown-renderer
+npx playwright install-deps chromium
+```
 
 ## 运行测试
 
-```bash
-$env:PYTHONPATH = "."; python -m pytest tests/ -v
+```powershell
+$env:PYTHONPATH = "."
+python -m pytest tests/ -q
 ```
 
-测试需要 `PYTHONPATH` 设置为项目根目录（当前无 `pyproject.toml` 可编辑安装）。
+可选的 Node renderer 检查：
+
+```powershell
+cd tools/markdown-renderer
+npm run check
+```
 
 ## Git 约定
 
-- 当前分支: `feature/v3-rewrite`
-- v2 存档: `archive/legacy` tag
-- 提交消息: 中文，约定式提交风格（`feat:`, `fix:`, `refactor:`, `test:`, `docs:`）
-- **绝不提交**: `config.yaml`（已被 `.gitignore`）
+- 主线分支：`main`。
+- v3 集成分支：`feature/v3-rewrite`。
+- 历史 v2 存档：`archive/legacy` tag。
+- 提交消息：中文，使用约定式提交前缀，如 `feat:`、`fix:`、`docs:`、`test:`、`refactor:`。
+- 不提交：`config.yaml`、`.env`、`data/`、`node_modules/`。
 
 ## 架构铁律
 
-以下规则不可违反，违反即视为 bug：
+以下规则不可违反：
 
-1. **Pipeline 是单个异步函数** — 不拆成多个类方法或回调链。所有处理逻辑在 `pipeline()` 内。
-2. **Pipeline 不持有状态** — 所有依赖通过参数注入。状态由 Scheduler 持有。
-3. **工具修改全局状态 → 版本号递增** — 不用布尔脏标记。用 `registry.version` 单调计数器。
-4. **取消 = `Task.cancel()`** — 不发明自定义取消协议。
-5. **技能加载不执行代码** — Skill 定义是数据。
+1. `pipeline()` 是单个异步函数，不拆成类方法链或回调链。
+2. Pipeline 不持有状态，所有状态由 Scheduler 或注入依赖持有。
+3. 全局工具注册表变更用 `registry.version` 单调计数器追踪，不用跨 pipeline 共享 bool 脏标记。
+4. 取消使用 `asyncio.Task.cancel()`，不自造取消协议。
+5. 工具错误返回 `"[Error: ...]"` 字符串，不把异常漏给 LLM。
+6. Skill/Tool 加载不应在导入期执行不受控副作用。
+7. 配置修改工具必须尽量局部修改 YAML，不应整份重排用户配置文件。
+8. 日志链路要诚实打印 pipeline 所有关键分支，不用 UI 滚动状态掩盖日志缺失。
 
 ## 代码约定
 
-- 类型注解：所有函数签名必须有完整类型注解
-- 异步：I/O 操作用 async/await；纯计算用同步函数
-- 错误：工具错误返回 `"[Error: ...]"` 字符串，不抛异常
-- 日志：`logging.getLogger("mutsumi.xxx")`，每个模块独立 logger
-- 导入：顶部导入，不懒加载（除非循环依赖不可避免）
-- 依赖注入：函数参数 `*, deps`，不用全局单例
-- ANSI 颜色码：仅限 `tui/tester.py` 和 `pipeline.py` 的格式化块
-
-## LLM 输出格式
-
-```python
-# pipeline.py — _log_llm_result
-=========[provider][model]=========
-[reasoning]                        # 存在时灰色显示
-<思考链内容>                         # 灰色
-[/reasoning]                       # 灰色
-<回答内容>                           # 灰色
-=========[↑:input_tokens][↓:output_tokens]=========
-
-# 思考模式控制（config.yaml）
-model.reasoning_effort: "max"      # 可选: high / max
-```
-
-## 消息发送格式
-
-```python
-# tui/tester.py — _FakeSender
-=========[SEND][private/group][peer_uid]=========
-  [text] hello world                # 灰色
-  [image] file=...                  # 灰色
-=========[1 segment(s)]=========
-
-# 支持的消息段: text, image, face, at, reply, record, video, forward
-# _render_segment() 可扩展
-```
+- 所有函数签名写类型注解。
+- I/O 使用 async/await；纯计算保持同步函数。
+- 日志使用 `logging.getLogger("mutsumi.xxx")`。
+- 导入放顶部，除非循环依赖不可避免。
+- ANSI 颜色码只放在 TUI/tester/pipeline 的格式化输出边界。
+- 编辑文件时尊重现有脏工作树，不回滚他人改动。
 
 ## 添加新 Tool
 
 ```python
-# tools/my_tool.py
 async def my_tool(args: dict, *, config: Config, sender: MessageSender, **deps) -> str:
-    """Tool description (used as LLM function description)."""
-    # 只做自己的事，不操心 Pipeline 怎么用结果
-    return "result string"
+    """Tool description used by LLM function schema."""
+    return "result"
+```
 
-# 在 Scheduler 初始化时注册：
+注册：
+
+```python
 registry.register(Tool(
     name="my_tool",
     description="...",
-    parameters={...},  # JSON Schema
+    parameters={...},
     handler=my_tool,
     source="builtin",
 ))
 ```
 
-## 添加 Skill
+## 重要文件
 
-```python
-# skills/my_skill.py
-def register(registry: ToolRegistry) -> None:
-    registry.register(Tool(...))
-    registry.register(Tool(...))
+| 文件 | 说明 |
+| --- | --- |
+| `src/mutsumi_sync/main.py` | 真实入口与工具注册 |
+| `src/mutsumi_sync/scheduler.py` | 调度器、状态持有者 |
+| `src/mutsumi_sync/pipeline.py` | 单函数消息处理核心 |
+| `src/mutsumi_sync/config.py` | Pydantic 配置与 YAML 保存 |
+| `src/mutsumi_sync/memory/store.py` | SQLite 长期记忆 |
+| `src/mutsumi_sync/tools/send.py` | send 工具 |
+| `src/mutsumi_sync/tools/markdown_renderer.py` | Python 调 Node renderer |
+| `tools/markdown-renderer/` | Markdown -> PNG Node renderer |
+| `src/mutsumi_sync/tui/dashboard.py` | Dashboard TUI |
+| `src/mutsumi_sync/tui/tester.py` | 交互式测试器 |
 
-def system_prompt() -> str:
-    return "提示词片段..."
-```
-
-## 参考
-
-- DeepSeek API: `https://api-docs.deepseek.com/zh-cn/api/create-chat-completion`
-- NapCat API: `bottle/docs/napcat-api.md`
-- Python asyncio Task: <https://docs.python.org/3/library/asyncio-task.html>
