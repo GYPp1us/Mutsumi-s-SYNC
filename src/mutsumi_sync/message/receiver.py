@@ -71,6 +71,15 @@ class MessageReceiver:
         self._ws = await connect(url)
         logger.info("Connected to WebSocket")
 
+    async def _drop_connection(self) -> None:
+        ws = self._ws
+        self._ws = None
+        if ws is not None:
+            try:
+                await ws.close()
+            except Exception:
+                logger.debug("Ignoring error while closing stale WebSocket", exc_info=True)
+
     async def run(self) -> None:
         self._running = True
         reconnect_delay = 1
@@ -79,6 +88,7 @@ class MessageReceiver:
             try:
                 if not self._ws:
                     await self.connect()
+                    reconnect_delay = 1
 
                 async for raw in self._ws:
                     try:
@@ -108,10 +118,14 @@ class MessageReceiver:
                         logger.warning("[WS ERR] retcode:%s echo:%s",
                                        data.get("retcode"), data.get("echo", "N/A"))
 
-            except ConnectionClosed:
-                logger.warning("Connection closed, reconnecting...")
+                logger.warning("Connection ended, reconnecting...")
+                await self._drop_connection()
+            except ConnectionClosed as e:
+                logger.warning("Connection closed, reconnecting: %s", e)
+                await self._drop_connection()
             except Exception:
                 logger.exception("Connection error")
+                await self._drop_connection()
 
             if self._running:
                 await asyncio.sleep(reconnect_delay)
@@ -120,9 +134,8 @@ class MessageReceiver:
 
     async def close(self) -> None:
         self._running = False
-        if self._ws:
-            await self._ws.close()
-            logger.info("Connection closed")
+        await self._drop_connection()
+        logger.info("Connection closed")
 
 
 async def _safe_handler(handler, event: MessageEvent) -> None:
