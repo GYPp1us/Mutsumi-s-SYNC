@@ -62,6 +62,44 @@ class TestSelfNote:
             await store.close()
             os.unlink(path)
 
+
+class TestPriorityOverride:
+    async def test_upsert_and_get(self):
+        store, path = await make_store()
+        try:
+            item = await store.get_current_priority_override("group:1:1")
+            assert item is None
+
+            await store.upsert_priority_override("group:1:1", "exactly preserve formulas")
+            item = await store.get_current_priority_override("group:1:1")
+            assert item is not None
+            assert "exactly preserve formulas" in item["content"]
+            assert item["created_at"] is not None
+        finally:
+            await store.close()
+            os.unlink(path)
+
+
+class TestMessageUpdates:
+    async def test_update_message_content(self):
+        store, path = await make_store()
+        try:
+            msg_id = await store.save(StoredMessage(
+                date="2026-06-22",
+                group_key="g1",
+                category="text",
+                content='{"status": "received"}',
+            ))
+
+            await store.update_message_content(msg_id, '{"status": "responded"}')
+            saved = await store.get_messages_by_ids([msg_id])
+
+            assert saved[0]["content"] == '{"status": "responded"}'
+            assert saved[0]["created_at"] is not None
+        finally:
+            await store.close()
+            os.unlink(path)
+
     async def test_multiple_upserts_returns_latest(self):
         store, path = await make_store()
         try:

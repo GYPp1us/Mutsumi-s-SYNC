@@ -32,6 +32,9 @@ class PipelineDeps:
     token_counter: dict | None = None
     report_state: Callable[[str], None] | None = None
     report_llm_health: Callable[[bool], None] | None = None
+    source: str = "user"
+    silent: bool = False
+    remember_input: bool = True
 
 
 class PipelineScheduler:
@@ -57,6 +60,7 @@ class PipelineScheduler:
         self.llm_healthy: bool = True
         self.token_usage: dict = {"input": 0, "output": 0, "cache_hit": 0, "cache_miss": 0}
         self.on_state_change: Callable[[], None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
@@ -100,6 +104,24 @@ class PipelineScheduler:
             self._windows[key] = MessageWindow()
         if key not in self._sessions:
             self._sessions[key] = SessionState()
+
+    @staticmethod
+    def _peer_from_key(key: str) -> Peer:
+        from .message.sender import Peer
+        parts = key.split(":")
+        if len(parts) >= 2 and parts[0] == "group":
+            return Peer(chat_type=2, peer_uid=parts[1])
+        if len(parts) >= 2 and parts[0] == "private":
+            return Peer(chat_type=1, peer_uid=parts[1])
+        return Peer(chat_type=1, peer_uid="heartbeat")
+
+    def _select_heartbeat_key(self) -> str:
+        if self.config.heartbeat.aggressive_provider_cache_retention:
+            if self._last_active_key and self._last_active_key in self._windows:
+                return self._last_active_key
+            if self._windows:
+                return next(iter(self._windows.keys()))
+        return "private:heartbeat"
 
     def _cancel_debounce_timer(self, key: str) -> None:
         timer = self._debounce_timers.pop(key, None)
@@ -287,25 +309,80 @@ class PipelineScheduler:
                 try:
                     parsed = json.loads(msg["content"])
                 except (json.JSONDecodeError, TypeError):
-                    window.add(user_id=gk, message=msg["content"][:500])
+                    window.add(user_id=gk, message=msg["content"][:500], created_at=msg.get("created_at"))
                     continue
 
                 if isinstance(parsed, dict):
                     user_text = parsed.get("user", "")
                     bot_text = parsed.get("bot", "")
                     if user_text:
-                        window.add(user_id=gk, message=str(user_text))
+                        window.add(user_id=gk, message=str(user_text), created_at=msg.get("created_at"))
                     if bot_text:
-                        window.add(user_id=gk, message=str(bot_text), is_bot=True)
+                        window.add(user_id=gk, message=str(bot_text), is_bot=True, created_at=msg.get("created_at"))
                 else:
-                    window.add(user_id=gk, message=str(parsed)[:500])
+                    window.add(user_id=gk, message=str(parsed)[:500], created_at=msg.get("created_at"))
 
             self._windows[gk] = window
             self._ensure_user_state(gk)
             logger.info("[STARTUP] restored window %s: %d items (after id %d)", gk, len(window), after_id)
 
+        if self.config.heartbeat.enabled and self._heartbeat_task is None:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def _heartbeat_loop(self) -> None:
+        interval = max(60, int(self.config.heartbeat.interval_seconds))
+        logger.info("[HEARTBEAT] enabled interval=%ss aggressive_cache=%s",
+                    interval, self.config.heartbeat.aggressive_provider_cache_retention)
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                await self.run_heartbeat_once()
+        except asyncio.CancelledError:
+            logger.info("[HEARTBEAT] stopped")
+            raise
+
+    async def run_heartbeat_once(self) -> None:
+        from .message.classifier import MessageType
+        from .pipeline import pipeline
+
+        key = self._select_heartbeat_key()
+        self._ensure_user_state(key)
+        peer = self._peer_from_key(key)
+        deps = PipelineDeps(
+            config=self.config,
+            registry=self.registry,
+            sender=self.sender,
+            store=self.store,
+            window=self._windows[key],
+            session=self._sessions[key],
+            peer=peer,
+            group_key=key,
+            token_counter=self.token_usage,
+            report_state=self._make_report_state(key),
+            report_llm_health=self._make_report_llm_health(),
+            source="heartbeat",
+            silent=True,
+            remember_input=False,
+        )
+        logger.info("[HEARTBEAT] triggering pipeline key=%s", key)
+        await pipeline(
+            message="[HEARTBEAT] Run a real health check. Do not send a visible reply; call no_reply if available.",
+            msg_type=MessageType.SHORT_TEXT,
+            image_file=None,
+            image_url=None,
+            deps=deps,
+        )
+
     async def shutdown(self) -> None:
         logger.info("[SHUTDOWN] stopping scheduler with %d windows", len(self._windows))
+
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
 
         for key in list(self._keys()):
             self._cleanup_debounce(key)

@@ -28,15 +28,18 @@ class StoredMessage:
     category: str
     content: str
     id: int | None = None
+    created_at: float | None = None
 
     @classmethod
     def from_row(cls, row: aiosqlite.Row) -> StoredMessage:
+        keys = set(row.keys())
         return cls(
             id=row["id"],
             date=row["date"],
             group_key=row["group_key"],
             category=row["category"],
             content=row["content"],
+            created_at=row["created_at"] if "created_at" in keys else None,
         )
 
 
@@ -127,6 +130,14 @@ class MessageStore:
         )
         await self._conn.commit()
         return cursor.lastrowid
+
+    async def update_message_content(self, msg_id: int, content: str) -> None:
+        self._ensure_initialized()
+        await self._conn.execute(
+            "UPDATE messages SET content = ? WHERE id = ?",
+            (content, msg_id),
+        )
+        await self._conn.commit()
 
     async def save_media(self, group_key: str, category: str, data: bytes, ext: str = "") -> int:
         """保存二进制媒体文件并写入数据库记录。"""
@@ -221,11 +232,21 @@ class MessageStore:
     async def get_summaries(self, group_key: str, limit: int = 180) -> list[dict]:
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT id, group_key, seq, source, summary, last_message_id FROM summaries WHERE group_key = ? ORDER BY seq ASC LIMIT ?",
+            "SELECT id, group_key, seq, source, summary, last_message_id, created_at FROM summaries WHERE group_key = ? ORDER BY seq ASC LIMIT ?",
             (group_key, limit),
         )
         rows = await cursor.fetchall()
-        return [{"id": r["id"], "seq": r["seq"], "source": r["source"], "summary": r["summary"]} for r in rows]
+        return [
+            {
+                "id": r["id"],
+                "seq": r["seq"],
+                "source": r["source"],
+                "summary": r["summary"],
+                "last_message_id": r["last_message_id"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
 
     async def trim_summaries(self, group_key: str, max_count: int = 180, min_count: int = 90) -> int:
         self._ensure_initialized()
@@ -249,13 +270,13 @@ class MessageStore:
     async def get_current_self_note(self, group_key: str) -> dict | None:
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT id, content FROM messages WHERE group_key = ? AND category = 'self_note' ORDER BY id DESC LIMIT 1",
+            "SELECT id, content, created_at FROM messages WHERE group_key = ? AND category = 'self_note' ORDER BY id DESC LIMIT 1",
             (group_key,),
         )
         row = await cursor.fetchone()
         if row is None:
             return None
-        return {"id": row["id"], "content": row["content"]}
+        return {"id": row["id"], "content": row["content"], "created_at": row["created_at"]}
 
     async def upsert_self_note(self, group_key: str, content: str) -> None:
         self._ensure_initialized()
@@ -266,11 +287,31 @@ class MessageStore:
         )
         await self._conn.commit()
 
+    async def get_current_priority_override(self, group_key: str) -> dict | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, content, created_at FROM messages WHERE group_key = ? AND category = 'priority_override' ORDER BY id DESC LIMIT 1",
+            (group_key,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "content": row["content"], "created_at": row["created_at"]}
+
+    async def upsert_priority_override(self, group_key: str, content: str) -> None:
+        self._ensure_initialized()
+        today = date.today().isoformat()
+        await self._conn.execute(
+            "INSERT INTO messages (date, group_key, category, content) VALUES (?, ?, 'priority_override', ?)",
+            (today, group_key, content),
+        )
+        await self._conn.commit()
+
     async def search_memory(self, group_key: str, query: str, limit: int = 5) -> list[dict]:
         self._ensure_initialized()
         try:
             cursor = await self._conn.execute(
-                "SELECT m.id, m.date, m.group_key, m.category, m.content "
+                "SELECT m.id, m.date, m.group_key, m.category, m.content, m.created_at "
                 "FROM messages_fts f JOIN messages m ON f.rowid = m.rowid "
                 "WHERE f.content MATCH ? AND m.group_key = ? "
                 "ORDER BY rank LIMIT ?",
@@ -278,13 +319,19 @@ class MessageStore:
             )
         except Exception:
             cursor = await self._conn.execute(
-                "SELECT id, date, group_key, category, content FROM messages "
+                "SELECT id, date, group_key, category, content, created_at FROM messages "
                 "WHERE group_key = ? AND content LIKE ? ORDER BY id DESC LIMIT ?",
                 (group_key, f"%{query}%", limit),
             )
         rows = await cursor.fetchall()
         return [
-            {"id": r["id"], "date": r["date"], "category": r["category"], "content": r["content"]}
+            {
+                "id": r["id"],
+                "date": r["date"],
+                "category": r["category"],
+                "content": r["content"],
+                "created_at": r["created_at"],
+            }
             for r in rows
         ]
 
@@ -294,12 +341,18 @@ class MessageStore:
             return []
         placeholders = ",".join("?" for _ in ids)
         cursor = await self._conn.execute(
-            f"SELECT id, date, group_key, category, content FROM messages WHERE id IN ({placeholders}) ORDER BY id ASC",
+            f"SELECT id, date, group_key, category, content, created_at FROM messages WHERE id IN ({placeholders}) ORDER BY id ASC",
             ids,
         )
         rows = await cursor.fetchall()
         return [
-            {"id": r["id"], "date": r["date"], "category": r["category"], "content": r["content"]}
+            {
+                "id": r["id"],
+                "date": r["date"],
+                "category": r["category"],
+                "content": r["content"],
+                "created_at": r["created_at"],
+            }
             for r in rows
         ]
 
@@ -334,12 +387,13 @@ class MessageStore:
         """Return messages with id > after_id, ordered by id ASC."""
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT id, date, group_key, category, content FROM messages "
+            "SELECT id, date, group_key, category, content, created_at FROM messages "
             "WHERE group_key = ? AND id > ? ORDER BY id ASC LIMIT ?",
             (group_key, after_id, limit),
         )
         rows = await cursor.fetchall()
-        return [{"id": r["id"], "date": r["date"], "category": r["category"], "content": r["content"]}
+        return [{"id": r["id"], "date": r["date"], "category": r["category"], "content": r["content"],
+                 "created_at": r["created_at"]}
                 for r in rows]
 
     async def get_max_message_id(self, group_key: str) -> int:

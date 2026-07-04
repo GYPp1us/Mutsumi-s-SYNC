@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import pytest
 import tempfile
 import os
@@ -90,11 +91,11 @@ class TestPipelineE2EMultiRound:
         )
         ctx = await _build_context("test final", deps)
 
-        assert ctx[0]["role"] == "system", "First message should be system"
+        assert ctx[0] == {"role": "system", "content": ""}, "First message should be an empty system placeholder"
 
         note_injected = any(
             "E2E" in str(m.get("content", ""))
-            for m in ctx if m["role"] == "system"
+            for m in ctx if m["role"] == "user"
         )
         assert note_injected, "self_note should be in context"
 
@@ -163,6 +164,7 @@ class TestPipelineE2EMultiRound:
         assert "current:" in note_text, "Should have current token count"
         assert "target:" in note_text, "Should have target token count"
         assert "Python" in note_text, "Should contain the note content"
+        assert "很久之前" in note_text, "Existing self_note lines should get a fallback timestamp"
 
         await store.close()
 
@@ -193,12 +195,172 @@ class TestPipelineE2EMultiRound:
         ctx = await _build_context("current user message", deps)
 
         roles = [m["role"] for m in ctx]
-        assert roles[0] == "system"
+        assert ctx[0] == {"role": "system", "content": ""}
+        assert roles.count("system") == 1
 
-        assert "user" in roles
+        bootstrap = ctx[1]
+        assert bootstrap["role"] == "user"
+        assert "structure test note" in bootstrap["content"]
+        assert "past conversation about weather" in bootstrap["content"]
+        assert "+08:00" in bootstrap["content"]
 
         assert ctx[-1]["role"] == "user"
         assert ctx[-1]["content"] == "current user message"
+
+        await store.close()
+
+    async def test_priority_override_is_appended_to_every_user_message(self):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        window = MessageWindow()
+        window.add("user1", "previous user message", created_at=1780000000)
+        window.add("user1", "previous bot reply", is_bot=True, created_at=1780000001)
+
+        group_key = "private:priority_context_test"
+        await store.upsert_priority_override(group_key, "Always preserve exact equations.")
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=window, session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="priority_context_test"),
+            group_key=group_key,
+        )
+
+        ctx = await _build_context("current user message", deps)
+        user_messages = [m for m in ctx if m["role"] == "user"]
+
+        assert len(user_messages) == 3
+        assert all("Priority Override" in m["content"] for m in user_messages)
+        assert all("Always preserve exact equations." in m["content"] for m in user_messages)
+        assert "+08:00" in ctx[2]["content"], "Window messages should include readable +8 timestamps"
+
+        await store.close()
+
+    async def test_cancelled_pipeline_keeps_inbound_message(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def never_finishes(messages, deps):
+            await asyncio.sleep(60)
+            return LLMResult(content="late")
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", never_finishes)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="cancel_persist_test"),
+            group_key="private:cancel_persist_test",
+        )
+
+        task = asyncio.create_task(pipeline("do not lose me", MessageType.SHORT_TEXT, None, None, deps=deps))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        saved = await store.get_messages(group_key="private:cancel_persist_test")
+        assert len(saved) == 1
+        content = json.loads(saved[0].content)
+        assert content["user"] == "do not lose me"
+        assert content["status"] == "cancelled"
+
+        await store.close()
+
+    async def test_markdown_image_send_is_recorded_as_artifact_memory(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        calls = iter([
+            LLMResult(
+                content="",
+                tool_calls=[{
+                    "id": "call_markdown",
+                    "name": "send",
+                    "arguments": {"markdown_image": "# Report\n\n$E=mc^2$"},
+                }],
+            ),
+            LLMResult(content=""),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            return next(calls)
+
+        async def fake_send_tool(args, *, sender, peer, config=None):
+            await sender.send(peer, [{"type": "image", "data": {"file": "rendered.png"}}])
+            return json.dumps({
+                "status": "ok",
+                "data": {"message_id": 123},
+                "artifacts": [{
+                    "kind": "sent_image",
+                    "source": "markdown_image",
+                    "file": "rendered.png",
+                    "markdown": args["markdown_image"],
+                }],
+            })
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        monkeypatch.setattr(pipeline_module, "send_tool", fake_send_tool)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="artifact_test"),
+            group_key="private:artifact_test",
+        )
+
+        await pipeline("render it", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        image_records = await store.get_messages(group_key="private:artifact_test", category="image")
+        assert len(image_records) == 1
+        artifact = json.loads(image_records[0].content)
+        assert artifact["source"] == "markdown_image"
+        assert artifact["markdown"] == "# Report\n\n$E=mc^2$"
+        assert "sent image" in deps.window.get_context()[-1]["content"]
+
+        await store.close()
+
+    async def test_incoming_image_uses_vision_provider_when_enabled(self, monkeypatch):
+        config = make_config()
+        config.vision.enabled = True
+        config.vision.api_key = "sk-test"
+        config.vision.base_url = "https://vision.example/v1"
+        config.vision.model = "vision-model"
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_describe_image(*, image_file, image_url, config):
+            return "Image contains a commutative diagram."
+
+        monkeypatch.setattr(pipeline_module, "describe_image", fake_describe_image)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="image_vision_test"),
+            group_key="private:image_vision_test",
+        )
+
+        await pipeline("[image]", MessageType.IMAGE, None, "https://example.com/diagram.png", deps=deps)
+
+        assert "commutative diagram" in sender.sent[0]["message"]
+        saved = await store.get_messages(group_key="private:image_vision_test", category="image")
+        assert len(saved) == 1
+        payload = json.loads(saved[0].content)
+        assert payload["image_description"] == "Image contains a commutative diagram."
+        assert "commutative diagram" in deps.window.get_context()[-1]["content"]
 
         await store.close()
 

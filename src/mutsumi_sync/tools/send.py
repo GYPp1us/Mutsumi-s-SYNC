@@ -42,6 +42,7 @@ async def send_tool(
 ) -> str:
     """Execute send tool by building message segments and sending via sender."""
     segments = []
+    artifacts: list[dict] = []
     if args.get("text"):
         segments.append({"type": "text", "data": {"text": args["text"]}})
     if args.get("image"):
@@ -57,6 +58,12 @@ async def send_tool(
             logger.exception("markdown image render failed")
             return f"[Error: {e}]"
         segments.append({"type": "image", "data": {"file": image_path}})
+        artifacts.append({
+            "kind": "sent_image",
+            "source": "markdown_image",
+            "file": image_path,
+            "markdown": args["markdown_image"],
+        })
     if args.get("face"):
         segments.append({"type": "face", "data": {"id": str(args["face"])}})
     if args.get("at_user"):
@@ -71,6 +78,9 @@ async def send_tool(
 
     try:
         result = await sender.send(peer, segments)
+        if artifacts and isinstance(result, dict):
+            result = dict(result)
+            result["artifacts"] = artifacts
         return json.dumps(result)
     except Exception as e:
         logger.exception("send_tool failed")

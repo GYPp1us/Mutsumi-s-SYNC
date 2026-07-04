@@ -14,6 +14,7 @@ from .tools.http_api import http_api_call, HTTP_API_SCHEMA
 from .tools.config_manager import config_manager, CONFIG_MANAGER_SCHEMA
 from .tools.memory import memory_search, memory_save, MEMORY_SEARCH_SCHEMA, MEMORY_SAVE_SCHEMA
 from .tools.self_note import self_note_tool, SELF_NOTE_SCHEMA
+from .tools.priority_override import priority_override_tool, PRIORITY_OVERRIDE_SCHEMA
 from .tools.send import send_tool, SEND_TOOL_SCHEMA
 from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 
@@ -85,6 +86,19 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
         description="管理对用户的私人印象。add:追加, replace:覆盖",
         parameters=SELF_NOTE_SCHEMA,
         handler=_self_note,
+    ))
+
+    async def _priority_override(args: dict, **deps) -> str:
+        return await priority_override_tool(args, store=store, group_key=deps.get("group_key", ""))
+
+    registry.register(Tool(
+        name="priority_override",
+        description=(
+            "Manage the Priority Override field. Use it only for unusually important instructions "
+            "that must be repeated after every user input in the working context."
+        ),
+        parameters=PRIORITY_OVERRIDE_SCHEMA,
+        handler=_priority_override,
     ))
 
     async def _send(args: dict, **deps) -> str:
