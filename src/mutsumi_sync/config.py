@@ -23,6 +23,21 @@ class ModelConfig(BaseModel):
     reasoning_effort: str = "max"
 
 
+class VisionConfig(BaseModel):
+    enabled: bool = False
+    provider: str = "openai-compatible"
+    model: str = ""
+    api_key: str = ""
+    base_url: str = ""
+    timeout_seconds: float = 60.0
+
+
+class HeartbeatConfig(BaseModel):
+    enabled: bool = True
+    interval_seconds: int = 2700
+    aggressive_provider_cache_retention: bool = False
+
+
 class ContextConfig(BaseModel):
     max_tokens: int = 4096
     window_max_tokens: int = 100000
@@ -72,6 +87,8 @@ class Config(BaseModel):
     memory: MemoryConfig = MemoryConfig()
     summarizer: SummarizerConfig = SummarizerConfig()
     render: RenderConfig = RenderConfig()
+    vision: VisionConfig = VisionConfig()
+    heartbeat: HeartbeatConfig = HeartbeatConfig()
     system_prompt: str = ""
 
     _config_path: str | None = None

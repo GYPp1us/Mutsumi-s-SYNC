@@ -1,5 +1,15 @@
 import pytest
-from src.mutsumi_sync.config import Config, NapcatConfig, ModelConfig, ContextConfig, SessionConfig, MemoryConfig, SummarizerConfig
+from src.mutsumi_sync.config import (
+    Config,
+    NapcatConfig,
+    ModelConfig,
+    ContextConfig,
+    SessionConfig,
+    MemoryConfig,
+    SummarizerConfig,
+    HeartbeatConfig,
+    VisionConfig,
+)
 
 
 class TestConfig:
@@ -12,6 +22,9 @@ class TestConfig:
         assert c.render.markdown_image.enabled is False
         assert c.render.markdown_image.node_path == "node"
         assert c.render.markdown_image.output_dir == "data/generated/markdown"
+        assert c.heartbeat.interval_seconds == 2700
+        assert c.heartbeat.aggressive_provider_cache_retention is False
+        assert c.vision.enabled is False
         assert c.dirty is False
 
     def test_load_missing_file(self):
@@ -107,3 +120,14 @@ class TestModelDefaults:
     def test_session_defaults(self):
         s = SessionConfig()
         assert s.timeout == 300
+
+    def test_heartbeat_defaults(self):
+        h = HeartbeatConfig()
+        assert h.enabled is True
+        assert h.interval_seconds == 2700
+        assert h.aggressive_provider_cache_retention is False
+
+    def test_vision_defaults(self):
+        v = VisionConfig()
+        assert v.enabled is False
+        assert v.provider == "openai-compatible"

@@ -9,8 +9,12 @@ class TestMessageWindow:
         w.add(user_id="user1", message="world", is_bot=True)
         ctx = w.get_context()
         assert len(ctx) == 2
-        assert ctx[0] == {"role": "user", "content": "hello"}
-        assert ctx[1] == {"role": "assistant", "content": "world"}
+        assert ctx[0]["role"] == "user"
+        assert ctx[0]["content"] == "hello"
+        assert ctx[0]["created_at"] is not None
+        assert ctx[1]["role"] == "assistant"
+        assert ctx[1]["content"] == "world"
+        assert ctx[1]["created_at"] is not None
 
     def test_max_size_overflow(self):
         w = MessageWindow(max_size=2)
