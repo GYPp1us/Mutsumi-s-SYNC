@@ -463,10 +463,16 @@ async def pipeline(
                 len([tc for tc in other_calls if tc["name"] != NO_REPLY_TOOL]),
             )
 
+            tc_results: dict[str, str] = {}
+            _report_state(deps, f"LOOP_{step + 1}:Exec_Tools")
+
             for tc in send_calls:
                 if send_count >= MAX_SENDS_PER_LOOP:
+                    reply_result = f"[Error: send limit reached: {MAX_SENDS_PER_LOOP}]"
                     logger.warning("[PIPE] send limit reached max=%d", MAX_SENDS_PER_LOOP)
-                    break
+                    tc_results[tc["id"]] = reply_result
+                    log_tool_call(deps, "send", tc["arguments"], reply_result)
+                    continue
                 try:
                     reply_result = await send_tool(
                         tc["arguments"],
@@ -483,11 +489,10 @@ async def pipeline(
                         responded = True
                 except Exception as e:
                     logger.exception("send_tool failed")
+                    reply_result = f"[Error: {e}]"
+                tc_results[tc["id"]] = str(reply_result)
                 send_count += 1
 
-            tc_results: dict[str, str] = {}
-            if other_calls:
-                _report_state(deps, f"LOOP_{step + 1}:Exec_Tools")
             for tc in other_calls:
                 logger.info("[PIPE] executing tool name=%s queued=%s", tc["name"], tc["name"] in WRITE_TOOLS)
                 if tc["name"] == last_tool_name:
@@ -529,46 +534,35 @@ async def pipeline(
                     tc_results[tc["id"]] = tr
                     log_tool_call(deps, tc["name"], tc["arguments"], tr)
 
-            if other_calls:
-                logger.info("[PIPE] appended %d tool results to context", len(other_calls))
-                assistant_msg: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": result.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
-                            },
-                        }
-                        for tc in other_calls
-                    ],
-                }
-                if result.reasoning_content:
-                    assistant_msg["reasoning_content"] = result.reasoning_content
-                messages.append(assistant_msg)
+            logger.info("[PIPE] appended %d tool results to context", len(result.tool_calls))
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": result.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
+                        },
+                    }
+                    for tc in result.tool_calls
+                ],
+            }
+            if result.reasoning_content:
+                assistant_msg["reasoning_content"] = result.reasoning_content
+            messages.append(assistant_msg)
 
-                for tc in other_calls:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": tc_results[tc["id"]],
-                    })
-            elif result.content:
-                logger.info("[PIPE] appended assistant content to context chars=%d", len(result.content))
-                msg: dict[str, Any] = {"role": "assistant", "content": result.content}
-                if result.reasoning_content:
-                    msg["reasoning_content"] = result.reasoning_content
-                messages.append(msg)
+            for tc in result.tool_calls:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": tc_results.get(tc["id"], "[Error: tool did not run]"),
+                })
 
             if no_reply_called:
                 logger.info("[PIPE] branch=no_reply suppressing assistant content and ending loop step=%d", step + 1)
-                break
-
-            if not other_calls:
-                logger.info("[PIPE] no remaining tools; ending loop step=%d", step + 1)
                 break
         else:
             logger.warning("[LOOP] tool loop exhausted after %d steps, context ~%d msgs",

@@ -382,6 +382,67 @@ class TestPipelineE2EDebounce:
 
         await store.close()
 
+    async def test_send_only_tool_round_continues_to_next_llm_call(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        calls = iter([
+            LLMResult(
+                content="可以改，模型配置如下",
+                tool_calls=[{
+                    "id": "call_text",
+                    "name": "send",
+                    "arguments": {"text": "可以改，模型配置如下"},
+                }],
+                input_tokens=3,
+                output_tokens=2,
+            ),
+            LLMResult(
+                content="",
+                tool_calls=[{
+                    "id": "call_markdown",
+                    "name": "send",
+                    "arguments": {"markdown_image": "# 模型配置\n\n- 模型：deepseek-v4-flash"},
+                }],
+                input_tokens=3,
+                output_tokens=2,
+            ),
+            LLMResult(content="", input_tokens=3, output_tokens=0),
+        ])
+        llm_call_count = 0
+
+        async def fake_llm_call(messages, deps):
+            nonlocal llm_call_count
+            llm_call_count += 1
+            return next(calls)
+
+        async def fake_send_tool(args, *, sender, peer, config=None):
+            if args.get("text"):
+                await sender.send(peer, [{"type": "text", "data": {"text": args["text"]}}])
+            if args.get("markdown_image"):
+                await sender.send(peer, [{"type": "image", "data": {"file": "rendered.png"}}])
+            return '{"status": "ok"}'
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        monkeypatch.setattr(pipeline_module, "send_tool", fake_send_tool)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="send_loop_test"),
+            group_key="private:send_loop_test",
+        )
+
+        await pipeline("show model config as markdown image", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert llm_call_count == 3
+        assert [item["message"][0]["type"] for item in sender.sent] == ["text", "image"]
+
+        await store.close()
+
     async def test_no_reply_tool_is_registered(self):
         config = make_config()
         store = MessageStore(db_path=":memory:")
