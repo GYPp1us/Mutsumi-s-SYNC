@@ -1,3 +1,15 @@
+# Current Context, Heartbeat, And Vision Rules
+
+- LLM requests must contain exactly one empty `system` message. The default system prompt, summaries, self-note, and other persistent context are packed into the first `user` message.
+- Working conversation messages after the bootstrap `user` message are only the current working context window.
+- Summaries, self-note entries, and working-window messages must be timestamped in a readable UTC+8 form. Existing self-note lines without timestamps are injected with `很久之前`.
+- `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is appended after every user-role context message and should be used only for high-priority instructions.
+- Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
+- `send(markdown_image=...)` records a structured sent-image artifact with source Markdown, generated file path, and message id when available.
+- Heartbeat uses `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`: real LLM call, no visible QQ output, no message/window/summary memory pollution.
+- `heartbeat.interval_seconds` defaults to `2700`. `heartbeat.aggressive_provider_cache_retention` controls whether heartbeat prefers active conversation context for provider cache retention.
+- Image recognition is provided through the optional OpenAI-compatible `vision` provider config. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
+
 # AGENTS.md - AI Agent 协作指南
 
 ## 项目概况
@@ -206,3 +218,4 @@ registry.register(Tool(
 | `tools/markdown-renderer/` | Markdown -> PNG Node renderer |
 | `src/mutsumi_sync/tui/dashboard.py` | Dashboard TUI |
 | `src/mutsumi_sync/tui/tester.py` | 交互式测试器 |
+

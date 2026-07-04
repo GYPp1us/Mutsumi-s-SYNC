@@ -7,6 +7,8 @@ from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.receiver import MessageEvent
 from src.mutsumi_sync.scheduler import PipelineScheduler
 from src.mutsumi_sync.tools.registry import ToolRegistry
+from src.mutsumi_sync.pipeline import LLMResult
+import src.mutsumi_sync.pipeline as pipeline_module
 
 
 class FakeSender:
@@ -168,6 +170,37 @@ async def test_shutdown_does_not_write_placeholder_summaries():
         assert summaries == []
     finally:
         await reopened.close()
+        os.unlink(store_path)
+
+
+async def test_heartbeat_runs_silent_pipeline_without_remembering_input(monkeypatch):
+    config = Config.load("config.example.yaml")
+    config.session.timeout = 999999
+    registry = ToolRegistry()
+    sender = FakeSender()
+    store, store_path = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+
+    calls = []
+
+    async def fake_llm_call(messages, deps):
+        calls.append((messages, deps))
+        return LLMResult(content="heartbeat ok", input_tokens=5, output_tokens=2)
+
+    monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+    try:
+        await scheduler.run_heartbeat_once()
+
+        assert len(calls) == 1
+        assert calls[0][1].source == "heartbeat"
+        assert calls[0][1].silent is True
+        assert calls[0][1].remember_input is False
+        assert sender.sent == []
+        assert await store.count() == 0
+    finally:
+        await store.close()
         os.unlink(store_path)
 
 

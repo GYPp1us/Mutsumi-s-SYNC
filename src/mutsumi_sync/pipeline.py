@@ -12,7 +12,12 @@ import httpx
 
 from .message.classifier import MessageType
 from .memory.store import StoredMessage
+from .memory.timestamps import (
+    ensure_timestamped_lines,
+    format_context_timestamp,
+)
 from .tools.send import send_tool
+from .vision import describe_image
 from .logging import log_context, log_llm_result, log_tool_call, log_send, ESTIMATE_CHARS_PER_TOKEN
 
 if TYPE_CHECKING:
@@ -22,7 +27,7 @@ logger = logging.getLogger("mutsumi.pipeline")
 
 MAX_TOOL_STEPS = 10
 MAX_SENDS_PER_LOOP = 5
-WRITE_TOOLS = {"self_note", "memory_save"}
+WRITE_TOOLS = {"self_note", "memory_save", "priority_override"}
 NO_REPLY_TOOL = "no_reply"
 
 
@@ -87,6 +92,14 @@ def _build_default_system_prompt(config) -> str:
         "\nreasoning_content 永远不会发送给用户。"
         "\n回复需要合理、得体、简洁，尽可能符合人类在社交平台聊天的规律。"
     )
+    system += (
+        "\n[Context Protocol]"
+        "\nThe API message list uses one empty system message only. All platform instructions, summaries, self notes, and memory blocks are packed into the first user message."
+        "\nThat first bootstrap user message is context, not a fresh user request. Later user/assistant turns are the working conversation window."
+        "\nEvery user-role message may end with [Priority Override]. Treat it as higher priority than ordinary memory and keep paying attention to it."
+        "\nHeartbeat messages are silent health checks. They must not create durable memories and should not produce visible chat output."
+        "\nImage messages may be described by a configured vision API provider; preserve visible text, formulas, code, and diagrams in memory."
+    )
     return system
 
 
@@ -95,7 +108,7 @@ async def _inject_self_note(store, group_key: str, config) -> str:
     if not note or not note.get("content"):
         return ""
 
-    content = note["content"]
+    content = ensure_timestamped_lines(note["content"])
     current = _estimate_tokens(content)
     target = config.memory.self_note_target_tokens
     limit = int(target * config.memory.self_note_max_multiplier)
@@ -107,18 +120,41 @@ async def _inject_self_note(store, group_key: str, config) -> str:
     return f"[私人印象 — current: {current} / target: {target} tokens]\n{content}\n[/私人印象]"
 
 
+async def _inject_priority_override(store, group_key: str) -> str:
+    item = await store.get_current_priority_override(group_key)
+    if not item:
+        return ""
+    content = ensure_timestamped_lines(str(item.get("content", "")))
+    if not content.strip():
+        return ""
+    return f"[Priority Override]\n{content}\n[/Priority Override]"
+
+
+def _append_priority_override(content: str, priority_override: str) -> str:
+    if not priority_override:
+        return content
+    return f"{content.rstrip()}\n\n{priority_override}"
+
+
+def _with_context_timestamp(content: str, created_at: Any | None) -> str:
+    return f"[time: {format_context_timestamp(created_at)}]\n{content}"
+
+
 async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any]]:
     config = deps.config
     store = deps.store
 
     system_prompt = _build_default_system_prompt(config)
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": ""},
+    ]
+    bootstrap_sections = [
+        "[System Prompt]\n" + system_prompt + "\n[/System Prompt]",
     ]
 
     self_note_text = await _inject_self_note(store, deps.group_key, config)
     if self_note_text:
-        messages.append({"role": "system", "content": self_note_text})
+        bootstrap_sections.append(self_note_text)
 
     summaries = await store.get_summaries(deps.group_key, limit=config.context.summaries_max_count)
     if summaries:
@@ -127,15 +163,39 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
             if _is_placeholder_summary(str(s["summary"])):
                 continue
             source_label = "user" if s["source"] == "user" else "assistant"
-            summary_texts.append(f"[{source_label}]: {s['summary']}")
+            timestamp = format_context_timestamp(s.get("created_at"))
+            summary_texts.append(f"[{timestamp}][{source_label}]: {s['summary']}")
         if summary_texts:
             messages.append({"role": "system", "content": "[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]"})
 
+    extra_system_sections = [
+        str(m.get("content", ""))
+        for m in messages[1:]
+        if m.get("role") == "system" and str(m.get("content", "")).strip()
+    ]
+    if extra_system_sections:
+        bootstrap_sections.extend(extra_system_sections)
+        messages = messages[:1]
+
+    priority_override = await _inject_priority_override(store, deps.group_key)
+    bootstrap = "\n\n".join(section for section in bootstrap_sections if section.strip())
+    messages.append({
+        "role": "user",
+        "content": _append_priority_override(bootstrap, priority_override),
+    })
+
     window_ctx = deps.window.get_context()
     for m in window_ctx:
-        messages.append({"role": m["role"], "content": m["content"]})
+        role = m["role"]
+        content = _with_context_timestamp(str(m["content"]), m.get("created_at"))
+        if role == "user":
+            content = _append_priority_override(content, priority_override)
+        messages.append({"role": role, "content": content})
 
-    messages.append({"role": "user", "content": message})
+    messages.append({
+        "role": "user",
+        "content": _append_priority_override(message, priority_override),
+    })
 
     return messages
 
@@ -229,6 +289,120 @@ async def _save_msg(deps: PipelineDeps, message: str, category: str, response: s
         logger.info("[PIPE] saved message category=%s response=%s", category, "yes" if response else "no")
     except Exception:
         logger.exception("Failed to save message to store")
+
+
+def _message_record_content(
+    message: str,
+    *,
+    response: str | None = None,
+    status: str = "received",
+    source: str = "user",
+) -> str:
+    return json.dumps({
+        "user": message,
+        "bot": response,
+        "status": status,
+        "source": source,
+    }, ensure_ascii=False)
+
+
+async def _save_inbound_msg(deps: PipelineDeps, message: str, category: str) -> int | None:
+    if not deps.remember_input:
+        return None
+    try:
+        today = date.today().isoformat()
+        msg_id = await deps.store.save(StoredMessage(
+            date=today,
+            group_key=deps.group_key,
+            category=category,
+            content=_message_record_content(message, source=deps.source),
+        ))
+        logger.info("[PIPE] saved inbound message category=%s id=%s source=%s", category, msg_id, deps.source)
+        return msg_id
+    except Exception:
+        logger.exception("Failed to save inbound message to store")
+        return None
+
+
+async def _update_saved_msg(
+    deps: PipelineDeps,
+    msg_id: int | None,
+    message: str,
+    category: str,
+    *,
+    response: str | None,
+    status: str,
+) -> None:
+    if not deps.remember_input or msg_id is None:
+        return
+    try:
+        await deps.store.update_message_content(
+            msg_id,
+            _message_record_content(message, response=response, status=status, source=deps.source),
+        )
+        logger.info("[PIPE] saved message category=%s response=%s", category, "yes" if response else "no")
+    except Exception:
+        logger.exception("Failed to update saved message")
+
+
+async def _recover_inbound_msg_id(deps: PipelineDeps, message: str, category: str) -> int | None:
+    if not deps.remember_input:
+        return None
+    try:
+        recent = await deps.store.get_messages(group_key=deps.group_key, category=category, limit=5)
+    except Exception:
+        logger.exception("Failed to recover inbound message id")
+        return None
+    for item in recent:
+        try:
+            parsed = json.loads(item.content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if (
+            isinstance(parsed, dict)
+            and parsed.get("user") == message
+            and parsed.get("status") == "received"
+            and parsed.get("source") == deps.source
+        ):
+            return item.id
+    return None
+
+
+async def _save_send_artifacts(deps: PipelineDeps, reply_result: str) -> list[str]:
+    if not deps.remember_input:
+        return []
+    try:
+        parsed = json.loads(reply_result)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(parsed, dict):
+        return []
+
+    artifacts = parsed.get("artifacts", [])
+    if not isinstance(artifacts, list):
+        return []
+
+    summaries: list[str] = []
+    today = date.today().isoformat()
+    message_id = parsed.get("data", {}).get("message_id") if isinstance(parsed.get("data"), dict) else None
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        if artifact.get("kind") != "sent_image":
+            continue
+        record = dict(artifact)
+        if message_id is not None:
+            record["message_id"] = message_id
+        await deps.store.save(StoredMessage(
+            date=today,
+            group_key=deps.group_key,
+            category="image",
+            content=json.dumps(record, ensure_ascii=False),
+        ))
+        source = record.get("source", "image")
+        file = record.get("file", "")
+        summaries.append(f"[sent image: {source}, file={file}, message_id={message_id}]")
+    return summaries
 
 
 def _log_context_size(messages: list[dict], deps: PipelineDeps) -> None:
@@ -358,6 +532,10 @@ async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
         logger.info("[PIPE] visible content empty after split")
         return []
 
+    if deps.silent:
+        logger.info("[PIPE] silent mode suppressed visible content parts=%d chars=%d", len(parts), len(content))
+        return parts
+
     for part in parts:
         await deps.sender.send(deps.peer, part)
         log_send(deps, "content", part)
@@ -385,6 +563,37 @@ async def pipeline(
     if msg_type == MessageType.IMAGE:
         _report_state(deps, "IMAGE")
         logger.info("[PIPE] branch=image unsupported image_file=%s image_url=%s", bool(image_file), bool(image_url))
+        image_description: str | None = None
+        if deps.config.vision.enabled:
+            image_description = await describe_image(image_file=image_file, image_url=image_url, config=deps.config)
+            if image_description.startswith("[Error:"):
+                bot_reply = f"收到图片，但图像识别失败：{image_description}"
+            else:
+                bot_reply = f"收到图片：{image_description}"
+        else:
+            bot_reply = "收到图片，暂不支持图片识别"
+        if not deps.silent:
+            await deps.sender.send(deps.peer, bot_reply)
+        if deps.remember_input:
+            deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
+            deps.window.add(user_id=str(deps.peer.peer_uid), message=bot_reply, is_bot=True)
+            today = date.today().isoformat()
+            await deps.store.save(StoredMessage(
+                date=today,
+                group_key=deps.group_key,
+                category=MessageType.IMAGE.value,
+                content=json.dumps({
+                    "user": message,
+                    "bot": bot_reply,
+                    "status": "responded",
+                    "source": deps.source,
+                    "image_file": image_file,
+                    "image_url": image_url,
+                    "image_description": image_description,
+                }, ensure_ascii=False),
+            ))
+        deps.session.touch()
+        return
         await deps.sender.send(deps.peer, "收到图片，暂不支持图片识别")
         deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
         deps.window.add(user_id=str(deps.peer.peer_uid), message="[图片]", is_bot=True)
@@ -396,8 +605,11 @@ async def pipeline(
     _pending_writes: list[tuple[str, dict, Callable[[], Awaitable[None]]]] = []
     bot_replies: list[str] = []
     responded = False
+    final_status = "received"
+    inbound_msg_id: int | None = None
 
     try:
+        inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value)
         deps.session.mark_pending()
 
         is_cold = deps.session.is_cold(deps.config.session.timeout)
@@ -442,6 +654,8 @@ async def pipeline(
 
             if not result.tool_calls and not result.content:
                 logger.info("[PIPE] branch=empty_response responded=%s cold=%s", responded, is_cold)
+                if final_status == "received":
+                    final_status = "empty"
                 break
 
             if not result.tool_calls and result.content:
@@ -449,8 +663,16 @@ async def pipeline(
                 visible_parts = await _send_visible_content(deps, result.content)
                 if visible_parts:
                     responded = True
+                    final_status = "responded"
                     bot_replies.extend(visible_parts)
-                    await _save_msg(deps, message, msg_type.value, "\n".join(visible_parts))
+                    await _update_saved_msg(
+                        deps,
+                        inbound_msg_id,
+                        message,
+                        msg_type.value,
+                        response="\n".join(visible_parts),
+                        status=final_status,
+                    )
                 break
 
             send_calls = [tc for tc in result.tool_calls if tc["name"] == "send"]
@@ -474,19 +696,25 @@ async def pipeline(
                     log_tool_call(deps, "send", tc["arguments"], reply_result)
                     continue
                 try:
-                    reply_result = await send_tool(
-                        tc["arguments"],
-                        sender=deps.sender,
-                        peer=deps.peer,
-                        config=deps.config,
-                    )
+                    if deps.silent:
+                        reply_result = "[OK] send suppressed by silent pipeline"
+                    else:
+                        reply_result = await send_tool(
+                            tc["arguments"],
+                            sender=deps.sender,
+                            peer=deps.peer,
+                            config=deps.config,
+                        )
                     log_send(deps, "tool", tc["arguments"])
                     log_tool_call(deps, "send", tc["arguments"], reply_result)
                     if not str(reply_result).startswith("[Error:"):
                         text_reply = str(tc["arguments"].get("text", ""))
                         if text_reply:
                             bot_replies.append(text_reply)
+                        artifact_summaries = await _save_send_artifacts(deps, str(reply_result))
+                        bot_replies.extend(artifact_summaries)
                         responded = True
+                        final_status = "responded"
                 except Exception as e:
                     logger.exception("send_tool failed")
                     reply_result = f"[Error: {e}]"
@@ -509,7 +737,11 @@ async def pipeline(
                     tc_results[tc["id"]] = msg
                     log_tool_call(deps, tc["name"], tc["arguments"], msg)
                     continue
-                if tc["name"] in WRITE_TOOLS:
+                if tc["name"] in WRITE_TOOLS and not deps.remember_input:
+                    tr = "[OK] write tool suppressed by non-remembering pipeline]"
+                    tc_results[tc["id"]] = tr
+                    log_tool_call(deps, tc["name"], tc["arguments"], tr)
+                elif tc["name"] in WRITE_TOOLS:
                     tool_name = tc["name"]
                     tool_args = tc["arguments"]
                     _pending_writes.append((
@@ -563,28 +795,59 @@ async def pipeline(
 
             if no_reply_called:
                 logger.info("[PIPE] branch=no_reply suppressing assistant content and ending loop step=%d", step + 1)
+                final_status = "no_reply"
                 break
         else:
             logger.warning("[LOOP] tool loop exhausted after %d steps, context ~%d msgs",
                            MAX_TOOL_STEPS, len(messages))
             _log_context_size(messages, deps)
 
-        if responded:
+        if responded and deps.remember_input:
             deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
             combined_bot_reply = "\n".join(bot_replies)
             if combined_bot_reply:
                 deps.window.add(user_id=str(deps.peer.peer_uid), message=combined_bot_reply, is_bot=True)
             logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
+        elif responded:
+            logger.info("[PIPE] response produced; window unchanged for source=%s", deps.source)
         else:
             logger.info("[PIPE] no response produced; window unchanged")
+
+        combined_response = "\n".join(bot_replies) if bot_replies else None
+        await _update_saved_msg(
+            deps,
+            inbound_msg_id,
+            message,
+            msg_type.value,
+            response=combined_response,
+            status=final_status,
+        )
 
         _report_state(deps, "DONE")
 
     except asyncio.CancelledError:
         logger.info("[PIPE] cancelled for %s", deps.peer.peer_uid)
+        if inbound_msg_id is None:
+            inbound_msg_id = await _recover_inbound_msg_id(deps, message, msg_type.value)
+        await _update_saved_msg(
+            deps,
+            inbound_msg_id,
+            message,
+            msg_type.value,
+            response=None,
+            status="cancelled",
+        )
         raise
     except Exception as e:
         logger.exception("[PIPE] error for %s", deps.peer.peer_uid)
+        await _update_saved_msg(
+            deps,
+            inbound_msg_id,
+            message,
+            msg_type.value,
+            response=None,
+            status="error",
+        )
         if not responded:
             await deps.sender.send(deps.peer, f"模型暂时不可用: {e}")
     finally:
@@ -598,13 +861,14 @@ async def pipeline(
             except Exception:
                 logger.exception("Post-write failed for %s", tool_name)
 
-        try:
-            await _archive_if_needed(deps, message, bot_replies)
-        except Exception:
-            logger.exception("Archive failed")
+        if deps.remember_input:
+            try:
+                await _archive_if_needed(deps, message, bot_replies)
+            except Exception:
+                logger.exception("Archive failed")
 
-        try:
-            await _recycle_window_if_needed(deps)
-        except Exception:
-            logger.exception("Window recycle failed")
+            try:
+                await _recycle_window_if_needed(deps)
+            except Exception:
+                logger.exception("Window recycle failed")
         logger.info("[PIPE] cleanup complete")

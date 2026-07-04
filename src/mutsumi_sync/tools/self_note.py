@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ..memory.timestamps import timestamp_memory_entry
+
 if TYPE_CHECKING:
     from ..memory.store import MessageStore
 
@@ -37,14 +39,15 @@ async def self_note_tool(args: dict, *, store: "MessageStore", group_key: str) -
         return f"[Error: unknown action: {action}]"
 
     try:
+        entry = timestamp_memory_entry(content)
         if action == "add":
             existing = await store.get_current_self_note(group_key)
             if existing:
-                new_content = existing["content"] + "\n" + content
+                new_content = existing["content"] + "\n" + entry
             else:
-                new_content = content
+                new_content = entry
         else:
-            new_content = content
+            new_content = entry
 
         await store.upsert_self_note(group_key, new_content)
         return "[OK] self_note updated"

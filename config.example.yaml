@@ -12,6 +12,17 @@ model:
   provider: deepseek
   temperature: 0.5
   reasoning_effort: max
+vision:
+  enabled: false
+  provider: openai-compatible
+  model: ''
+  api_key: ''
+  base_url: ''
+  timeout_seconds: 60
+heartbeat:
+  enabled: true
+  interval_seconds: 2700
+  aggressive_provider_cache_retention: false
 napcat:
   access_token: ''
   http_url: http://localhost:3000
