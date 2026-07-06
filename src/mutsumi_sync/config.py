@@ -30,6 +30,13 @@ class VisionConfig(BaseModel):
     api_key: str = ""
     base_url: str = ""
     timeout_seconds: float = 60.0
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    session_token: str = ""
+    region: str = "cn-north-1"
+    service: str = "cv"
+    action: str = "OCRNormal"
+    version: str = "2020-08-26"
 
 
 class HeartbeatConfig(BaseModel):

@@ -133,7 +133,9 @@ When `aggressive_provider_cache_retention` is true, heartbeat prefers the last a
 
 ## 7. Vision Provider
 
-Image recognition uses a separate OpenAI-compatible provider:
+Image recognition uses a separate provider. The main text model is not assumed to support images.
+
+OpenAI-compatible chat/completions provider:
 
 ```yaml
 vision:
@@ -145,7 +147,24 @@ vision:
   timeout_seconds: 60
 ```
 
-The main text model is not assumed to support images. The vision provider accepts either `image_url` or a local image file converted to a data URL. Its prompt asks for concise memory-oriented descriptions and preservation of visible text, formulas, code, and diagrams.
+This provider accepts either `image_url` or a local image file converted to a data URL. Its prompt asks for concise memory-oriented descriptions and preservation of visible text, formulas, code, and diagrams.
+
+Volcengine OCR provider:
+
+```yaml
+vision:
+  enabled: false
+  provider: volcengine-ocr
+  access_key_id: ""
+  secret_access_key: ""
+  session_token: ""
+  region: cn-north-1
+  service: cv
+  action: OCRNormal
+  version: "2020-08-26"
+```
+
+This provider calls Volcengine Visual OCR `OCRNormal` at `https://visual.volcengineapi.com` using HMAC-SHA256 request signing. It accepts either `image_url` or a local image file encoded as raw base64 and returns visible OCR text as the image description. It requires an Access Key ID and Secret Access Key pair; `session_token` is included and signed when temporary credentials are used. A single bearer-style API key or session token is not sufficient for this OCR API.
 
 Incoming image messages save structured JSON with:
 

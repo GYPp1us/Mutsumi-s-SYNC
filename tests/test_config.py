@@ -131,3 +131,10 @@ class TestModelDefaults:
         v = VisionConfig()
         assert v.enabled is False
         assert v.provider == "openai-compatible"
+        assert v.access_key_id == ""
+        assert v.secret_access_key == ""
+        assert v.session_token == ""
+        assert v.region == "cn-north-1"
+        assert v.service == "cv"
+        assert v.action == "OCRNormal"
+        assert v.version == "2020-08-26"

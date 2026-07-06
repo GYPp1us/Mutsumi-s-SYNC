@@ -19,6 +19,13 @@ vision:
   api_key: ''
   base_url: ''
   timeout_seconds: 60
+  access_key_id: ''
+  secret_access_key: ''
+  session_token: ''
+  region: cn-north-1
+  service: cv
+  action: OCRNormal
+  version: '2020-08-26'
 heartbeat:
   enabled: true
   interval_seconds: 2700

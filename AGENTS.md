@@ -8,7 +8,7 @@
 - `send(markdown_image=...)` records a structured sent-image artifact with source Markdown, generated file path, and message id when available.
 - Heartbeat uses `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`: real LLM call, no visible QQ output, no message/window/summary memory pollution.
 - `heartbeat.interval_seconds` defaults to `2700`. `heartbeat.aggressive_provider_cache_retention` controls whether heartbeat prefers active conversation context for provider cache retention.
-- Image recognition is provided through the optional OpenAI-compatible `vision` provider config. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
+- Image recognition is provided through the optional `vision` provider config. Supported providers are `openai-compatible` and `volcengine-ocr`; Volcengine OCR requires AK/SK and can also sign an optional `session_token`. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
 
 # AGENTS.md - AI Agent 协作指南
 
@@ -218,4 +218,3 @@ registry.register(Tool(
 | `tools/markdown-renderer/` | Markdown -> PNG Node renderer |
 | `src/mutsumi_sync/tui/dashboard.py` | Dashboard TUI |
 | `src/mutsumi_sync/tui/tester.py` | 交互式测试器 |
-
