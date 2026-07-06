@@ -14,7 +14,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Context assembly with timestamps, non-truncated CONTEXT logs, and a single empty `system` message.
 - Priority Override memory, repeated after every user-role context message for unusually important instructions.
 - Silent heartbeat pipeline every 45 minutes, using a real LLM call without remembering heartbeat inputs.
-- Optional OpenAI-compatible vision provider for image-to-text descriptions.
+- Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
 - Interactive tester with `/inject` and `/break`.
 - Dashboard TUI with selectable colored logs, scrolling, copy support, command history, config commands, and memory view.
@@ -118,6 +118,13 @@ vision:
   model: ""
   api_key: ""
   base_url: ""
+  access_key_id: ""
+  secret_access_key: ""
+  session_token: ""
+  region: cn-north-1
+  service: cv
+  action: OCRNormal
+  version: "2020-08-26"
 
 render:
   markdown_image:
@@ -195,7 +202,7 @@ Inbound user text is saved before the LLM call. If the task is cancelled, the sa
 
 The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
 
-Incoming image messages can use an OpenAI-compatible vision API when `vision.enabled` is true and `vision.model`, `vision.base_url`, and `vision.api_key` are configured. The description is saved with the image record and added to the working window.
+Incoming image messages can use a separate vision provider when `vision.enabled` is true. `provider: openai-compatible` uses `vision.model`, `vision.base_url`, and `vision.api_key`. `provider: volcengine-ocr` uses Volcengine Visual OCR `OCRNormal` with `vision.access_key_id` and `vision.secret_access_key`; `vision.session_token` is optional for temporary credentials. It extracts visible text and stores it as the image description. The description is saved with the image record and added to the working window.
 
 ## Markdown Image Sending
 
