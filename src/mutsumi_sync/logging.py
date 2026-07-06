@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import atexit
 import copy
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import logging
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
@@ -44,7 +44,7 @@ class NdjsonLogFormatter(logging.Formatter):
         message = raw_message if self.keep_ansi else _strip_ansi(raw_message)
         payload: dict[str, object] = {
             "schema": "mutsumi.log.v1",
-            "ts": datetime.fromtimestamp(record.created, UTC).isoformat(),
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": message,
