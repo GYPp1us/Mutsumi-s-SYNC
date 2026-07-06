@@ -1,10 +1,18 @@
+import datetime
+import inspect
 import json
 import logging
 from types import SimpleNamespace
 
 from src.mutsumi_sync.config import Config
+import src.mutsumi_sync.logging as logging_module
 from src.mutsumi_sync.logging import log_context, stop_stream_log_store
 from src.mutsumi_sync.main import setup_logging
+
+
+def test_logging_module_does_not_depend_on_datetime_utc_constant():
+    assert "datetime import UTC" not in inspect.getsource(logging_module)
+    assert not hasattr(datetime, "UTC") or datetime.timezone.utc is not None
 
 
 def test_log_context_does_not_truncate_message_content(caplog):
