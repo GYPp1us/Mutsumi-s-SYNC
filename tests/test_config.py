@@ -9,6 +9,8 @@ from src.mutsumi_sync.config import (
     SummarizerConfig,
     HeartbeatConfig,
     VisionConfig,
+    LoggingConfig,
+    LogStreamStoreConfig,
 )
 
 
@@ -25,6 +27,8 @@ class TestConfig:
         assert c.heartbeat.interval_seconds == 2700
         assert c.heartbeat.aggressive_provider_cache_retention is False
         assert c.vision.enabled is False
+        assert c.logging.stream_store.enabled is True
+        assert c.logging.stream_store.path == "data/logs/mutsumi.ndjson"
         assert c.dirty is False
 
     def test_load_missing_file(self):
@@ -138,3 +142,12 @@ class TestModelDefaults:
         assert v.service == "cv"
         assert v.action == "OCRNormal"
         assert v.version == "2020-08-26"
+
+    def test_logging_defaults(self):
+        l = LoggingConfig()
+        s = LogStreamStoreConfig()
+        assert l.stream_store.enabled is True
+        assert s.path == "data/logs/mutsumi.ndjson"
+        assert s.max_bytes == 52_428_800
+        assert s.backup_count == 5
+        assert s.keep_ansi is True

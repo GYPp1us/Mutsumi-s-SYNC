@@ -30,6 +30,13 @@ heartbeat:
   enabled: true
   interval_seconds: 2700
   aggressive_provider_cache_retention: false
+logging:
+  stream_store:
+    enabled: true
+    path: data/logs/mutsumi.ndjson
+    max_bytes: 52428800
+    backup_count: 5
+    keep_ansi: true
 napcat:
   access_token: ''
   http_url: http://localhost:3000
