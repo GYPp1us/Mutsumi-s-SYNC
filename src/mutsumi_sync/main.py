@@ -5,6 +5,7 @@ import logging
 import sys
 
 from .config import Config
+from .logging import start_stream_log_store, stop_stream_log_store
 from .memory.store import MessageStore
 from .message.receiver import MessageReceiver
 from .message.sender import MessageSender
@@ -21,7 +22,8 @@ from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 logger = logging.getLogger("mutsumi.main")
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: int = logging.INFO, config: Config | None = None) -> None:
+    stop_stream_log_store()
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
@@ -33,6 +35,10 @@ def setup_logging(level: int = logging.INFO) -> None:
     root.setLevel(level)
     root.handlers.clear()
     root.addHandler(handler)
+    if config is not None:
+        stream_handler = start_stream_log_store(config)
+        if stream_handler is not None:
+            root.addHandler(stream_handler)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("websockets").setLevel(logging.WARNING)
@@ -129,6 +135,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
 async def run(config_path: str = "config.yaml") -> None:
     config = Config.load(config_path)
+    setup_logging(config=config)
     logger.info("Config loaded from %s", config_path)
 
     store = MessageStore()
@@ -156,6 +163,8 @@ def main() -> None:
         asyncio.run(run(config_path))
     except KeyboardInterrupt:
         logger.info("Shutting down")
+    finally:
+        stop_stream_log_store()
 
 
 if __name__ == "__main__":

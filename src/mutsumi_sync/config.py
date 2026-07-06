@@ -39,6 +39,18 @@ class VisionConfig(BaseModel):
     version: str = "2020-08-26"
 
 
+class LogStreamStoreConfig(BaseModel):
+    enabled: bool = True
+    path: str = "data/logs/mutsumi.ndjson"
+    max_bytes: int = 52_428_800
+    backup_count: int = 5
+    keep_ansi: bool = True
+
+
+class LoggingConfig(BaseModel):
+    stream_store: LogStreamStoreConfig = LogStreamStoreConfig()
+
+
 class HeartbeatConfig(BaseModel):
     enabled: bool = True
     interval_seconds: int = 2700
@@ -96,6 +108,7 @@ class Config(BaseModel):
     render: RenderConfig = RenderConfig()
     vision: VisionConfig = VisionConfig()
     heartbeat: HeartbeatConfig = HeartbeatConfig()
+    logging: LoggingConfig = LoggingConfig()
     system_prompt: str = ""
 
     _config_path: str | None = None

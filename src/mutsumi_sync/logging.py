@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import atexit
+import copy
+from datetime import UTC, datetime
 import json
 import logging
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from pathlib import Path
+import queue
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .config import Config
     from .scheduler import PipelineDeps
 
 logger = logging.getLogger("mutsumi.logging")
@@ -15,6 +23,91 @@ _BOLD = "\033[1m"
 _CYAN = "\033[36m"
 
 ESTIMATE_CHARS_PER_TOKEN = 4
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_STREAM_LISTENER: QueueListener | None = None
+_STREAM_FILE_HANDLER: RotatingFileHandler | None = None
+_ATEXIT_REGISTERED = False
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+class NdjsonLogFormatter(logging.Formatter):
+    def __init__(self, *, keep_ansi: bool = True):
+        super().__init__()
+        self.keep_ansi = keep_ansi
+
+    def format(self, record: logging.LogRecord) -> str:
+        raw_message = record.getMessage()
+        has_ansi = bool(_ANSI_RE.search(raw_message))
+        message = raw_message if self.keep_ansi else _strip_ansi(raw_message)
+        payload: dict[str, object] = {
+            "schema": "mutsumi.log.v1",
+            "ts": datetime.fromtimestamp(record.created, UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": message,
+            "ansi": has_ansi and self.keep_ansi,
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+            "process": record.process,
+            "thread": record.threadName,
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+class _PreservingQueueHandler(QueueHandler):
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        return copy.copy(record)
+
+
+def start_stream_log_store(config: Config) -> logging.Handler | None:
+    global _STREAM_LISTENER, _STREAM_FILE_HANDLER, _ATEXIT_REGISTERED
+    stop_stream_log_store()
+
+    stream_config = config.logging.stream_store
+    if not stream_config.enabled:
+        return None
+
+    path = Path(stream_config.path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_handler = RotatingFileHandler(
+        path,
+        maxBytes=stream_config.max_bytes,
+        backupCount=stream_config.backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(NdjsonLogFormatter(keep_ansi=stream_config.keep_ansi))
+
+    log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
+    queue_handler = _PreservingQueueHandler(log_queue)
+    listener = QueueListener(log_queue, file_handler, respect_handler_level=True)
+    listener.start()
+
+    _STREAM_LISTENER = listener
+    _STREAM_FILE_HANDLER = file_handler
+    if not _ATEXIT_REGISTERED:
+        atexit.register(stop_stream_log_store)
+        _ATEXIT_REGISTERED = True
+    return queue_handler
+
+
+def stop_stream_log_store() -> None:
+    global _STREAM_LISTENER, _STREAM_FILE_HANDLER
+    listener = _STREAM_LISTENER
+    file_handler = _STREAM_FILE_HANDLER
+    _STREAM_LISTENER = None
+    _STREAM_FILE_HANDLER = None
+
+    if listener is not None:
+        listener.stop()
+    if file_handler is not None:
+        file_handler.close()
 
 
 def log_context(messages: list[dict], deps: PipelineDeps) -> None:

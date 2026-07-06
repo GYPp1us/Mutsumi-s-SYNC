@@ -25,6 +25,7 @@ from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.styles import Style
 
 from ..config import Config
+from ..logging import start_stream_log_store, stop_stream_log_store
 from ..memory.store import MessageStore
 from ..message.classifier import MessageType
 from ..message.receiver import MessageEvent, MessageReceiver
@@ -412,6 +413,9 @@ class Dashboard:
         root.setLevel(logging.DEBUG)
         root.handlers.clear()
         root.addHandler(_AsyncQueueLogHandler(self.log_queue, asyncio.get_running_loop()))
+        stream_handler = start_stream_log_store(self.config)
+        if stream_handler is not None:
+            root.addHandler(stream_handler)
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("websockets").setLevel(logging.WARNING)
         logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -1062,6 +1066,7 @@ class Dashboard:
                 self._ws_task.cancel()
             if self.receiver:
                 await self.receiver.close()
+            stop_stream_log_store()
 
 
 def _render_filled_line(anchors: list[list[tuple[str, str]]], terminal_width: int,

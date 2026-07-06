@@ -12,6 +12,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Built-in tool registry with hot snapshot/version tracking.
 - SQLite message store, summaries, self notes, and media storage.
 - Context assembly with timestamps, non-truncated CONTEXT logs, and a single empty `system` message.
+- Append-only NDJSON stream logs for durable real-time diagnostics.
 - Priority Override memory, repeated after every user-role context message for unusually important instructions.
 - Silent heartbeat pipeline every 45 minutes, using a real LLM call without remembering heartbeat inputs.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
@@ -112,6 +113,14 @@ heartbeat:
   interval_seconds: 2700
   aggressive_provider_cache_retention: false
 
+logging:
+  stream_store:
+    enabled: true
+    path: data/logs/mutsumi.ndjson
+    max_bytes: 52428800
+    backup_count: 5
+    keep_ansi: true
+
 vision:
   enabled: false
   provider: openai-compatible
@@ -167,6 +176,12 @@ Dashboard highlights:
 - PageUp/PageDown scrolling independent from command cursor focus.
 - Command history with Up/Down.
 - `/watch`, `/auto`, `/memory`, `/config`, `/inject`, `/break`, `/connect`.
+
+## Streaming Logs
+
+Production logging still writes to stdout for systemd/journald, and TUI tools still consume in-memory queues for live display. In addition, `logging.stream_store` writes every `mutsumi.*` log record to an append-only NDJSON file. The default path is `data/logs/mutsumi.ndjson`, which is suitable for shared persistent data on the server.
+
+Each line is one JSON object with schema `mutsumi.log.v1`, timestamp, level, logger name, raw message, source location, process, and thread metadata. Multi-line records such as `CONTEXT`, LLM results, and tool logs remain one JSON record instead of being split into separate storage events. `keep_ansi` preserves colored diagnostic blocks for replay; set it to `false` to store plain text.
 
 ## LLM Output Protocol
 
