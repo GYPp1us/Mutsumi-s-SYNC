@@ -58,3 +58,12 @@ def test_release_script_lists_prs_before_create() -> None:
 
     assert "gh pr list --head $CurrentBranch" in source
     assert "gh pr view $CurrentBranch" not in source
+
+
+def test_release_script_keeps_command_output_out_of_function_returns() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    assert "$output = & $Command 2>&1" in source
+    assert "foreach ($line in @($output))" in source
+    assert "Write-Host $line" in source
+    assert "$createdPrOutput = (& gh pr create" in source
