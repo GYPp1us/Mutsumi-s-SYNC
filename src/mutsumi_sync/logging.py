@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import atexit
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
@@ -21,11 +21,12 @@ _DIM = "\033[2m"
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _CYAN = "\033[36m"
+_UTC_PLUS_8 = timezone(timedelta(hours=8))
 
 ESTIMATE_CHARS_PER_TOKEN = 4
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _STREAM_LISTENER: QueueListener | None = None
-_STREAM_FILE_HANDLER: RotatingFileHandler | None = None
+_STREAM_FILE_HANDLERS: list[RotatingFileHandler] = []
 _ATEXIT_REGISTERED = False
 
 
@@ -60,37 +61,70 @@ class NdjsonLogFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
+class HumanLogFormatter(logging.Formatter):
+    def __init__(self, *, keep_ansi: bool = False):
+        super().__init__()
+        self.keep_ansi = keep_ansi
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        if not self.keep_ansi:
+            message = _strip_ansi(message)
+
+        timestamp = datetime.fromtimestamp(record.created, _UTC_PLUS_8).strftime("%Y-%m-%d %H:%M:%S")
+        prefix = f"{timestamp}.{int(record.msecs):03d} +0800 {record.levelname:<5s} {record.name}: "
+        formatted = prefix + message
+        if record.exc_info:
+            formatted += "\n" + self.formatException(record.exc_info)
+        return formatted
+
+
 class _PreservingQueueHandler(QueueHandler):
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
         return copy.copy(record)
 
 
 def start_stream_log_store(config: Config) -> logging.Handler | None:
-    global _STREAM_LISTENER, _STREAM_FILE_HANDLER, _ATEXIT_REGISTERED
+    global _STREAM_LISTENER, _STREAM_FILE_HANDLERS, _ATEXIT_REGISTERED
     stop_stream_log_store()
 
     stream_config = config.logging.stream_store
-    if not stream_config.enabled:
+    text_config = config.logging.text_file
+    if not stream_config.enabled and not text_config.enabled:
         return None
 
-    path = Path(stream_config.path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    file_handlers: list[RotatingFileHandler] = []
+    if stream_config.enabled:
+        path = Path(stream_config.path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            path,
+            maxBytes=stream_config.max_bytes,
+            backupCount=stream_config.backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(NdjsonLogFormatter(keep_ansi=stream_config.keep_ansi))
+        file_handlers.append(file_handler)
 
-    file_handler = RotatingFileHandler(
-        path,
-        maxBytes=stream_config.max_bytes,
-        backupCount=stream_config.backup_count,
-        encoding="utf-8",
-    )
-    file_handler.setFormatter(NdjsonLogFormatter(keep_ansi=stream_config.keep_ansi))
+    if text_config.enabled:
+        path = Path(text_config.path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            path,
+            maxBytes=text_config.max_bytes,
+            backupCount=text_config.backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(HumanLogFormatter(keep_ansi=text_config.keep_ansi))
+        file_handlers.append(file_handler)
 
     log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
     queue_handler = _PreservingQueueHandler(log_queue)
-    listener = QueueListener(log_queue, file_handler, respect_handler_level=True)
+    listener = QueueListener(log_queue, *file_handlers, respect_handler_level=True)
     listener.start()
 
     _STREAM_LISTENER = listener
-    _STREAM_FILE_HANDLER = file_handler
+    _STREAM_FILE_HANDLERS = file_handlers
     if not _ATEXIT_REGISTERED:
         atexit.register(stop_stream_log_store)
         _ATEXIT_REGISTERED = True
@@ -98,15 +132,15 @@ def start_stream_log_store(config: Config) -> logging.Handler | None:
 
 
 def stop_stream_log_store() -> None:
-    global _STREAM_LISTENER, _STREAM_FILE_HANDLER
+    global _STREAM_LISTENER, _STREAM_FILE_HANDLERS
     listener = _STREAM_LISTENER
-    file_handler = _STREAM_FILE_HANDLER
+    file_handlers = _STREAM_FILE_HANDLERS
     _STREAM_LISTENER = None
-    _STREAM_FILE_HANDLER = None
+    _STREAM_FILE_HANDLERS = []
 
     if listener is not None:
         listener.stop()
-    if file_handler is not None:
+    for file_handler in file_handlers:
         file_handler.close()
 
 
