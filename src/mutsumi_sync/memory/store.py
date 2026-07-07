@@ -43,6 +43,31 @@ class StoredMessage:
         )
 
 
+@dataclass
+class ScheduledTaskRecord:
+    id: int
+    group_key: str
+    peer_chat_type: int
+    peer_uid: str
+    prompt: str
+    scheduled_at: float
+    status: str
+    created_at: float
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> ScheduledTaskRecord:
+        return cls(
+            id=row["id"],
+            group_key=row["group_key"],
+            peer_chat_type=row["peer_chat_type"],
+            peer_uid=row["peer_uid"],
+            prompt=row["prompt"],
+            scheduled_at=row["scheduled_at"],
+            status=row["status"],
+            created_at=row["created_at"],
+        )
+
+
 class MessageStore:
     """SQLite 持久化消息存储。"""
 
@@ -97,6 +122,20 @@ class MessageStore:
             INSERT INTO messages_fts(rowid, content, group_key, category)
             VALUES (new.rowid, new.content, new.group_key, new.category);
         END;
+
+        CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_key       TEXT    NOT NULL,
+            peer_chat_type  INTEGER NOT NULL,
+            peer_uid        TEXT    NOT NULL,
+            prompt          TEXT    NOT NULL,
+            scheduled_at    REAL    NOT NULL,
+            status          TEXT    NOT NULL DEFAULT 'pending',
+            created_at      REAL    NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_status_time
+            ON scheduled_tasks(status, scheduled_at);
     """
 
     def __init__(self, db_path: str = "data/mutsumi.db", media_dir: str = "data/media"):
@@ -411,6 +450,42 @@ class MessageStore:
         await self._conn.execute(
             "UPDATE summaries SET last_message_id = ? WHERE id = ?",
             (last_message_id, summary_id),
+        )
+        await self._conn.commit()
+
+    async def add_scheduled_task(
+        self,
+        *,
+        group_key: str,
+        peer_chat_type: int,
+        peer_uid: str,
+        prompt: str,
+        scheduled_at: float,
+    ) -> int:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "INSERT INTO scheduled_tasks "
+            "(group_key, peer_chat_type, peer_uid, prompt, scheduled_at, status) "
+            "VALUES (?, ?, ?, ?, ?, 'pending')",
+            (group_key, peer_chat_type, peer_uid, prompt, scheduled_at),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_pending_scheduled_tasks(self) -> list[ScheduledTaskRecord]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, group_key, peer_chat_type, peer_uid, prompt, scheduled_at, status, created_at "
+            "FROM scheduled_tasks WHERE status IN ('pending', 'running') ORDER BY scheduled_at ASC"
+        )
+        rows = await cursor.fetchall()
+        return [ScheduledTaskRecord.from_row(row) for row in rows]
+
+    async def mark_scheduled_task_status(self, task_id: int, status: str) -> None:
+        self._ensure_initialized()
+        await self._conn.execute(
+            "UPDATE scheduled_tasks SET status = ? WHERE id = ?",
+            (status, task_id),
         )
         await self._conn.commit()
 
