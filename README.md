@@ -23,6 +23,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Assistant `content` is the normal user-visible reply channel, with `|` splitting for multiple QQ messages.
 - `no_reply` tool for deliberate silent turns.
 - `send` tool support for special message segments, legacy text sends, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
+- `scheduler` tool for durable one-shot scheduled pipeline triggers.
 - Optional Node/Playwright Markdown renderer for LaTeX, highlighted code blocks, and Mermaid diagrams.
 
 ## Repository Layout
@@ -227,9 +228,24 @@ Inbound user text is saved before the LLM call. If the task is cancelled, the sa
 
 ## Heartbeat And Vision
 
-The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
+The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output, suppresses cold-session pokes, and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
 
 Incoming image messages can use a separate vision provider when `vision.enabled` is true. `provider: openai-compatible` uses `vision.model`, `vision.base_url`, and `vision.api_key`. `provider: volcengine-ocr` uses Volcengine Visual OCR `OCRNormal` with `vision.access_key_id` and `vision.secret_access_key`; `vision.session_token` is optional for temporary credentials. It extracts visible text and stores it as the image description. The description is saved with the image record and added to the working window.
+
+## Scheduled Tasks
+
+The built-in `scheduler` tool registers durable one-shot tasks. The LLM must provide a formatted `scheduled_time`; `prompt` is optional:
+
+```json
+{
+  "scheduled_time": "2026-07-08 09:30:00 +08:00",
+  "prompt": "提醒用户检查服务器日志"
+}
+```
+
+Accepted time strings are ISO-like formatted datetimes such as `2026-07-08 09:30:00 +08:00` or `2026-07-08T09:30:00+08:00`. If timezone is omitted, UTC+8 is assumed. The tool returns the task id, normalized trigger time, and a readable duration from now to the trigger time.
+
+Tasks are stored in SQLite and restored on startup. When a task fires, it runs the normal pipeline with `source="schedule"` and message content prefixed as `[SCHEDULED:<id>] ...`, so the model can decide whether to send a visible reply, call tools, update memory, or call `no_reply`.
 
 ## Markdown Image Sending
 

@@ -7,7 +7,9 @@
 - Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
 - `send(markdown_image=...)` records a structured sent-image artifact with source Markdown, generated file path, and message id when available.
 - Heartbeat uses `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`: real LLM call, no visible QQ output, no message/window/summary memory pollution.
+- Heartbeat is silent and must not send cold-session pokes.
 - `heartbeat.interval_seconds` defaults to `2700`. `heartbeat.aggressive_provider_cache_retention` controls whether heartbeat prefers active conversation context for provider cache retention.
+- `scheduler` is a built-in durable one-shot scheduling tool. It requires formatted `scheduled_time`, accepts optional `prompt`, stores tasks in SQLite, restores pending/running tasks on startup, and returns a readable delay.
 - Image recognition is provided through the optional `vision` provider config. Supported providers are `openai-compatible` and `volcengine-ocr`; Volcengine OCR requires AK/SK and can also sign an optional `session_token`. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
 - Production logging uses the standard `mutsumi.*` logger tree and also writes append-only NDJSON stream records to `logging.stream_store.path` plus human-readable rotating text records to `logging.text_file.path`. Do not bypass standard logging for pipeline diagnostics.
 
@@ -33,6 +35,7 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | 交互式 tester | 可用，支持 `/inject`、`/break`、FakeSender |
 | 输出协议 | assistant `content` 是用户可见回复，未转义 `|` 分成多条 QQ 消息 |
 | `no_reply` 工具 | 可用，用于本轮故意静默 |
+| `scheduler` 工具 | 可用，持久化一次性定时触发 pipeline |
 | `send` 工具 | 特殊发送与兼容工具，支持 text/image/image_url/face/at/reply/forward/markdown_image |
 | Markdown 图片渲染 | 可选能力，Node + Playwright 渲染 Markdown/LaTeX/code/Mermaid 为 PNG |
 

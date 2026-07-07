@@ -1,6 +1,7 @@
 import tempfile
 import os
 import asyncio
+import time
 from src.mutsumi_sync.memory.store import MessageStore, StoredMessage, MessageCategory
 
 
@@ -132,6 +133,42 @@ class TestMessageStore:
 
             results = await store.get_messages(limit=2, offset=2)
             assert len(results) == 2
+        finally:
+            await store.close()
+            os.unlink(store_path)
+
+    async def test_scheduled_task_lifecycle(self):
+        store, store_path = await self.make_store()
+        try:
+            task_id = await store.add_scheduled_task(
+                group_key="private:123",
+                peer_chat_type=1,
+                peer_uid="123",
+                prompt="remind me",
+                scheduled_at=time.time() + 60,
+            )
+
+            pending = await store.get_pending_scheduled_tasks()
+            assert len(pending) == 1
+            assert pending[0].id == task_id
+            assert pending[0].group_key == "private:123"
+            assert pending[0].prompt == "remind me"
+            assert pending[0].status == "pending"
+
+            await store.mark_scheduled_task_status(task_id, "done")
+
+            assert await store.get_pending_scheduled_tasks() == []
+
+            running_id = await store.add_scheduled_task(
+                group_key="private:123",
+                peer_chat_type=1,
+                peer_uid="123",
+                prompt="running task",
+                scheduled_at=time.time() + 60,
+            )
+            await store.mark_scheduled_task_status(running_id, "running")
+            restored = await store.get_pending_scheduled_tasks()
+            assert [task.id for task in restored] == [running_id]
         finally:
             await store.close()
             os.unlink(store_path)

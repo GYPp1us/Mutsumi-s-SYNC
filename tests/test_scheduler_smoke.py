@@ -1,8 +1,9 @@
 import asyncio
 import tempfile
 import os
+import time
 from src.mutsumi_sync.config import Config
-from src.mutsumi_sync.memory.store import MessageStore
+from src.mutsumi_sync.memory.store import MessageStore, ScheduledTaskRecord
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.receiver import MessageEvent
 from src.mutsumi_sync.scheduler import PipelineScheduler
@@ -199,6 +200,74 @@ async def test_heartbeat_runs_silent_pipeline_without_remembering_input(monkeypa
         assert calls[0][1].remember_input is False
         assert sender.sent == []
         assert await store.count() == 0
+    finally:
+        await store.close()
+        os.unlink(store_path)
+
+
+async def test_heartbeat_does_not_send_poke_when_session_is_cold(monkeypatch):
+    config = Config.load("config.example.yaml")
+    config.session.timeout = 0
+    registry = ToolRegistry()
+    sender = FakeSender()
+    store, store_path = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+    scheduler._ensure_user_state("private:heartbeat")
+    scheduler._sessions["private:heartbeat"].last_active = 0
+
+    async def fake_llm_call(messages, deps):
+        return LLMResult(content="heartbeat ok", input_tokens=5, output_tokens=2)
+
+    monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+    try:
+        await scheduler.run_heartbeat_once()
+
+        assert sender.sent == []
+        assert sender.pokes == []
+        assert await store.count() == 0
+    finally:
+        await store.close()
+        os.unlink(store_path)
+
+
+async def test_scheduled_task_triggers_pipeline_and_marks_done(monkeypatch):
+    config = Config.load("config.example.yaml")
+    config.session.timeout = 999999
+    registry = ToolRegistry()
+    sender = FakeSender()
+    store, store_path = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+
+    calls = []
+
+    async def fake_llm_call(messages, deps):
+        calls.append((messages, deps))
+        return LLMResult(content="scheduled reply", input_tokens=5, output_tokens=2)
+
+    monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+    try:
+        record = ScheduledTaskRecord(
+            id=77,
+            group_key="private:123",
+            peer_chat_type=1,
+            peer_uid="123",
+            prompt="scheduled prompt",
+            scheduled_at=time.time() - 1,
+            status="pending",
+            created_at=time.time() - 2,
+        )
+
+        await scheduler._fire_scheduled_task(record)
+
+        assert len(calls) == 1
+        assert calls[0][1].source == "schedule"
+        assert calls[0][1].silent is False
+        assert calls[0][1].remember_input is True
+        assert sender.sent == ["scheduled reply"]
     finally:
         await store.close()
         os.unlink(store_path)
