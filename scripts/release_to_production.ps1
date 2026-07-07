@@ -69,9 +69,22 @@ function Invoke-Checked {
         return
     }
 
-    & $Command
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code ${LASTEXITCODE}: $Display"
+    $oldErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $Command 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
+
+    foreach ($line in @($output)) {
+        Write-Host $line
+    }
+
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code ${exitCode}: $Display"
     }
 }
 
@@ -223,8 +236,19 @@ function Invoke-GitHubFlow {
             Write-Host "Using existing PR: $prUrl"
         }
         else {
-            gh pr create --base $BaseBranch --head $CurrentBranch --title $PrTitle --body $PrBody
-            if ($LASTEXITCODE -ne 0) {
+            $oldErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                $createdPrOutput = (& gh pr create --base $BaseBranch --head $CurrentBranch --title $PrTitle --body $PrBody 2>&1)
+                $createExitCode = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $oldErrorActionPreference
+            }
+            foreach ($line in @($createdPrOutput)) {
+                Write-Host $line
+            }
+            if ($createExitCode -ne 0) {
                 throw "gh pr create failed."
             }
         }
