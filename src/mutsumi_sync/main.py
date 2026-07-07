@@ -18,6 +18,7 @@ from .tools.self_note import self_note_tool, SELF_NOTE_SCHEMA
 from .tools.priority_override import priority_override_tool, PRIORITY_OVERRIDE_SCHEMA
 from .tools.send import send_tool, SEND_TOOL_SCHEMA
 from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
+from .tools.scheduler import scheduler_tool, SCHEDULER_SCHEMA
 
 logger = logging.getLogger("mutsumi.main")
 
@@ -133,6 +134,27 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     return registry
 
 
+def register_scheduler_tool(registry: ToolRegistry, scheduler: PipelineScheduler) -> None:
+    async def _scheduler_tool(args: dict, **deps) -> str:
+        return await scheduler_tool(
+            args,
+            scheduler=scheduler,
+            group_key=deps.get("group_key", ""),
+            peer=deps.get("peer"),
+        )
+
+    registry.register(Tool(
+        name="scheduler",
+        description=(
+            "Register a one-shot scheduled task. scheduled_time is required and must be a formatted time; "
+            "prompt is optional and will be fed to the pipeline when the task fires. "
+            "Returns a readable duration from now to the planned trigger time."
+        ),
+        parameters=SCHEDULER_SCHEMA,
+        handler=_scheduler_tool,
+    ))
+
+
 async def run(config_path: str = "config.yaml") -> None:
     config = Config.load(config_path)
     setup_logging(config=config)
@@ -144,6 +166,7 @@ async def run(config_path: str = "config.yaml") -> None:
     registry = build_registry(config, store)
     sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+    register_scheduler_tool(registry, scheduler)
 
     receiver = MessageReceiver(config.napcat.ws_url, config.napcat.access_token)
     receiver.on_message(scheduler.dispatch)

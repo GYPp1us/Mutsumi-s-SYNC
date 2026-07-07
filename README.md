@@ -13,6 +13,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - SQLite message store, summaries, self notes, and media storage.
 - Context assembly with timestamps, non-truncated CONTEXT logs, and a single empty `system` message.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
+- Rotating human-readable text logs for `tail -f` and `grep`.
 - Priority Override memory, repeated after every user-role context message for unusually important instructions.
 - Silent heartbeat pipeline every 45 minutes, using a real LLM call without remembering heartbeat inputs.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
@@ -22,6 +23,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Assistant `content` is the normal user-visible reply channel, with `|` splitting for multiple QQ messages.
 - `no_reply` tool for deliberate silent turns.
 - `send` tool support for special message segments, legacy text sends, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
+- `scheduler` tool for durable one-shot scheduled pipeline triggers.
 - Optional Node/Playwright Markdown renderer for LaTeX, highlighted code blocks, and Mermaid diagrams.
 
 ## Repository Layout
@@ -120,6 +122,12 @@ logging:
     max_bytes: 52428800
     backup_count: 5
     keep_ansi: true
+  text_file:
+    enabled: true
+    path: data/logs/mutsumi.log
+    max_bytes: 52428800
+    backup_count: 5
+    keep_ansi: false
 
 vision:
   enabled: false
@@ -179,9 +187,14 @@ Dashboard highlights:
 
 ## Streaming Logs
 
-Production logging still writes to stdout for systemd/journald, and TUI tools still consume in-memory queues for live display. In addition, `logging.stream_store` writes every `mutsumi.*` log record to an append-only NDJSON file. The default path is `data/logs/mutsumi.ndjson`, which is suitable for shared persistent data on the server.
+Production logging still writes to stdout for systemd/journald, and TUI tools still consume in-memory queues for live display. In addition, file logging can write every `mutsumi.*` log record to two rotating files:
+
+- `logging.stream_store` writes append-only NDJSON to `data/logs/mutsumi.ndjson` for machine parsing, replay, and future UI/indexing.
+- `logging.text_file` writes ordinary human-readable text to `data/logs/mutsumi.log` for `tail -f`, `grep`, and quick server diagnosis.
 
 Each line is one JSON object with schema `mutsumi.log.v1`, timestamp, level, logger name, raw message, source location, process, and thread metadata. Multi-line records such as `CONTEXT`, LLM results, and tool logs remain one JSON record instead of being split into separate storage events. `keep_ansi` preserves colored diagnostic blocks for replay; set it to `false` to store plain text.
+
+The text log uses readable UTC+8 timestamps and strips ANSI color by default. It is deliberately redundant with the NDJSON store: the text file is for humans, while NDJSON remains the durable structured source.
 
 ## LLM Output Protocol
 
@@ -215,9 +228,24 @@ Inbound user text is saved before the LLM call. If the task is cancelled, the sa
 
 ## Heartbeat And Vision
 
-The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
+The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output, suppresses cold-session pokes, and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
 
 Incoming image messages can use a separate vision provider when `vision.enabled` is true. `provider: openai-compatible` uses `vision.model`, `vision.base_url`, and `vision.api_key`. `provider: volcengine-ocr` uses Volcengine Visual OCR `OCRNormal` with `vision.access_key_id` and `vision.secret_access_key`; `vision.session_token` is optional for temporary credentials. It extracts visible text and stores it as the image description. The description is saved with the image record and added to the working window.
+
+## Scheduled Tasks
+
+The built-in `scheduler` tool registers durable one-shot tasks. The LLM must provide a formatted `scheduled_time`; `prompt` is optional:
+
+```json
+{
+  "scheduled_time": "2026-07-08 09:30:00 +08:00",
+  "prompt": "提醒用户检查服务器日志"
+}
+```
+
+Accepted time strings are ISO-like formatted datetimes such as `2026-07-08 09:30:00 +08:00` or `2026-07-08T09:30:00+08:00`. If timezone is omitted, UTC+8 is assumed. The tool returns the task id, normalized trigger time, and a readable duration from now to the trigger time.
+
+Tasks are stored in SQLite and restored on startup. When a task fires, it runs the normal pipeline with `source="schedule"` and message content prefixed as `[SCHEDULED:<id>] ...`, so the model can decide whether to send a visible reply, call tools, update memory, or call `no_reply`.
 
 ## Markdown Image Sending
 

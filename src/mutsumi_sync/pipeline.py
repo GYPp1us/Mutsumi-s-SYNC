@@ -613,7 +613,7 @@ async def pipeline(
         deps.session.mark_pending()
 
         is_cold = deps.session.is_cold(deps.config.session.timeout)
-        if is_cold:
+        if is_cold and not deps.silent:
             _report_state(deps, "POKE")
             logger.info("[PIPE] cold session; sending poke")
             await deps.sender.send_poke(deps.peer)
