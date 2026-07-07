@@ -9,7 +9,7 @@
 - Heartbeat uses `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`: real LLM call, no visible QQ output, no message/window/summary memory pollution.
 - `heartbeat.interval_seconds` defaults to `2700`. `heartbeat.aggressive_provider_cache_retention` controls whether heartbeat prefers active conversation context for provider cache retention.
 - Image recognition is provided through the optional `vision` provider config. Supported providers are `openai-compatible` and `volcengine-ocr`; Volcengine OCR requires AK/SK and can also sign an optional `session_token`. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
-- Production logging uses the standard `mutsumi.*` logger tree and also writes append-only NDJSON stream records to `logging.stream_store.path`. Do not bypass standard logging for pipeline diagnostics.
+- Production logging uses the standard `mutsumi.*` logger tree and also writes append-only NDJSON stream records to `logging.stream_store.path` plus human-readable rotating text records to `logging.text_file.path`. Do not bypass standard logging for pipeline diagnostics.
 
 # AGENTS.md - AI Agent 协作指南
 
@@ -28,6 +28,7 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | 工具循环 | 可用，支持 registry version 热更新 |
 | SQLite 消息/摘要/自我印象存储 | 可用 |
 | 上下文拼接与窗口回收 | 可用，CONTEXT 日志不截断 |
+| 生产日志文件 | 可用，NDJSON 结构化日志与 human-readable `.log` 双写 |
 | Dashboard TUI | 可用，支持彩色日志、滚动、选择复制、命令历史 |
 | 交互式 tester | 可用，支持 `/inject`、`/break`、FakeSender |
 | 输出协议 | assistant `content` 是用户可见回复，未转义 `|` 分成多条 QQ 消息 |

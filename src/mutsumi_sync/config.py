@@ -47,8 +47,17 @@ class LogStreamStoreConfig(BaseModel):
     keep_ansi: bool = True
 
 
+class LogTextFileConfig(BaseModel):
+    enabled: bool = True
+    path: str = "data/logs/mutsumi.log"
+    max_bytes: int = 52_428_800
+    backup_count: int = 5
+    keep_ansi: bool = False
+
+
 class LoggingConfig(BaseModel):
     stream_store: LogStreamStoreConfig = LogStreamStoreConfig()
+    text_file: LogTextFileConfig = LogTextFileConfig()
 
 
 class HeartbeatConfig(BaseModel):

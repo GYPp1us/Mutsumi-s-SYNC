@@ -11,6 +11,7 @@ from src.mutsumi_sync.config import (
     VisionConfig,
     LoggingConfig,
     LogStreamStoreConfig,
+    LogTextFileConfig,
 )
 
 
@@ -29,6 +30,8 @@ class TestConfig:
         assert c.vision.enabled is False
         assert c.logging.stream_store.enabled is True
         assert c.logging.stream_store.path == "data/logs/mutsumi.ndjson"
+        assert c.logging.text_file.enabled is True
+        assert c.logging.text_file.path == "data/logs/mutsumi.log"
         assert c.dirty is False
 
     def test_load_missing_file(self):
@@ -146,8 +149,14 @@ class TestModelDefaults:
     def test_logging_defaults(self):
         l = LoggingConfig()
         s = LogStreamStoreConfig()
+        t = LogTextFileConfig()
         assert l.stream_store.enabled is True
+        assert l.text_file.enabled is True
         assert s.path == "data/logs/mutsumi.ndjson"
         assert s.max_bytes == 52_428_800
         assert s.backup_count == 5
         assert s.keep_ansi is True
+        assert t.path == "data/logs/mutsumi.log"
+        assert t.max_bytes == 52_428_800
+        assert t.backup_count == 5
+        assert t.keep_ansi is False

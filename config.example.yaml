@@ -37,6 +37,12 @@ logging:
     max_bytes: 52428800
     backup_count: 5
     keep_ansi: true
+  text_file:
+    enabled: true
+    path: data/logs/mutsumi.log
+    max_bytes: 52428800
+    backup_count: 5
+    keep_ansi: false
 napcat:
   access_token: ''
   http_url: http://localhost:3000
