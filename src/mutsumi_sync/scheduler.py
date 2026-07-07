@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
@@ -12,6 +13,7 @@ from .memory.session import SessionState
 if TYPE_CHECKING:
     from .config import Config
     from .memory.store import MessageStore
+    from .memory.store import ScheduledTaskRecord
     from .message.receiver import MessageEvent
     from .message.sender import MessageSender, Peer
     from .tools.registry import ToolRegistry
@@ -61,6 +63,7 @@ class PipelineScheduler:
         self.token_usage: dict = {"input": 0, "output": 0, "cache_hit": 0, "cache_miss": 0}
         self.on_state_change: Callable[[], None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._scheduled_tasks: dict[int, asyncio.Task[None]] = {}
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
@@ -329,6 +332,12 @@ class PipelineScheduler:
         if self.config.heartbeat.enabled and self._heartbeat_task is None:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
+        pending_scheduled_tasks = await self.store.get_pending_scheduled_tasks()
+        for record in pending_scheduled_tasks:
+            self._start_scheduled_task(record)
+        if pending_scheduled_tasks:
+            logger.info("[SCHEDULE] restored %d pending tasks", len(pending_scheduled_tasks))
+
     async def _heartbeat_loop(self) -> None:
         interval = max(60, int(self.config.heartbeat.interval_seconds))
         logger.info("[HEARTBEAT] enabled interval=%ss aggressive_cache=%s",
@@ -373,6 +382,87 @@ class PipelineScheduler:
             deps=deps,
         )
 
+    async def schedule_once(self, *, scheduled_at: float, prompt: str, group_key: str, peer: Peer) -> int:
+        task_id = await self.store.add_scheduled_task(
+            group_key=group_key,
+            peer_chat_type=peer.chat_type,
+            peer_uid=peer.peer_uid,
+            prompt=prompt,
+            scheduled_at=scheduled_at,
+        )
+        from .memory.store import ScheduledTaskRecord
+
+        record = ScheduledTaskRecord(
+            id=task_id,
+            group_key=group_key,
+            peer_chat_type=peer.chat_type,
+            peer_uid=peer.peer_uid,
+            prompt=prompt,
+            scheduled_at=scheduled_at,
+            status="pending",
+            created_at=time.time(),
+        )
+        self._start_scheduled_task(record)
+        logger.info("[SCHEDULE] registered task_id=%s key=%s trigger_at=%s", task_id, group_key, scheduled_at)
+        return task_id
+
+    def _start_scheduled_task(self, record: ScheduledTaskRecord) -> None:
+        existing = self._scheduled_tasks.pop(record.id, None)
+        if existing and not existing.done():
+            existing.cancel()
+        self._scheduled_tasks[record.id] = asyncio.create_task(self._scheduled_sleep_and_fire(record))
+
+    async def _scheduled_sleep_and_fire(self, record: ScheduledTaskRecord) -> None:
+        try:
+            delay = max(0.0, record.scheduled_at - time.time())
+            if delay:
+                await asyncio.sleep(delay)
+            await self._fire_scheduled_task(record)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[SCHEDULE] task_id=%s failed", record.id)
+            await self.store.mark_scheduled_task_status(record.id, "error")
+        finally:
+            self._scheduled_tasks.pop(record.id, None)
+
+    async def _fire_scheduled_task(self, record: ScheduledTaskRecord) -> None:
+        from .message.classifier import MessageType
+        from .message.sender import Peer
+        from .pipeline import pipeline
+
+        logger.info("[SCHEDULE] firing task_id=%s key=%s", record.id, record.group_key)
+        await self.store.mark_scheduled_task_status(record.id, "running")
+
+        await self.cancel_user(record.group_key)
+        self._ensure_user_state(record.group_key)
+        peer = Peer(chat_type=record.peer_chat_type, peer_uid=record.peer_uid)
+
+        deps = PipelineDeps(
+            config=self.config,
+            registry=self.registry,
+            sender=self.sender,
+            store=self.store,
+            window=self._windows[record.group_key],
+            session=self._sessions[record.group_key],
+            peer=peer,
+            group_key=record.group_key,
+            token_counter=self.token_usage,
+            report_state=self._make_report_state(record.group_key),
+            report_llm_health=self._make_report_llm_health(),
+            source="schedule",
+            silent=False,
+            remember_input=True,
+        )
+        await pipeline(
+            message=f"[SCHEDULED:{record.id}] {record.prompt}",
+            msg_type=MessageType.SHORT_TEXT,
+            image_file=None,
+            image_url=None,
+            deps=deps,
+        )
+        await self.store.mark_scheduled_task_status(record.id, "done")
+
     async def shutdown(self) -> None:
         logger.info("[SHUTDOWN] stopping scheduler with %d windows", len(self._windows))
 
@@ -383,6 +473,15 @@ class PipelineScheduler:
             except asyncio.CancelledError:
                 pass
             self._heartbeat_task = None
+
+        for task in list(self._scheduled_tasks.values()):
+            task.cancel()
+        for task in list(self._scheduled_tasks.values()):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._scheduled_tasks.clear()
 
         for key in list(self._keys()):
             self._cleanup_debounce(key)

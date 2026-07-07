@@ -35,6 +35,7 @@ def test_stream_log_store_writes_records_as_ndjson(tmp_path):
     config = Config()
     config.logging.stream_store.enabled = True
     config.logging.stream_store.path = str(tmp_path / "mutsumi.ndjson")
+    config.logging.text_file.enabled = False
 
     setup_logging(config=config)
     logging.getLogger("mutsumi.test").info("hello\n\033[31mred\033[0m")
@@ -56,6 +57,7 @@ def test_stream_log_store_can_strip_ansi(tmp_path):
     config.logging.stream_store.enabled = True
     config.logging.stream_store.path = str(tmp_path / "mutsumi.ndjson")
     config.logging.stream_store.keep_ansi = False
+    config.logging.text_file.enabled = False
 
     setup_logging(config=config)
     logging.getLogger("mutsumi.test").warning("\033[33mplain\033[0m")
@@ -70,9 +72,46 @@ def test_stream_log_store_disabled_does_not_create_file(tmp_path):
     config = Config()
     config.logging.stream_store.enabled = False
     config.logging.stream_store.path = str(tmp_path / "mutsumi.ndjson")
+    config.logging.text_file.enabled = False
 
     setup_logging(config=config)
     logging.getLogger("mutsumi.test").info("not stored")
     stop_stream_log_store()
 
     assert not (tmp_path / "mutsumi.ndjson").exists()
+
+
+def test_text_log_file_writes_human_readable_records(tmp_path):
+    config = Config()
+    config.logging.stream_store.enabled = True
+    config.logging.stream_store.path = str(tmp_path / "mutsumi.ndjson")
+    config.logging.text_file.enabled = True
+    config.logging.text_file.path = str(tmp_path / "mutsumi.log")
+    config.logging.text_file.keep_ansi = False
+
+    setup_logging(config=config)
+    logging.getLogger("mutsumi.test").info("hello\n\033[31mred\033[0m")
+    stop_stream_log_store()
+
+    text = (tmp_path / "mutsumi.log").read_text(encoding="utf-8")
+    assert "INFO" in text
+    assert "mutsumi.test" in text
+    assert "hello" in text
+    assert "red" in text
+    assert "\033[31m" not in text
+
+    row = json.loads((tmp_path / "mutsumi.ndjson").read_text(encoding="utf-8"))
+    assert row["message"] == "hello\n\033[31mred\033[0m"
+
+
+def test_text_log_file_disabled_does_not_create_file(tmp_path):
+    config = Config()
+    config.logging.stream_store.enabled = False
+    config.logging.text_file.enabled = False
+    config.logging.text_file.path = str(tmp_path / "mutsumi.log")
+
+    setup_logging(config=config)
+    logging.getLogger("mutsumi.test").info("not stored")
+    stop_stream_log_store()
+
+    assert not (tmp_path / "mutsumi.log").exists()
