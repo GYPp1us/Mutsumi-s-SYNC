@@ -11,10 +11,10 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - OpenAI-compatible LLM provider with DeepSeek reasoning support.
 - Built-in tool registry with hot snapshot/version tracking.
 - SQLite message store, summaries, self notes, and media storage.
-- Context assembly with timestamps, non-truncated CONTEXT logs, and a single empty `system` message.
+- Context assembly with provider-native `system`, a persistent `Context Packet`, and a temporary `Runtime Injection`.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
-- Priority Override memory, repeated after every user-role context message for unusually important instructions.
+- Priority Override memory, injected once per request in `Runtime Injection` for unusually important instructions.
 - Silent heartbeat pipeline every 45 minutes, using a real LLM call without remembering heartbeat inputs.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
@@ -218,11 +218,13 @@ Use `no_reply` when the turn should intentionally produce no visible message. Th
 
 ## Context And Memory Protocol
 
-The LLM request uses exactly one empty `system` message. The platform prompt, summaries, self notes, and durable memory blocks are packed into the first `user` message. That first user message is bootstrap context, not a fresh user request; later user/assistant messages are the working conversation window.
+The LLM request uses a provider-native `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, summaries, and other persistent background context; it is not a fresh user request. Later user/assistant messages are the working conversation window.
 
 Summaries, self notes, and window messages are annotated with readable UTC+8 timestamps. Older self-note lines without timestamps are injected as `很久之前`.
 
-`priority_override` is a write tool with `add`, `replace`, and `clear`. Its active content is appended after every user-role message in the LLM context, including the bootstrap user message and the current user request. Use it only for high-priority rules that are worth repeating every turn.
+Before the current user request, the pipeline injects a temporary `[Runtime Injection]` user message with current UTC+8 time, source, silent/remembering flags, peer metadata, and the active Priority Override. Runtime Injection is platform state, not user-authored chat, and is not written to durable history.
+
+`priority_override` is a write tool with `add`, `replace`, and `clear`. Its active content is injected only in Runtime Injection. Use it only for high-priority rules that are worth paying attention to every turn.
 
 Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false`, so they do not write message records, update windows, or create summaries.
 

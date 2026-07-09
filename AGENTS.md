@@ -1,9 +1,11 @@
 # Current Context, Heartbeat, And Vision Rules
 
-- LLM requests must contain exactly one empty `system` message. The default system prompt, summaries, self-note, and other persistent context are packed into the first `user` message.
-- Working conversation messages after the bootstrap `user` message are only the current working context window.
+- LLM requests use a provider-native non-empty `system` message for durable platform rules.
+- The first `user` message is a `[Context Packet]` containing self-note, summaries, and other persistent context. It is context, not a fresh user request.
+- Working conversation messages after the Context Packet are only the current working context window.
+- A temporary `[Runtime Injection]` user message is inserted immediately before the current user request. It carries current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override. It is not user-authored chat and must not be written to durable history.
 - Summaries, self-note entries, and working-window messages must be timestamped in a readable UTC+8 form. Existing self-note lines without timestamps are injected with `很久之前`.
-- `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is appended after every user-role context message and should be used only for high-priority instructions.
+- `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is injected only once in Runtime Injection and should be used only for high-priority instructions.
 - Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
 - `send(markdown_image=...)` records a structured sent-image artifact with source Markdown, generated file path, and message id when available.
 - Heartbeat uses `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`: real LLM call, no visible QQ output, no message/window/summary memory pollution.
