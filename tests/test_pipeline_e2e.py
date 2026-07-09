@@ -91,7 +91,8 @@ class TestPipelineE2EMultiRound:
         )
         ctx = await _build_context("test final", deps)
 
-        assert ctx[0] == {"role": "system", "content": ""}, "First message should be an empty system placeholder"
+        assert ctx[0]["role"] == "system", "First message should be a provider-native system prompt"
+        assert ctx[0]["content"], "System prompt should not be empty"
 
         note_injected = any(
             "E2E" in str(m.get("content", ""))
@@ -195,21 +196,25 @@ class TestPipelineE2EMultiRound:
         ctx = await _build_context("current user message", deps)
 
         roles = [m["role"] for m in ctx]
-        assert ctx[0] == {"role": "system", "content": ""}
+        assert ctx[0]["role"] == "system"
+        assert ctx[0]["content"]
         assert roles.count("system") == 1
 
         bootstrap = ctx[1]
         assert bootstrap["role"] == "user"
+        assert "Context Packet" in bootstrap["content"]
         assert "structure test note" in bootstrap["content"]
         assert "past conversation about weather" in bootstrap["content"]
         assert "+08:00" in bootstrap["content"]
 
+        assert ctx[-2]["role"] == "user"
+        assert "Runtime Injection" in ctx[-2]["content"]
         assert ctx[-1]["role"] == "user"
         assert ctx[-1]["content"] == "current user message"
 
         await store.close()
 
-    async def test_priority_override_is_appended_to_every_user_message(self):
+    async def test_priority_override_is_in_runtime_injection_only(self):
         config = make_config()
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
@@ -233,9 +238,14 @@ class TestPipelineE2EMultiRound:
         ctx = await _build_context("current user message", deps)
         user_messages = [m for m in ctx if m["role"] == "user"]
 
-        assert len(user_messages) == 3
-        assert all("Priority Override" in m["content"] for m in user_messages)
-        assert all("Always preserve exact equations." in m["content"] for m in user_messages)
+        assert len(user_messages) == 4
+        joined = "\n".join(str(m["content"]) for m in user_messages)
+        assert joined.count("[Priority Override]") == 1
+        assert joined.count("Always preserve exact equations.") == 1
+        assert "Runtime Injection" in ctx[-2]["content"]
+        assert "Always preserve exact equations." in ctx[-2]["content"]
+        assert "Priority Override" not in ctx[-1]["content"]
+        assert ctx[-1]["content"] == "current user message"
         assert "+08:00" in ctx[2]["content"], "Window messages should include readable +8 timestamps"
 
         await store.close()
@@ -540,6 +550,51 @@ class TestPipelineE2EDebounce:
 
         await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
 
+        assert [item["message"] for item in sender.sent] == ["final content"]
+
+        await store.close()
+
+    async def test_tool_loop_preserves_reasoning_content_for_deepseek_followup(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        captured_messages: list[list[dict]] = []
+        calls = iter([
+            LLMResult(
+                content="",
+                reasoning_content="private reasoning required by provider",
+                tool_calls=[{
+                    "id": "call_1",
+                    "name": "memory_search",
+                    "arguments": {"query": "anything"},
+                }],
+                input_tokens=3,
+                output_tokens=2,
+            ),
+            LLMResult(content="final content", input_tokens=3, output_tokens=2),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            captured_messages.append([dict(m) for m in messages])
+            return next(calls)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="reasoning_tool_loop_test"),
+            group_key="private:reasoning_tool_loop_test",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        followup_messages = captured_messages[1]
+        assistant_tool_message = next(m for m in followup_messages if m.get("tool_calls"))
+        assert assistant_tool_message["reasoning_content"] == "private reasoning required by provider"
         assert [item["message"] for item in sender.sent] == ["final content"]
 
         await store.close()
