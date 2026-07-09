@@ -94,9 +94,12 @@ def _build_default_system_prompt(config) -> str:
     )
     system += (
         "\n[Context Protocol]"
-        "\nThe API message list uses one empty system message only. All platform instructions, summaries, self notes, and memory blocks are packed into the first user message."
-        "\nThat first bootstrap user message is context, not a fresh user request. Later user/assistant turns are the working conversation window."
-        "\nEvery user-role message may end with [Priority Override]. Treat it as higher priority than ordinary memory and keep paying attention to it."
+        "\nThis system message contains durable platform rules and has higher priority than ordinary conversation context."
+        "\nThe first user message may be a [Context Packet]. It is persistent background context, not a fresh user request."
+        "\nA later user message may be a [Runtime Injection]. It is temporary platform state such as current time, source, silent mode, and Priority Override."
+        "\nRuntime Injection is not a user-authored chat message and is not part of durable conversation history."
+        "\nTimestamps and runtime values are supplied by the platform. Do not invent, rewrite, or ask the user to provide them."
+        "\nTreat Priority Override as higher priority than ordinary memory, but do not quote or repeat the marker unless necessary."
         "\nHeartbeat messages are silent health checks. They must not create durable memories and should not produce visible chat output."
         "\nImage messages may be described by a configured vision API provider; preserve visible text, formulas, code, and diagrams in memory."
     )
@@ -136,6 +139,22 @@ def _append_priority_override(content: str, priority_override: str) -> str:
     return f"{content.rstrip()}\n\n{priority_override}"
 
 
+def _build_runtime_injection(deps: PipelineDeps, priority_override: str) -> str:
+    sections = [
+        "[Runtime Injection]",
+        f"Current time: {format_context_timestamp(time.time())}",
+        f"Source: {deps.source}",
+        f"Silent mode: {'true' if deps.silent else 'false'}",
+        f"Remember input: {'true' if deps.remember_input else 'false'}",
+        f"Peer: chat_type={deps.peer.chat_type}, peer_uid={deps.peer.peer_uid}",
+        f"Group key: {deps.group_key}",
+    ]
+    if priority_override:
+        sections.append(priority_override)
+    sections.append("[/Runtime Injection]")
+    return "\n".join(sections)
+
+
 def _with_context_timestamp(content: str, created_at: Any | None) -> str:
     return f"[time: {format_context_timestamp(created_at)}]\n{content}"
 
@@ -146,11 +165,9 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
 
     system_prompt = _build_default_system_prompt(config)
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": ""},
+        {"role": "system", "content": system_prompt},
     ]
-    bootstrap_sections = [
-        "[System Prompt]\n" + system_prompt + "\n[/System Prompt]",
-    ]
+    bootstrap_sections: list[str] = []
 
     self_note_text = await _inject_self_note(store, deps.group_key, config)
     if self_note_text:
@@ -178,23 +195,28 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
         messages = messages[:1]
 
     priority_override = await _inject_priority_override(store, deps.group_key)
-    bootstrap = "\n\n".join(section for section in bootstrap_sections if section.strip())
+    bootstrap_body = "\n\n".join(section for section in bootstrap_sections if section.strip())
+    if not bootstrap_body:
+        bootstrap_body = "No persistent context is currently available."
+    bootstrap = "[Context Packet]\n" + bootstrap_body + "\n[/Context Packet]"
     messages.append({
         "role": "user",
-        "content": _append_priority_override(bootstrap, priority_override),
+        "content": bootstrap,
     })
 
     window_ctx = deps.window.get_context()
     for m in window_ctx:
         role = m["role"]
         content = _with_context_timestamp(str(m["content"]), m.get("created_at"))
-        if role == "user":
-            content = _append_priority_override(content, priority_override)
         messages.append({"role": role, "content": content})
 
     messages.append({
         "role": "user",
-        "content": _append_priority_override(message, priority_override),
+        "content": _build_runtime_injection(deps, priority_override),
+    })
+    messages.append({
+        "role": "user",
+        "content": message,
     })
 
     return messages

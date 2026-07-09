@@ -6,20 +6,21 @@
 
 ## 1. Message Layout For LLM Calls
 
-Every LLM request uses exactly one `system` message:
+Every LLM request uses a provider-native `system` message:
 
 ```json
-{"role": "system", "content": ""}
+{"role": "system", "content": "durable platform rules..."}
 ```
 
-All platform instructions and durable context are packed into the first `user` message:
+Durable context is packed into the first `user` message as a `[Context Packet]`:
 
-- default system prompt
 - self-note
 - summaries
 - future persistent context blocks
 
-That first `user` message is bootstrap context, not a fresh user request. Subsequent user/assistant messages represent only the working conversation window, followed by the current user input.
+That first `user` message is background context, not a fresh user request. Subsequent user/assistant messages represent only the working conversation window. Immediately before the current user input, the pipeline injects a temporary `[Runtime Injection]` user message with current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override.
+
+Runtime Injection is platform state, not user-authored chat. It is not written to durable history, summaries, or the working window.
 
 ## 2. Timestamps
 
@@ -49,9 +50,9 @@ Legacy self-note or priority lines without a timestamp are injected with:
 - `replace`
 - `clear`
 
-It is stored in `messages` with category `priority_override`, like self-note. The active value is appended after every user-role message in the LLM context, including the bootstrap user message, every user message in the working window, and the current user input.
+It is stored in `messages` with category `priority_override`, like self-note. The active value is injected once per request inside `[Runtime Injection]`, immediately before the current user input.
 
-This is intentionally expensive in context tokens. It should only be used for high-priority instructions that must remain salient.
+This keeps the instruction salient without repeating it after every historical user-role message. It should only be used for high-priority instructions that must remain salient.
 
 ## 4. Durable Inbound Messages
 
