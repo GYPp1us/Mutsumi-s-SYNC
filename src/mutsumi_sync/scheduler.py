@@ -303,11 +303,14 @@ class PipelineScheduler:
             boundary = await self.store.get_newest_compaction_summary(gk)
             after_id = boundary["covered_through_message_id"] if boundary else 0
 
-            uncovered = await self.store.get_restorable_messages(gk, after_id=after_id, limit=200)
+            uncovered = await self.store.get_restorable_messages(gk, after_id=after_id, limit=201)
             if not uncovered:
                 continue
 
-            window = MessageWindow()
+            restore_truncated = len(uncovered) > 200
+            if restore_truncated:
+                uncovered = uncovered[-200:]
+            window = MessageWindow(coverage_trusted=not restore_truncated)
             for msg in uncovered:
                 parsed = json.loads(msg["content"])
                 user_text = parsed.get("user", "")
@@ -330,7 +333,13 @@ class PipelineScheduler:
 
             self._windows[gk] = window
             self._ensure_user_state(gk)
-            logger.info("[STARTUP] restored window %s: %d items (after id %d)", gk, len(window), after_id)
+            logger.info(
+                "[STARTUP] restored window %s: %d items (after id %d, coverage_trusted=%s)",
+                gk,
+                len(window),
+                after_id,
+                window.coverage_trusted,
+            )
 
         if self.config.heartbeat.enabled and self._heartbeat_task is None:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())

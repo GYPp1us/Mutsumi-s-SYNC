@@ -54,3 +54,8 @@ class TestMessageWindow:
 
         assert [item["record_id"] for item in w.get_context()] == [17, 17]
         assert [item["record_id"] for item in w] == [17, 17]
+
+    def test_coverage_trust_can_mark_a_truncated_restore(self):
+        w = MessageWindow(coverage_trusted=False)
+
+        assert w.coverage_trusted is False

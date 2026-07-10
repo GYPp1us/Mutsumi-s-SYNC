@@ -85,6 +85,11 @@ It uses the same eligibility rules as live window insertion and excludes
 memory, self-note, Priority Override, action artifacts, cancelled/error turns,
 empty/no-reply turns, and malformed records.
 
+If startup restoration is capped and older eligible rows remain outside the
+window, that window is marked coverage-untrusted. It may compact in memory but
+must not advance `covered_through_message_id`; repeated restoration is preferable
+to claiming history that was never summarized.
+
 ## 6. Token-Aware Compaction
 
 Compaction considers the complete provider request: system rules, Context
