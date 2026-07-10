@@ -42,6 +42,21 @@ class TestClassifier:
             "look at this [image]",
         )
         assert result.msg_type == MessageType.IMAGE
+        assert result.content == "look at this"
+
+    def test_image_preserves_text_segments_after_image(self):
+        result = classify_message(
+            [
+                {"type": "text", "data": {"text": "before "}},
+                {"type": "image", "data": {"url": "https://example.com/photo.png"}},
+                {"type": "text", "data": {"text": "after"}},
+            ],
+            "before [image] after",
+        )
+
+        assert result.msg_type == MessageType.IMAGE
+        assert result.content == "before after"
+        assert result.image_url == "https://example.com/photo.png"
 
     def test_record_is_media(self):
         result = classify_message(

@@ -388,7 +388,14 @@ class TestPipelineE2EMultiRound:
         async def fake_describe_image(*, image_file, image_url, config):
             return "Image contains a commutative diagram."
 
+        captured = []
+
+        async def fake_llm_call(messages, deps):
+            captured.append(messages)
+            return LLMResult(content="I can help with that diagram.", input_tokens=20, output_tokens=5)
+
         monkeypatch.setattr(pipeline_module, "describe_image", fake_describe_image)
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
 
         deps = PipelineDeps(
             config=config, registry=registry, sender=sender,
@@ -397,14 +404,18 @@ class TestPipelineE2EMultiRound:
             group_key="private:image_vision_test",
         )
 
-        await pipeline("[image]", MessageType.IMAGE, None, "https://example.com/diagram.png", deps=deps)
+        await pipeline("please explain this", MessageType.IMAGE, None, "https://example.com/diagram.png", deps=deps)
 
-        assert "commutative diagram" in sender.sent[0]["message"]
+        assert sender.sent[-1]["message"] == "I can help with that diagram."
+        assert "please explain this" in captured[0][-1]["content"]
+        assert "commutative diagram" in captured[0][-1]["content"]
         saved = await store.get_messages(group_key="private:image_vision_test", category="image")
         assert len(saved) == 1
         payload = json.loads(saved[0].content)
-        assert payload["image_description"] == "Image contains a commutative diagram."
-        assert "commutative diagram" in deps.window.get_context()[-1]["content"]
+        assert payload["input_metadata"]["image_description"] == "Image contains a commutative diagram."
+        assert payload["input_metadata"]["caption"] == "please explain this"
+        assert "commutative diagram" in deps.window.get_context()[0]["content"]
+        assert deps.window.get_context()[-1]["content"] == "I can help with that diagram."
 
         await store.close()
 

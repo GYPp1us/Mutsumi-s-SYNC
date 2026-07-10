@@ -323,16 +323,25 @@ def _message_record_content(
     response: str | None = None,
     status: str = "received",
     source: str = "user",
+    input_metadata: dict | None = None,
 ) -> str:
-    return json.dumps({
+    payload = {
         "user": message,
         "bot": response,
         "status": status,
         "source": source,
-    }, ensure_ascii=False)
+    }
+    if input_metadata:
+        payload["input_metadata"] = input_metadata
+    return json.dumps(payload, ensure_ascii=False)
 
 
-async def _save_inbound_msg(deps: PipelineDeps, message: str, category: str) -> int | None:
+async def _save_inbound_msg(
+    deps: PipelineDeps,
+    message: str,
+    category: str,
+    input_metadata: dict | None = None,
+) -> int | None:
     if not deps.remember_input:
         return None
     try:
@@ -341,7 +350,11 @@ async def _save_inbound_msg(deps: PipelineDeps, message: str, category: str) -> 
             date=today,
             group_key=deps.group_key,
             category=category,
-            content=_message_record_content(message, source=deps.source),
+            content=_message_record_content(
+                message,
+                source=deps.source,
+                input_metadata=input_metadata,
+            ),
         ))
         logger.info("[PIPE] saved inbound message category=%s id=%s source=%s", category, msg_id, deps.source)
         return msg_id
@@ -358,13 +371,20 @@ async def _update_saved_msg(
     *,
     response: str | None,
     status: str,
+    input_metadata: dict | None = None,
 ) -> None:
     if not deps.remember_input or msg_id is None:
         return
     try:
         await deps.store.update_message_content(
             msg_id,
-            _message_record_content(message, response=response, status=status, source=deps.source),
+            _message_record_content(
+                message,
+                response=response,
+                status=status,
+                source=deps.source,
+                input_metadata=input_metadata,
+            ),
         )
         logger.info("[PIPE] saved message category=%s response=%s", category, "yes" if response else "no")
     except Exception:
@@ -624,47 +644,31 @@ async def pipeline(
         await _save_msg(deps, message, MessageType.MEDIA.value, None)
         return
 
+    input_metadata: dict | None = None
     if msg_type == MessageType.IMAGE:
-        _report_state(deps, "IMAGE")
-        logger.info("[PIPE] branch=image unsupported image_file=%s image_url=%s", bool(image_file), bool(image_url))
-        image_description: str | None = None
+        _report_state(deps, "IMAGE_DESCRIBE")
+        logger.info("[PIPE] branch=image describe image_file=%s image_url=%s", bool(image_file), bool(image_url))
+        caption = message.strip()
         if deps.config.vision.enabled:
             image_description = await describe_image(image_file=image_file, image_url=image_url, config=deps.config)
-            if image_description.startswith("[Error:"):
-                bot_reply = f"收到图片，但图像识别失败：{image_description}"
-            else:
-                bot_reply = f"收到图片：{image_description}"
         else:
-            bot_reply = "收到图片，暂不支持图片识别"
-        if not deps.silent:
-            await deps.sender.send(deps.peer, bot_reply)
-        if deps.remember_input:
-            deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
-            deps.window.add(user_id=str(deps.peer.peer_uid), message=bot_reply, is_bot=True)
-            today = date.today().isoformat()
-            await deps.store.save(StoredMessage(
-                date=today,
-                group_key=deps.group_key,
-                category=MessageType.IMAGE.value,
-                content=json.dumps({
-                    "user": message,
-                    "bot": bot_reply,
-                    "status": "responded",
-                    "source": deps.source,
-                    "image_file": image_file,
-                    "image_url": image_url,
-                    "image_description": image_description,
-                }, ensure_ascii=False),
-            ))
-        deps.session.touch()
-        return
-        await deps.sender.send(deps.peer, "收到图片，暂不支持图片识别")
-        deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
-        deps.window.add(user_id=str(deps.peer.peer_uid), message="[图片]", is_bot=True)
-        deps.session.touch()
-        await _save_msg(deps, message, MessageType.IMAGE.value,
-                        f"image_file={image_file}, image_url={image_url}" if image_file or image_url else None)
-        return
+            image_description = "Vision provider is not enabled; visual contents are unavailable."
+        input_metadata = {
+            "kind": "image",
+            "caption": caption,
+            "image_file": image_file,
+            "image_url": image_url,
+            "image_description": image_description,
+        }
+        lines = ["The user sent an image."]
+        if caption:
+            lines.append(f"Caption: {caption}")
+        lines.append(f"Vision description: {image_description}")
+        if image_file:
+            lines.append(f"Image file reference: {image_file}")
+        if image_url:
+            lines.append(f"Image URL reference: {image_url}")
+        message = "\n".join(lines)
 
     _pending_writes: list[tuple[str, str, dict, Callable[[], Awaitable[str]]]] = []
     bot_replies: list[str] = []
@@ -673,7 +677,7 @@ async def pipeline(
     inbound_msg_id: int | None = None
 
     try:
-        inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value)
+        inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
         deps.session.mark_pending()
 
         is_cold = deps.session.is_cold(deps.config.session.timeout)
@@ -736,6 +740,7 @@ async def pipeline(
                         msg_type.value,
                         response="\n".join(visible_parts),
                         status=final_status,
+                        input_metadata=input_metadata,
                     )
                 elif not deps.silent:
                     final_status = "error"
@@ -873,10 +878,19 @@ async def pipeline(
             _log_context_size(messages, deps)
 
         if responded and deps.remember_input:
-            deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
+            deps.window.add(
+                user_id=str(deps.peer.peer_uid),
+                message=message,
+                record_id=inbound_msg_id,
+            )
             combined_bot_reply = "\n".join(bot_replies)
             if combined_bot_reply:
-                deps.window.add(user_id=str(deps.peer.peer_uid), message=combined_bot_reply, is_bot=True)
+                deps.window.add(
+                    user_id=str(deps.peer.peer_uid),
+                    message=combined_bot_reply,
+                    is_bot=True,
+                    record_id=inbound_msg_id,
+                )
             logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
         elif responded:
             logger.info("[PIPE] response produced; window unchanged for source=%s", deps.source)
@@ -891,6 +905,7 @@ async def pipeline(
             msg_type.value,
             response=combined_response,
             status=final_status,
+            input_metadata=input_metadata,
         )
 
         _report_state(deps, "DONE")
@@ -906,6 +921,7 @@ async def pipeline(
             msg_type.value,
             response=None,
             status="cancelled",
+            input_metadata=input_metadata,
         )
         raise
     except Exception as e:
@@ -917,6 +933,7 @@ async def pipeline(
             msg_type.value,
             response=None,
             status="error",
+            input_metadata=input_metadata,
         )
         if not responded:
             await deps.sender.send(deps.peer, f"模型暂时不可用: {e}")
