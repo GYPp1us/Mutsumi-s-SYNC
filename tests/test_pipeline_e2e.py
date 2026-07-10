@@ -315,7 +315,7 @@ class TestPipelineE2EMultiRound:
 
         await store.close()
 
-    async def test_markdown_image_send_is_recorded_as_artifact_memory(self, monkeypatch):
+    async def test_markdown_image_send_is_recorded_in_action_ledger(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
@@ -363,11 +363,14 @@ class TestPipelineE2EMultiRound:
         await pipeline("render it", MessageType.SHORT_TEXT, None, None, deps=deps)
 
         image_records = await store.get_messages(group_key="private:artifact_test", category="image")
-        assert len(image_records) == 1
-        artifact = json.loads(image_records[0].content)
-        assert artifact["source"] == "markdown_image"
-        assert artifact["markdown"] == "# Report\n\n$E=mc^2$"
-        assert "sent image" in deps.window.get_context()[-1]["content"]
+        assert image_records == []
+        actions = await store.get_recent_actions("private:artifact_test")
+        send_action = next(action for action in actions if action["tool_name"] == "send")
+        assert send_action["success"] is True
+        assert send_action["artifact"]["source"] == "markdown_image"
+        assert send_action["artifact"]["message_id"] == 123
+        assert send_action["artifact"]["markdown_sha256"]
+        assert all("sent image" not in item["content"] for item in deps.window.get_context())
 
         await store.close()
 
@@ -465,7 +468,7 @@ class TestPipelineE2EDebounce:
 
         await store.close()
 
-    async def test_content_pipe_splits_into_multiple_messages(self, monkeypatch):
+    async def test_content_pipe_is_sent_as_one_literal_message(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
@@ -486,11 +489,11 @@ class TestPipelineE2EDebounce:
 
         await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert [item["message"] for item in sender.sent] == ["first", "second", "third"]
+        assert [item["message"] for item in sender.sent] == ["first | second|third "]
 
         await store.close()
 
-    async def test_escaped_pipe_is_not_a_message_split(self, monkeypatch):
+    async def test_backslash_and_pipe_are_not_rewritten(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
@@ -511,7 +514,7 @@ class TestPipelineE2EDebounce:
 
         await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert [item["message"] for item in sender.sent] == ["a | b", "c"]
+        assert [item["message"] for item in sender.sent] == [r"a \| b|c"]
 
         await store.close()
 
@@ -628,6 +631,132 @@ class TestPipelineE2EDebounce:
         assert assistant_tool_message["reasoning_content"] == "private reasoning required by provider"
         assert [item["message"] for item in sender.sent] == ["final content"]
 
+        await store.close()
+
+    async def test_staged_memory_write_commits_once_when_pipeline_is_cancelled(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        second_call_started = asyncio.Event()
+        captured_followup = []
+        call_count = 0
+
+        async def fake_llm_call(messages, deps):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResult(tool_calls=[{
+                    "id": "write-1",
+                    "name": "memory_save",
+                    "arguments": {"content": "commit me exactly once"},
+                }])
+            captured_followup.extend(messages)
+            second_call_started.set()
+            await asyncio.sleep(60)
+            return LLMResult(content="late")
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="staged_cancel"),
+            group_key="private:staged_cancel",
+        )
+        task = asyncio.create_task(
+            pipeline("remember this", MessageType.SHORT_TEXT, None, None, deps=deps)
+        )
+        await second_call_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        tool_result = next(item for item in captured_followup if item.get("role") == "tool")
+        assert "staged" in tool_result["content"]
+        memories = await store.get_messages(group_key="private:staged_cancel", category="memory")
+        assert [item.content for item in memories] == ["commit me exactly once"]
+        actions = await store.get_recent_actions("private:staged_cancel")
+        memory_actions = [item for item in actions if item["tool_name"] == "memory_save"]
+        assert len(memory_actions) == 1
+        assert memory_actions[0]["success"] is True
+        await store.close()
+
+    async def test_same_tool_stops_after_three_actual_failures(self, monkeypatch):
+        from src.mutsumi_sync.tools.registry import Tool
+
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        executions = 0
+        call_count = 0
+        captured_calls = []
+
+        async def fail_tool(args, **deps):
+            nonlocal executions
+            executions += 1
+            return "[Error: expected failure]"
+
+        registry.register(Tool(
+            name="always_fail",
+            description="test failure",
+            parameters={"type": "object", "properties": {}},
+            handler=fail_tool,
+        ))
+
+        async def fake_llm_call(messages, deps):
+            nonlocal call_count
+            call_count += 1
+            captured_calls.append([dict(item) for item in messages])
+            if call_count <= 4:
+                return LLMResult(tool_calls=[{
+                    "id": f"fail-{call_count}",
+                    "name": "always_fail",
+                    "arguments": {},
+                }])
+            return LLMResult(content="reported")
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="failure_counter"),
+            group_key="private:failure_counter",
+        )
+
+        await pipeline("try tool", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert executions == 3
+        fourth_result = [item for item in captured_calls[4] if item.get("role") == "tool"][-1]
+        assert "three consecutive failures" in fourth_result["content"]
+        await store.close()
+
+    async def test_recent_verified_actions_are_in_context_packet(self):
+        config = make_config()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        await store.save_action(
+            group_key="private:action_context",
+            tool_name="scheduler",
+            call_id="schedule-1",
+            success=True,
+            arguments={"scheduled_time": "tomorrow"},
+            result="task #7 registered",
+        )
+        deps = PipelineDeps(
+            config=config, registry=build_registry(config, store), sender=CaptureSender(),
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="action_context"),
+            group_key="private:action_context",
+        )
+
+        context = await _build_context("hello", deps)
+
+        assert "Recent verified actions" in context[1]["content"]
+        assert "scheduler" in context[1]["content"]
+        assert "task #7 registered" in context[1]["content"]
         await store.close()
 
     async def test_send_only_tool_round_continues_to_next_llm_call(self, monkeypatch):

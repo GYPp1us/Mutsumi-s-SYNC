@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -168,6 +170,21 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
             summary_texts.append(f"[{timestamp}][{source_label}]: {s['summary']}")
         if summary_texts:
             messages.append({"role": "system", "content": "[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]"})
+
+    actions = await store.get_recent_actions(deps.group_key, limit=12)
+    if actions:
+        action_lines = []
+        for action in actions:
+            stamp = format_context_timestamp(action.get("created_at"))
+            outcome = "success" if action.get("success") else "failure"
+            result_text = str(action.get("result", "")).replace("\n", " ")[:240]
+            action_lines.append(
+                f"{stamp} | {action.get('tool_name', 'unknown')} | {outcome} | {result_text}"
+            )
+        bootstrap_sections.append(
+            "Recent verified actions (platform records, not assistant claims):\n"
+            + "\n".join(action_lines)
+        )
 
     extra_system_sections = [
         str(m.get("content", ""))
@@ -377,22 +394,17 @@ async def _recover_inbound_msg_id(deps: PipelineDeps, message: str, category: st
     return None
 
 
-async def _save_send_artifacts(deps: PipelineDeps, reply_result: str) -> list[str]:
-    if not deps.remember_input:
-        return []
+def _extract_send_artifact(reply_result: str) -> dict | None:
     try:
         parsed = json.loads(reply_result)
     except (json.JSONDecodeError, TypeError):
-        return []
+        return None
     if not isinstance(parsed, dict):
-        return []
+        return None
 
     artifacts = parsed.get("artifacts", [])
     if not isinstance(artifacts, list):
-        return []
-
-    summaries: list[str] = []
-    today = date.today().isoformat()
+        return None
     message_id = parsed.get("data", {}).get("message_id") if isinstance(parsed.get("data"), dict) else None
     for artifact in artifacts:
         if not isinstance(artifact, dict):
@@ -402,16 +414,60 @@ async def _save_send_artifacts(deps: PipelineDeps, reply_result: str) -> list[st
         record = dict(artifact)
         if message_id is not None:
             record["message_id"] = message_id
-        await deps.store.save(StoredMessage(
-            date=today,
+        markdown = str(record.pop("markdown", ""))
+        if markdown:
+            record["markdown_sha256"] = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+            record["markdown_chars"] = len(markdown)
+        return record
+    return None
+
+
+def _sanitize_action_arguments(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(secret in lowered for secret in ("api_key", "token", "secret", "password", "authorization")):
+                sanitized[key] = "[redacted]"
+            elif key == "markdown_image" and isinstance(item, str):
+                sanitized["markdown_image_sha256"] = hashlib.sha256(item.encode("utf-8")).hexdigest()
+                sanitized["markdown_image_chars"] = len(item)
+            else:
+                sanitized[key] = _sanitize_action_arguments(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_action_arguments(item) for item in value]
+    return value
+
+
+def _sanitize_action_result(result: str) -> str:
+    text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~-]+", "Bearer [redacted]", result)
+    return text[:2000]
+
+
+async def _record_action(
+    deps: PipelineDeps,
+    *,
+    tool_name: str,
+    call_id: str,
+    arguments: dict,
+    result: str,
+    artifact: dict | None = None,
+) -> None:
+    if not deps.remember_input:
+        return
+    try:
+        await deps.store.save_action(
             group_key=deps.group_key,
-            category="image",
-            content=json.dumps(record, ensure_ascii=False),
-        ))
-        source = record.get("source", "image")
-        file = record.get("file", "")
-        summaries.append(f"[sent image: {source}, file={file}, message_id={message_id}]")
-    return summaries
+            tool_name=tool_name,
+            call_id=call_id,
+            success=not result.startswith("[Error:"),
+            arguments=_sanitize_action_arguments(arguments),
+            result=_sanitize_action_result(result),
+            artifact=artifact,
+        )
+    except Exception:
+        logger.exception("Failed to persist action ledger entry for %s", tool_name)
 
 
 def _log_context_size(messages: list[dict], deps: PipelineDeps) -> None:
@@ -528,9 +584,24 @@ async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
     for part in parts:
         result = await deps.sender.send(deps.peer, part)
         if not send_succeeded(result):
-            logger.error("[PIPE] visible content send failed: %s", send_failure_message(result))
+            error = f"[Error: NapCat send failed: {send_failure_message(result)}]"
+            logger.error("[PIPE] visible content send failed: %s", error)
+            await _record_action(
+                deps,
+                tool_name="assistant_content",
+                call_id="",
+                arguments={"chars": len(part)},
+                result=error,
+            )
             continue
         log_send(deps, "content", part)
+        await _record_action(
+            deps,
+            tool_name="assistant_content",
+            call_id="",
+            arguments={"chars": len(part)},
+            result=json.dumps(result, ensure_ascii=False),
+        )
         sent_parts.append(part)
     logger.info("[PIPE] sent visible content parts=%d chars=%d", len(sent_parts), len(content))
     return sent_parts
@@ -595,7 +666,7 @@ async def pipeline(
                         f"image_file={image_file}, image_url={image_url}" if image_file or image_url else None)
         return
 
-    _pending_writes: list[tuple[str, dict, Callable[[], Awaitable[None]]]] = []
+    _pending_writes: list[tuple[str, str, dict, Callable[[], Awaitable[str]]]] = []
     bot_replies: list[str] = []
     responded = False
     final_status = "received"
@@ -672,7 +743,7 @@ async def pipeline(
 
             send_calls = [tc for tc in result.tool_calls if tc["name"] == "send"]
             other_calls = [tc for tc in result.tool_calls if tc["name"] != "send"]
-            no_reply_called = any(tc["name"] == NO_REPLY_TOOL for tc in other_calls)
+            no_reply_called = any(tc["name"] == NO_REPLY_TOOL for tc in result.tool_calls)
             logger.info(
                 "[PIPE] branch=tool_calls send=%d no_reply=%d other=%d",
                 len(send_calls),
@@ -683,83 +754,87 @@ async def pipeline(
             tc_results: dict[str, str] = {}
             _report_state(deps, f"LOOP_{step + 1}:Exec_Tools")
 
-            for tc in send_calls:
-                if send_count >= MAX_SENDS_PER_LOOP:
-                    reply_result = f"[Error: send limit reached: {MAX_SENDS_PER_LOOP}]"
-                    logger.warning("[PIPE] send limit reached max=%d", MAX_SENDS_PER_LOOP)
-                    tc_results[tc["id"]] = reply_result
-                    log_tool_call(deps, "send", tc["arguments"], reply_result)
-                    continue
-                try:
-                    if deps.silent:
-                        reply_result = "[OK] send suppressed by silent pipeline"
+            for tc in result.tool_calls:
+                logger.info("[PIPE] executing tool name=%s queued=%s", tc["name"], tc["name"] in WRITE_TOOLS)
+                tool_name = tc["name"]
+                tool_args = tc["arguments"]
+                call_id = tc["id"]
+                staged = False
+                artifact = None
+
+                if tool_name == last_tool_name and consecutive_fails >= 3:
+                    tr = (
+                        f"[Error: tool '{tool_name}' stopped after three consecutive failures; "
+                        "report the failure instead of retrying]"
+                    )
+                elif tool_name == "send":
+                    if send_count >= MAX_SENDS_PER_LOOP:
+                        tr = f"[Error: send limit reached: {MAX_SENDS_PER_LOOP}]"
+                    elif deps.silent:
+                        tr = "[OK] send suppressed by silent pipeline"
                     else:
-                        reply_result = await send_tool(
-                            tc["arguments"],
-                            sender=deps.sender,
-                            peer=deps.peer,
-                            config=deps.config,
-                        )
-                    log_send(deps, "tool", tc["arguments"])
-                    log_tool_call(deps, "send", tc["arguments"], reply_result)
-                    if not str(reply_result).startswith("[Error:"):
-                        text_reply = str(tc["arguments"].get("text", ""))
+                        try:
+                            tr = await send_tool(
+                                tool_args,
+                                sender=deps.sender,
+                                peer=deps.peer,
+                                config=deps.config,
+                            )
+                        except Exception as e:
+                            logger.exception("send_tool failed")
+                            tr = f"[Error: {e}]"
+                    send_count += 1
+                    if not str(tr).startswith("[Error:"):
+                        text_reply = str(tool_args.get("text", ""))
                         if text_reply:
                             bot_replies.append(text_reply)
-                        artifact_summaries = await _save_send_artifacts(deps, str(reply_result))
-                        bot_replies.extend(artifact_summaries)
+                        artifact = _extract_send_artifact(str(tr))
                         responded = True
                         final_status = "responded"
-                except Exception as e:
-                    logger.exception("send_tool failed")
-                    reply_result = f"[Error: {e}]"
-                tc_results[tc["id"]] = str(reply_result)
-                send_count += 1
-
-            for tc in other_calls:
-                logger.info("[PIPE] executing tool name=%s queued=%s", tc["name"], tc["name"] in WRITE_TOOLS)
-                if tc["name"] == last_tool_name:
-                    consecutive_fails += 1
-                else:
-                    consecutive_fails = 0
-                    last_tool_name = tc["name"]
-
-                if consecutive_fails >= 5:
-                    msg = (
-                        f"[Error: tool '{tc['name']}' called {consecutive_fails} times "
-                        f"consecutively without success, please report failure to user]"
-                    )
-                    tc_results[tc["id"]] = msg
-                    log_tool_call(deps, tc["name"], tc["arguments"], msg)
-                    continue
-                if tc["name"] in WRITE_TOOLS and not deps.remember_input:
+                    log_send(deps, "tool", tool_args)
+                elif tool_name in WRITE_TOOLS and not deps.remember_input:
                     tr = "[OK] write tool suppressed by non-remembering pipeline]"
-                    tc_results[tc["id"]] = tr
-                    log_tool_call(deps, tc["name"], tc["arguments"], tr)
-                elif tc["name"] in WRITE_TOOLS:
-                    tool_name = tc["name"]
-                    tool_args = tc["arguments"]
+                elif tool_name in WRITE_TOOLS:
                     _pending_writes.append((
-                        tool_name, tool_args,
+                        tool_name, call_id, tool_args,
                         lambda tn=tool_name, ta=tool_args: deps.registry.execute(
                             tn, ta, store=deps.store, group_key=deps.group_key,
                             config=deps.config, sender=deps.sender, peer=deps.peer,
                         ),
                     ))
-                    tc_results[tc["id"]] = "[OK] queued"
-                    log_tool_call(deps, tool_name, tool_args, "[OK] queued", queued=True)
+                    tr = "[OK] staged for atomic commit during pipeline cleanup"
+                    staged = True
                 else:
                     try:
                         tr = await deps.registry.execute(
-                            tc["name"], tc["arguments"],
+                            tool_name, tool_args,
                             store=deps.store, group_key=deps.group_key,
                             config=deps.config, sender=deps.sender, peer=deps.peer,
                         )
                     except Exception as e:
-                        logger.exception("Tool %s failed", tc["name"])
+                        logger.exception("Tool %s failed", tool_name)
                         tr = f"[Error: {e}]"
-                    tc_results[tc["id"]] = tr
-                    log_tool_call(deps, tc["name"], tc["arguments"], tr)
+
+                tr = str(tr)
+                tc_results[call_id] = tr
+                is_failure = tr.startswith("[Error:")
+                if tool_name != last_tool_name:
+                    last_tool_name = tool_name
+                    consecutive_fails = 1 if is_failure else 0
+                elif is_failure:
+                    consecutive_fails += 1
+                else:
+                    consecutive_fails = 0
+                log_tool_call(deps, tool_name, tool_args, tr, queued=staged)
+                if not staged:
+                    await _record_action(
+                        deps,
+                        tool_name=tool_name,
+                        call_id=call_id,
+                        arguments=tool_args,
+                        result=tr,
+                        artifact=artifact,
+                    )
 
             logger.info("[PIPE] appended %d tool results to context", len(result.tool_calls))
             assistant_msg: dict[str, Any] = {
@@ -849,12 +924,28 @@ async def pipeline(
         deps.session.clear_pending()
         logger.info("[PIPE] cleanup start pending_writes=%d", len(_pending_writes))
 
-        for tool_name, tool_args, write_fn in _pending_writes:
-            try:
-                result = await write_fn()
-                log_tool_call(deps, tool_name, tool_args, str(result), queued=False)
-            except Exception:
-                logger.exception("Post-write failed for %s", tool_name)
+        async def _flush_pending_writes() -> None:
+            for tool_name, call_id, tool_args, write_fn in _pending_writes:
+                try:
+                    result = str(await write_fn())
+                    log_tool_call(deps, tool_name, tool_args, result, queued=False)
+                except Exception as exc:
+                    logger.exception("Post-write failed for %s", tool_name)
+                    result = f"[Error: {exc}]"
+                await _record_action(
+                    deps,
+                    tool_name=tool_name,
+                    call_id=call_id,
+                    arguments=tool_args,
+                    result=result,
+                )
+
+        flush_task = asyncio.create_task(_flush_pending_writes())
+        try:
+            await asyncio.shield(flush_task)
+        except asyncio.CancelledError:
+            await flush_task
+            raise
 
         if deps.remember_input:
             try:
