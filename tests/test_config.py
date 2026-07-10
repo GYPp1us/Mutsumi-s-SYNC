@@ -21,6 +21,10 @@ class TestConfig:
         assert c.napcat.ws_url == "ws://localhost:3000"
         assert c.model.model == "deepseek-chat"
         assert c.context.window_max_tokens == 100000
+        assert c.context.model_context_tokens == 131072
+        assert c.context.compression_trigger_ratio == 0.8
+        assert c.context.compression_target_ratio == 0.5
+        assert c.context.reserved_output_tokens == 8192
         assert c.session.timeout == 300
         assert c.render.markdown_image.enabled is False
         assert c.render.markdown_image.node_path == "node"
@@ -142,6 +146,7 @@ class TestModelDefaults:
         assert c.summaries_max_count == 180
         assert c.summaries_min_count == 90
         assert c.debounce_timeout == 1.5
+        assert c.recent_actions_max_count == 12
 
     def test_session_defaults(self):
         s = SessionConfig()

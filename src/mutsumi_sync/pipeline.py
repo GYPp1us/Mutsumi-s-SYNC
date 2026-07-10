@@ -171,7 +171,10 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
         if summary_texts:
             messages.append({"role": "system", "content": "[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]"})
 
-    actions = await store.get_recent_actions(deps.group_key, limit=12)
+    actions = await store.get_recent_actions(
+        deps.group_key,
+        limit=config.context.recent_actions_max_count,
+    )
     if actions:
         action_lines = []
         for action in actions:
@@ -510,80 +513,215 @@ async def _archive_if_needed(deps: PipelineDeps, user_msg: str, bot_replies: lis
         if _estimate_tokens(text) <= threshold:
             continue
         logger.warning("[ARCHIVE] archiving %s msg ~%d tokens", source, _estimate_tokens(text))
-        await _generate_and_save_summary(deps, source, text, summarizer_cfg)
+        await _generate_and_save_summary(
+            deps,
+            source,
+            text,
+            summarizer_cfg,
+            kind="message",
+        )
 
 
-async def _generate_and_save_summary(deps: PipelineDeps, source: str, text: str, summarizer_cfg) -> None:
+async def _generate_and_save_summary(
+    deps: PipelineDeps,
+    source: str,
+    text: str,
+    summarizer_cfg,
+    *,
+    kind: str = "message",
+    covered_through_message_id: int | None = None,
+) -> bool:
     api_key = summarizer_cfg.api_key or deps.config.model.api_key
     if not api_key:
-        return
+        logger.warning("[SUMMARY] skipped kind=%s because no API key is configured", kind)
+        return False
 
     base_url = summarizer_cfg.base_url or deps.config.model.base_url
     try:
+        max_chars = max(1000, int(summarizer_cfg.max_input_tokens) * ESTIMATE_CHARS_PER_TOKEN)
+        chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
+        if len(chunks) > 1:
+            logger.info("[SUMMARY] explicitly chunking input chars=%d chunks=%d", len(text), len(chunks))
+
         async with httpx.AsyncClient(timeout=30) as client:
-            payload = {
-                "model": summarizer_cfg.model,
-                "messages": [
-                    {"role": "system", "content": "用1-2句话中文总结以下对话内容，不超过100字。"},
-                    {"role": "user", "content": text[:2000]},
-                ],
-                "temperature": summarizer_cfg.temperature,
-                "max_tokens": 150,
-            }
-            resp = await client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            )
-            if resp.status_code == 200:
+            partials: list[str] = []
+            for index, chunk in enumerate(chunks, start=1):
+                payload = {
+                    "model": summarizer_cfg.model,
+                    "messages": [
+                        {"role": "system", "content": "用1-2句话中文总结以下内容，不超过100字，保留事实、时间和未解决事项。"},
+                        {"role": "user", "content": chunk},
+                    ],
+                    "temperature": summarizer_cfg.temperature,
+                    "max_tokens": 150,
+                }
+                resp = await client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if resp.status_code != 200:
+                    logger.error("[SUMMARY] chunk=%d failed status=%d", index, resp.status_code)
+                    return False
                 data = resp.json()
-                summary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if summary:
-                    max_id = await deps.store.get_max_message_id(deps.group_key)
-                    summary_id = await deps.store.add_summary(
-                        deps.group_key, source, summary.strip(),
-                        last_message_id=max_id,
-                    )
-                    await deps.store.trim_summaries(
-                        deps.group_key,
-                        max_count=deps.config.context.summaries_max_count,
-                        min_count=deps.config.context.summaries_min_count,
-                    )
+                partial = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if not str(partial).strip():
+                    logger.error("[SUMMARY] chunk=%d returned empty content", index)
+                    return False
+                partials.append(str(partial).strip())
+
+            summary = "\n".join(partials)
+            if len(partials) > 1:
+                synthesis_payload = {
+                    "model": summarizer_cfg.model,
+                    "messages": [
+                        {"role": "system", "content": "将这些分段摘要合并为简洁、无重复的中文摘要，保留时间顺序。"},
+                        {"role": "user", "content": summary},
+                    ],
+                    "temperature": summarizer_cfg.temperature,
+                    "max_tokens": 300,
+                }
+                resp = await client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=synthesis_payload,
+                )
+                if resp.status_code != 200:
+                    return False
+                summary = str(
+                    resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                ).strip()
+                if not summary:
+                    return False
+
+            await deps.store.add_summary(
+                deps.group_key,
+                source,
+                summary,
+                kind=kind,
+                covered_through_message_id=covered_through_message_id,
+            )
+            await deps.store.trim_summaries(
+                deps.group_key,
+                max_count=deps.config.context.summaries_max_count,
+                min_count=deps.config.context.summaries_min_count,
+            )
+            logger.info(
+                "[SUMMARY] saved kind=%s covered_through=%s chars=%d",
+                kind,
+                covered_through_message_id,
+                len(summary),
+            )
+            return True
     except Exception:
         logger.exception("Failed to generate/save summary")
+        return False
+
+
+def _estimate_request_tokens(messages: list[dict], tools: list[dict]) -> int:
+    serialized = json.dumps(
+        {"messages": messages, "tools": tools},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return _estimate_tokens(serialized)
+
+
+def _window_turn_groups(items: list[dict]) -> list[list[dict]]:
+    groups: list[list[dict]] = []
+    group_keys: list[tuple[str, int]] = []
+    legacy_turn = 0
+    for item in items:
+        record_id = item.get("record_id")
+        if record_id is not None:
+            key = ("record", int(record_id))
+        else:
+            if item.get("role") == "user" or not groups:
+                legacy_turn += 1
+            key = ("legacy", legacy_turn)
+        if not groups or group_keys[-1] != key:
+            groups.append([])
+            group_keys.append(key)
+        groups[-1].append(item)
+    return groups
+
+
+async def _compact_context_for_request(
+    message: str,
+    deps: PipelineDeps,
+    messages: list[dict],
+) -> bool:
+    config = deps.config.context
+    tools = deps.registry.to_openai_schema()
+    estimate = _estimate_request_tokens(messages, tools)
+    trigger = max(1, int(config.model_context_tokens * config.compression_trigger_ratio) - config.reserved_output_tokens)
+    target = max(1, int(config.model_context_tokens * config.compression_target_ratio) - config.reserved_output_tokens)
+    if estimate <= trigger:
+        logger.info(
+            "[CONTEXT BUDGET] estimated=%d trigger=%d target=%d capacity=%d",
+            estimate,
+            trigger,
+            target,
+            config.model_context_tokens,
+        )
+        return False
+
+    items = list(deps.window)
+    groups = _window_turn_groups(items)
+    if len(groups) <= 1:
+        logger.warning(
+            "[CONTEXT BUDGET] over trigger estimated=%d but no complete old turn is compactable",
+            estimate,
+        )
+        return False
+
+    removed_groups: list[list[dict]] = []
+    removed_tokens = 0
+    for group in groups[:-1]:
+        removed_groups.append(group)
+        removed_tokens += sum(
+            _estimate_tokens(_with_context_timestamp(str(item.get("content", "")), item.get("created_at")))
+            for item in group
+        )
+        if estimate - removed_tokens <= target:
+            break
+
+    to_archive = [item for group in removed_groups for item in group]
+    kept = [item for group in groups[len(removed_groups):] for item in group]
+    record_ids = [int(item["record_id"]) for item in to_archive if item.get("record_id") is not None]
+    covered_through = max(record_ids) if record_ids else None
+    combined = "\n".join(
+        f"{_with_context_timestamp(str(item.get('content', '')), item.get('created_at'))}\n"
+        f"role: {item.get('role', 'unknown')}"
+        for item in to_archive
+    )
+    saved = await _generate_and_save_summary(
+        deps,
+        "mixed",
+        combined,
+        deps.config.summarizer,
+        kind="compaction",
+        covered_through_message_id=covered_through,
+    )
+    if not saved:
+        logger.error("[CONTEXT BUDGET] compaction summary failed; window left unchanged")
+        return False
+
+    deps.window.replace(kept)
+    logger.warning(
+        "[CONTEXT BUDGET] compacted items=%d->%d estimated=%d target=%d covered_through=%s",
+        len(items),
+        len(kept),
+        estimate,
+        target,
+        covered_through,
+    )
+    return True
 
 
 async def _recycle_window_if_needed(deps: PipelineDeps) -> None:
-    config = deps.config.context
-    total = sum(_estimate_msg_tokens(m) for m in deps.window.get_context())
-    if total <= config.window_max_tokens:
-        return
-
-    items = list(deps.window)
-    accumulated = 0
-    cutoff_idx = 0
-    for i, msg in enumerate(items):
-        accumulated += _estimate_msg_tokens(msg)
-        if (total - accumulated) <= config.window_min_tokens:
-            cutoff_idx = i + 1
-            break
-
-    if cutoff_idx == 0:
-        cutoff_idx = len(items) // 2
-
-    to_archive = items[:cutoff_idx]
-    kept = items[cutoff_idx:]
-
-    combined = "\n".join(
-        f"[{m.get('role', 'unknown')}]: {str(m.get('content', ''))[:500]}"
-        for m in to_archive
-    )
-    if combined.strip():
-        summarizer_cfg = deps.config.summarizer
-        await _generate_and_save_summary(deps, "mixed", combined, summarizer_cfg)
-
-    deps.window.replace(kept)
-    logger.warning("[RECYCLE] window %d→%d items", len(items), len(kept))
+    messages = await _build_context("", deps)
+    await _compact_context_for_request("", deps, messages)
 
 
 def _split_visible_content(content: str) -> list[str]:
@@ -689,6 +827,8 @@ async def pipeline(
 
         _report_state(deps, "CTX_build")
         messages = await _build_context(message, deps)
+        if await _compact_context_for_request(message, deps, messages):
+            messages = await _build_context(message, deps)
         _log_context_size(messages, deps)
         logger.info("[PIPE] context built msgs=%d", len(messages))
         send_count = 0
@@ -711,6 +851,12 @@ async def pipeline(
                 result.input_tokens,
                 result.output_tokens,
             )
+            if result.input_tokens:
+                logger.info(
+                    "[CONTEXT BUDGET] provider_prompt_tokens=%d estimated_request_tokens=%d",
+                    result.input_tokens,
+                    _estimate_request_tokens(messages, deps.registry.to_openai_schema()),
+                )
 
             if deps.token_counter is not None:
                 deps.token_counter["input"] += result.input_tokens
@@ -970,8 +1116,4 @@ async def pipeline(
             except Exception:
                 logger.exception("Archive failed")
 
-            try:
-                await _recycle_window_if_needed(deps)
-            except Exception:
-                logger.exception("Window recycle failed")
         logger.info("[PIPE] cleanup complete")

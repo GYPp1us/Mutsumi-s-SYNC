@@ -15,7 +15,14 @@ from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.classifier import MessageType
 from src.mutsumi_sync.scheduler import PipelineDeps
 from src.mutsumi_sync.main import build_registry
-from src.mutsumi_sync.pipeline import LLMResult, pipeline, _build_context, _recycle_window_if_needed
+from src.mutsumi_sync.pipeline import (
+    LLMResult,
+    pipeline,
+    _build_context,
+    _compact_context_for_request,
+    _estimate_request_tokens,
+    _generate_and_save_summary,
+)
 import src.mutsumi_sync.pipeline as pipeline_module
 
 
@@ -132,6 +139,129 @@ class TestPipelineE2EMultiRound:
         all_msgs = await store.get_messages(group_key=group_key)
         assert len(all_msgs) >= 1, "Message should be saved to store"
 
+        await store.close()
+
+    def test_request_estimate_includes_tool_schema(self):
+        messages = [{"role": "system", "content": "rules"}]
+        small = _estimate_request_tokens(messages, [])
+        large = _estimate_request_tokens(messages, [{
+            "type": "function",
+            "function": {
+                "name": "large_tool",
+                "description": "x" * 1000,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }])
+
+        assert large > small + 200
+
+    async def test_request_compaction_archives_complete_turns_with_exact_coverage(self, monkeypatch):
+        config = make_config()
+        config.context.model_context_tokens = 700
+        config.context.reserved_output_tokens = 100
+        config.context.compression_trigger_ratio = 0.8
+        config.context.compression_target_ratio = 0.45
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        window = MessageWindow()
+        record_ids = []
+        for index in range(3):
+            record_id = await store.save(StoredMessage(
+                date="2026-07-11",
+                group_key="private:budget",
+                category="short_text",
+                content=json.dumps({
+                    "user": f"question {index}",
+                    "bot": f"answer {index}",
+                    "status": "responded",
+                }),
+            ))
+            record_ids.append(record_id)
+            window.add("budget", f"question {index} " + "q" * 220, record_id=record_id)
+            window.add("budget", f"answer {index} " + "a" * 220, is_bot=True, record_id=record_id)
+
+        async def fake_summary(deps, source, text, summarizer_cfg, *, kind="message", covered_through_message_id=None):
+            assert kind == "compaction"
+            assert "q" * 100 in text
+            await deps.store.add_summary(
+                deps.group_key,
+                source,
+                "compacted older turns",
+                kind=kind,
+                covered_through_message_id=covered_through_message_id,
+            )
+            return True
+
+        monkeypatch.setattr(pipeline_module, "_generate_and_save_summary", fake_summary)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=window, session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="budget"),
+            group_key="private:budget",
+        )
+        messages = await _build_context("current request", deps)
+
+        compacted = await _compact_context_for_request("current request", deps, messages)
+
+        assert compacted is True
+        remaining_ids = {item["record_id"] for item in window}
+        assert record_ids[-1] in remaining_ids
+        assert all(
+            sum(1 for item in window if item["record_id"] == record_id) in (0, 2)
+            for record_id in record_ids
+        )
+        boundary = await store.get_newest_compaction_summary("private:budget")
+        assert boundary is not None
+        removed_ids = [record_id for record_id in record_ids if record_id not in remaining_ids]
+        assert boundary["covered_through_message_id"] == max(removed_ids)
+        await store.close()
+
+    async def test_message_summary_does_not_claim_coverage_or_truncate_input(self, monkeypatch):
+        config = make_config()
+        config.model.api_key = "test-key"
+        config.summarizer.max_input_tokens = 10000
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        captured_inputs = []
+
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"choices": [{"message": {"content": "complete long-message summary"}}]}
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, *, headers, json):
+                captured_inputs.append(json["messages"][-1]["content"])
+                return Response()
+
+        monkeypatch.setattr(pipeline_module.httpx, "AsyncClient", lambda timeout: Client())
+        deps = PipelineDeps(
+            config=config, registry=build_registry(config, store), sender=CaptureSender(),
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="summary"),
+            group_key="private:summary",
+        )
+        source_text = "完整内容" * 1500
+
+        saved = await _generate_and_save_summary(
+            deps, "user", source_text, config.summarizer, kind="message"
+        )
+
+        assert saved is True
+        assert captured_inputs == [source_text]
+        summaries = await store.get_summaries("private:summary")
+        assert summaries[0]["kind"] == "message"
+        assert summaries[0]["covered_through_message_id"] is None
         await store.close()
 
     async def test_self_note_in_context(self):
