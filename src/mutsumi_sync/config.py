@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -66,6 +67,10 @@ class HeartbeatConfig(BaseModel):
     aggressive_provider_cache_retention: bool = False
 
 
+class PromptsConfig(BaseModel):
+    persona: str = ""
+
+
 class ContextConfig(BaseModel):
     max_tokens: int = 4096
     window_max_tokens: int = 100000
@@ -118,7 +123,7 @@ class Config(BaseModel):
     vision: VisionConfig = VisionConfig()
     heartbeat: HeartbeatConfig = HeartbeatConfig()
     logging: LoggingConfig = LoggingConfig()
-    system_prompt: str = ""
+    prompts: PromptsConfig = PromptsConfig()
 
     _config_path: str | None = None
     dirty: bool = False
@@ -131,6 +136,12 @@ class Config(BaseModel):
 
         if path.exists():
             raw = yaml.safe_load(open(path, encoding="utf-8")) or {}
+
+            legacy_persona = raw.pop("system_prompt", "")
+            if legacy_persona:
+                prompts = raw.setdefault("prompts", {})
+                if isinstance(prompts, dict) and not prompts.get("persona"):
+                    prompts["persona"] = legacy_persona
 
             env = dotenv_values(Path(path.parent, ".env"))
 
@@ -169,12 +180,21 @@ class Config(BaseModel):
             return f"[Error: unknown config key: {key}]"
 
         if isinstance(value, str):
-            if isinstance(target, float):
-                value = float(value)
-            elif isinstance(target, int):
-                value = int(value)
-            elif isinstance(target, bool):
-                value = value.lower() in ("true", "1", "yes")
+            try:
+                if isinstance(target, bool):
+                    normalized = value.strip().lower()
+                    if normalized in ("true", "1", "yes", "on"):
+                        value = True
+                    elif normalized in ("false", "0", "no", "off"):
+                        value = False
+                    else:
+                        return f"[Error: invalid boolean value for {key}: {value}]"
+                elif isinstance(target, float):
+                    value = float(value)
+                elif isinstance(target, int):
+                    value = int(value)
+            except ValueError as e:
+                return f"[Error: cannot set {key} to {value}: {e}]"
 
         try:
             setattr(current, last_part, value)
@@ -197,7 +217,7 @@ class Config(BaseModel):
         if self._config_path:
             with open(self._config_path, "w", encoding="utf-8") as f:
                 yaml.dump(
-                    self.model_dump(exclude_none=True, exclude={"_config_path", "dirty", "system_prompt"}),
+                    self.model_dump(exclude_none=True, exclude={"_config_path", "dirty"}),
                     f,
                     allow_unicode=True,
                     default_flow_style=False,
@@ -248,34 +268,70 @@ class Config(BaseModel):
         path.write_text("".join(lines), encoding="utf-8")
 
     def _save_nested_key(self, path: Path, lines: list[str], parts: list[str], value: Any) -> None:
-        section = parts[0]
-        leaf = parts[-1]
-        section_idx = None
+        stack: list[tuple[int, str]] = []
+        deepest_prefix = 0
+        parent_end = len(lines)
+        parent_indent = -2
+        parent_idx = -1
+
         for i, line in enumerate(lines):
-            if line.startswith(f"{section}:"):
-                section_idx = i
-                break
+            match = re.match(r"^(\s*)([A-Za-z0-9_-]+)\s*:(.*?)(\r?\n)?$", line)
+            if not match:
+                continue
+            indent = len(match.group(1).replace("\t", "  "))
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            current_path = [item[1] for item in stack] + [match.group(2)]
 
-        if section_idx is None:
-            lines.append(f"{section}:\n")
-            lines.append(f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n")
-            path.write_text("".join(lines), encoding="utf-8")
-            return
-
-        insert_at = len(lines)
-        for i in range(section_idx + 1, len(lines)):
-            line = lines[i]
-            stripped = line.lstrip(" ")
-            indent = len(line) - len(stripped)
-            if stripped and indent == 0 and not stripped.startswith("#"):
-                insert_at = i
-                break
-            if indent == 2 and stripped.startswith(f"{leaf}:"):
-                lines[i] = f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n"
+            if current_path == parts:
+                suffix = match.group(3)
+                comment = ""
+                if " #" in suffix:
+                    comment = "  #" + suffix.split(" #", 1)[1]
+                newline = match.group(4) or "\n"
+                lines[i] = (
+                    f"{' ' * indent}{parts[-1]}: {self._format_yaml_scalar(value, indent=indent)}"
+                    f"{comment}{newline}"
+                )
                 path.write_text("".join(lines), encoding="utf-8")
                 return
 
-        lines.insert(insert_at, f"  {leaf}: {self._format_yaml_scalar(value, indent=2)}\n")
+            prefix_len = 0
+            for expected, actual in zip(parts[:-1], current_path):
+                if expected != actual:
+                    break
+                prefix_len += 1
+            if prefix_len > deepest_prefix and current_path == parts[:prefix_len]:
+                deepest_prefix = prefix_len
+                parent_idx = i
+                parent_indent = indent
+
+            stack.append((indent, match.group(2)))
+
+        if parent_idx >= 0:
+            parent_end = len(lines)
+            for i in range(parent_idx + 1, len(lines)):
+                stripped = lines[i].lstrip(" ")
+                if not stripped or stripped.startswith("#"):
+                    continue
+                indent = len(lines[i]) - len(stripped)
+                if indent <= parent_indent:
+                    parent_end = i
+                    break
+        else:
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                lines[-1] += "\n"
+            parent_end = len(lines)
+            parent_indent = -2
+
+        additions: list[str] = []
+        for depth, key in enumerate(parts[deepest_prefix:-1], start=deepest_prefix):
+            additions.append(f"{' ' * (depth * 2)}{key}:\n")
+        leaf_indent = (len(parts) - 1) * 2
+        additions.append(
+            f"{' ' * leaf_indent}{parts[-1]}: {self._format_yaml_scalar(value, indent=leaf_indent)}\n"
+        )
+        lines[parent_end:parent_end] = additions
         path.write_text("".join(lines), encoding="utf-8")
 
     def reload(self) -> str:

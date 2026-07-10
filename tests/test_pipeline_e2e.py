@@ -172,6 +172,7 @@ class TestPipelineE2EMultiRound:
     async def test_context_has_correct_structure(self):
         """Verify _build_context produces correctly structured messages array."""
         config = make_config()
+        config.prompts.persona = "Speak as a calm long-term companion."
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
         await store.initialize()
@@ -206,12 +207,42 @@ class TestPipelineE2EMultiRound:
         assert "structure test note" in bootstrap["content"]
         assert "past conversation about weather" in bootstrap["content"]
         assert "+08:00" in bootstrap["content"]
+        assert bootstrap["content"].rstrip().endswith(
+            "[Persona]\nSpeak as a calm long-term companion.\n[/Persona]\n[/Context Packet]"
+        )
+        assert "provider tool schema is authoritative" in ctx[0]["content"].lower()
+        assert "用未转义的 |" not in ctx[0]["content"]
 
         assert ctx[-2]["role"] == "user"
         assert "Runtime Injection" in ctx[-2]["content"]
         assert ctx[-1]["role"] == "user"
         assert ctx[-1]["content"] == "current user message"
 
+        await store.close()
+
+    async def test_visible_content_keeps_pipe_literal(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content="a | b | c", input_tokens=3, output_tokens=3)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="literal_pipe"),
+            group_key="private:literal_pipe",
+        )
+
+        await pipeline("show a pipe", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert [item["message"] for item in sender.sent] == ["a | b | c"]
+        saved = await store.get_messages(group_key="private:literal_pipe")
+        assert json.loads(saved[0].content)["bot"] == "a | b | c"
         await store.close()
 
     async def test_priority_override_is_in_runtime_injection_only(self):

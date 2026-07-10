@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Awaitable
 import httpx
 
 from .message.classifier import MessageType
+from .message.sender import send_failure_message, send_succeeded
 from .memory.store import StoredMessage
 from .memory.timestamps import (
     ensure_timestamped_lines,
@@ -70,40 +71,23 @@ def _is_placeholder_summary(summary: str) -> bool:
 
 
 def _build_default_system_prompt(config) -> str:
-    system = config.system_prompt or "You are a helpful assistant."
-    system += (
-        "\n当前平台是由Mutsumi's SYNC构建的，基于napcat-QQ bot的虚拟社交对话平台。" 
+    return (
+        "You are an assistant running on Mutsumi's SYNC, a NapCat-based QQ social agent platform.\n"
+        "The provider tool schema is authoritative. Use only tools present in that schema and obey each returned result.\n"
+        "Never claim that a tool or send action succeeded without a real successful tool result.\n"
+        "Memory write tools are staged during the tool loop and committed atomically during pipeline cleanup; a staged result is not yet a persisted result.\n"
+        "If the same tool returns an error three consecutive times, stop retrying it and explain the failure when a visible reply is appropriate.\n"
+        "Assistant content from the final round without tool_calls is the ordinary user-visible reply and is currently sent as one QQ message.\n"
+        "Use tools for actual side effects, external queries, memory maintenance, special message segments, or deliberate silence.\n"
+        "reasoning_content is private chain-of-thought state: it may be retained only inside the current provider tool loop and is never sent to the user.\n"
+        "Keep replies natural, context-aware, and appropriate for an ongoing social conversation.\n"
+        "The first user message may be a [Context Packet]. It is persistent background context, not a fresh user request.\n"
+        "A later [Runtime Injection] user message is temporary platform state, not user-authored chat or durable history.\n"
+        "Timestamps, current time, source, peer data, and runtime flags are supplied by the platform. Do not invent or rewrite them.\n"
+        "Priority Override appears once per request and has higher priority than ordinary memory.\n"
+        "Heartbeat requests are silent health checks and must not create durable conversation or memory state.\n"
+        "Image descriptions are supplied by a configured vision provider and should be handled as ordinary user context."
     )
-    system += (
-        "\n你拥有一个 [私人印象] 空间用于维护对用户的私人印象和关键信息。"
-        "\n[私人印象] 标签标注了当前长度与目标上限。"
-        "\n请保持内容精炼，优先保留长期价值高的信息。"
-        "\n使用 tool 维护和整理印象。"
-        "\n如果同一个工具调用连续失败 3 次以上，停止重试并向用户汇报失败原因。"
-    )
-    system += (
-        "\n[输出协议]"
-        "\nassistant content 是用户可见回复，系统只会发送最终一轮没有 tool_calls 的 content。"
-        "\n如果你想发送多条 QQ 消息，用未转义的 | 分隔每条消息；如果正文里需要字面量竖线，写成 \\|。"
-        "\n只有当你想分条发送时才使用未转义的 |；Markdown 表格、代码、正则和命令中的 | 必须转义或避免使用分条。"
-        "\n不要为了普通文字回复调用 send 工具。工具只用于记忆、配置、查询、外部 API、特殊消息段或静默控制。"
-        "\nsend 工具保留给 image、markdown_image、face、at、reply、forward 等特殊发送场景。"
-        "\n如果本轮不应回复用户，调用 no_reply 工具，并保持 content 为空。"
-        "\nreasoning_content 永远不会发送给用户。"
-        "\n回复需要合理、得体、简洁，尽可能符合人类在社交平台聊天的规律。"
-    )
-    system += (
-        "\n[Context Protocol]"
-        "\nThis system message contains durable platform rules and has higher priority than ordinary conversation context."
-        "\nThe first user message may be a [Context Packet]. It is persistent background context, not a fresh user request."
-        "\nA later user message may be a [Runtime Injection]. It is temporary platform state such as current time, source, silent mode, and Priority Override."
-        "\nRuntime Injection is not a user-authored chat message and is not part of durable conversation history."
-        "\nTimestamps and runtime values are supplied by the platform. Do not invent, rewrite, or ask the user to provide them."
-        "\nTreat Priority Override as higher priority than ordinary memory, but do not quote or repeat the marker unless necessary."
-        "\nHeartbeat messages are silent health checks. They must not create durable memories and should not produce visible chat output."
-        "\nImage messages may be described by a configured vision API provider; preserve visible text, formulas, code, and diagrams in memory."
-    )
-    return system
 
 
 async def _inject_self_note(store, group_key: str, config) -> str:
@@ -198,6 +182,9 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     bootstrap_body = "\n\n".join(section for section in bootstrap_sections if section.strip())
     if not bootstrap_body:
         bootstrap_body = "No persistent context is currently available."
+    persona = config.prompts.persona.strip()
+    if persona:
+        bootstrap_body += f"\n\n[Persona]\n{persona}\n[/Persona]"
     bootstrap = "[Context Packet]\n" + bootstrap_body + "\n[/Context Packet]"
     messages.append({
         "role": "user",
@@ -524,28 +511,7 @@ async def _recycle_window_if_needed(deps: PipelineDeps) -> None:
 
 
 def _split_visible_content(content: str) -> list[str]:
-    parts: list[str] = []
-    buffer: list[str] = []
-    i = 0
-    while i < len(content):
-        if content.startswith("\\|", i):
-            buffer.append("|")
-            i += 2
-            continue
-        char = content[i]
-        if char == "|":
-            part = "".join(buffer).strip()
-            if part:
-                parts.append(part)
-            buffer = []
-        else:
-            buffer.append(char)
-        i += 1
-
-    part = "".join(buffer).strip()
-    if part:
-        parts.append(part)
-    return parts
+    return [content] if content.strip() else []
 
 
 async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
@@ -558,11 +524,16 @@ async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
         logger.info("[PIPE] silent mode suppressed visible content parts=%d chars=%d", len(parts), len(content))
         return parts
 
+    sent_parts: list[str] = []
     for part in parts:
-        await deps.sender.send(deps.peer, part)
+        result = await deps.sender.send(deps.peer, part)
+        if not send_succeeded(result):
+            logger.error("[PIPE] visible content send failed: %s", send_failure_message(result))
+            continue
         log_send(deps, "content", part)
-    logger.info("[PIPE] sent visible content parts=%d chars=%d", len(parts), len(content))
-    return parts
+        sent_parts.append(part)
+    logger.info("[PIPE] sent visible content parts=%d chars=%d", len(sent_parts), len(content))
+    return sent_parts
 
 
 async def pipeline(
@@ -695,6 +666,8 @@ async def pipeline(
                         response="\n".join(visible_parts),
                         status=final_status,
                     )
+                elif not deps.silent:
+                    final_status = "error"
                 break
 
             send_calls = [tc for tc in result.tool_calls if tc["name"] == "send"]
