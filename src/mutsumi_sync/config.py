@@ -343,19 +343,10 @@ class Config(BaseModel):
     def reload(self) -> str:
         if not self._config_path or not Path(self._config_path).exists():
             return "[Error: no config file to reload]"
-        with open(self._config_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        if not data:
-            return "[OK] config file empty, unchanged"
-        for key, value in data.items():
-            if hasattr(self, key):
-                if isinstance(value, dict):
-                    obj = getattr(self, key)
-                    if isinstance(obj, BaseModel):
-                        for k, v in value.items():
-                            if hasattr(obj, k):
-                                setattr(obj, k, v)
-                else:
-                    setattr(self, key, value)
+        loaded = type(self).load(self._config_path)
+        for key in type(self).model_fields:
+            if key == "dirty":
+                continue
+            setattr(self, key, getattr(loaded, key))
         self.dirty = True
         return "[OK] config reloaded"
