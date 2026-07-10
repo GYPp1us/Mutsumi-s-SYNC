@@ -782,22 +782,53 @@ async def pipeline(
         await _save_msg(deps, message, MessageType.MEDIA.value, None)
         return
 
+    _pending_writes: list[tuple[str, str, dict, Callable[[], Awaitable[str]]]] = []
+    bot_replies: list[str] = []
+    responded = False
+    final_status = "received"
+    inbound_msg_id: int | None = None
     input_metadata: dict | None = None
     if msg_type == MessageType.IMAGE:
         _report_state(deps, "IMAGE_DESCRIBE")
         logger.info("[PIPE] branch=image describe image_file=%s image_url=%s", bool(image_file), bool(image_url))
         caption = message.strip()
-        if deps.config.vision.enabled:
-            image_description = await describe_image(image_file=image_file, image_url=image_url, config=deps.config)
-        else:
-            image_description = "Vision provider is not enabled; visual contents are unavailable."
         input_metadata = {
             "kind": "image",
             "caption": caption,
             "image_file": image_file,
             "image_url": image_url,
-            "image_description": image_description,
+            "image_description": None,
         }
+        inbound_msg_id = await _save_inbound_msg(
+            deps,
+            message,
+            msg_type.value,
+            input_metadata,
+        )
+        try:
+            if deps.config.vision.enabled:
+                image_description = await describe_image(
+                    image_file=image_file,
+                    image_url=image_url,
+                    config=deps.config,
+                )
+            else:
+                image_description = "Vision provider is not enabled; visual contents are unavailable."
+        except asyncio.CancelledError:
+            await _update_saved_msg(
+                deps,
+                inbound_msg_id,
+                message,
+                msg_type.value,
+                response=None,
+                status="cancelled",
+                input_metadata=input_metadata,
+            )
+            raise
+        except Exception as exc:
+            logger.exception("[PIPE] vision provider raised unexpectedly")
+            image_description = f"[Error: vision provider failed: {exc}]"
+        input_metadata["image_description"] = image_description
         lines = ["The user sent an image."]
         if caption:
             lines.append(f"Caption: {caption}")
@@ -808,14 +839,19 @@ async def pipeline(
             lines.append(f"Image URL reference: {image_url}")
         message = "\n".join(lines)
 
-    _pending_writes: list[tuple[str, str, dict, Callable[[], Awaitable[str]]]] = []
-    bot_replies: list[str] = []
-    responded = False
-    final_status = "received"
-    inbound_msg_id: int | None = None
-
     try:
-        inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
+        if inbound_msg_id is None:
+            inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
+        else:
+            await _update_saved_msg(
+                deps,
+                inbound_msg_id,
+                message,
+                msg_type.value,
+                response=None,
+                status="received",
+                input_metadata=input_metadata,
+            )
         deps.session.mark_pending()
 
         is_cold = deps.session.is_cold(deps.config.session.timeout)
@@ -1058,6 +1094,7 @@ async def pipeline(
 
     except asyncio.CancelledError:
         logger.info("[PIPE] cancelled for %s", deps.peer.peer_uid)
+        final_status = "cancelled"
         if inbound_msg_id is None:
             inbound_msg_id = await _recover_inbound_msg_id(deps, message, msg_type.value)
         await _update_saved_msg(
@@ -1072,6 +1109,7 @@ async def pipeline(
         raise
     except Exception as e:
         logger.exception("[PIPE] error for %s", deps.peer.peer_uid)
+        final_status = "error"
         await _update_saved_msg(
             deps,
             inbound_msg_id,
@@ -1110,7 +1148,7 @@ async def pipeline(
             await flush_task
             raise
 
-        if deps.remember_input:
+        if deps.remember_input and final_status == "responded":
             try:
                 await _archive_if_needed(deps, message, bot_replies)
             except Exception:
