@@ -463,8 +463,24 @@ def _sanitize_action_arguments(value: Any) -> Any:
     return value
 
 
-def _sanitize_action_result(result: str) -> str:
+def _is_sensitive_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(
+        secret in lowered
+        for secret in ("api_key", "access_token", "session_token", "secret", "password", "authorization")
+    )
+
+
+def _sanitize_action_result(tool_name: str, arguments: dict, result: str) -> str:
+    if tool_name == "config_manager" and _is_sensitive_name(str(arguments.get("key", ""))):
+        return "[redacted sensitive config result]"
     text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~-]+", "Bearer [redacted]", result)
+    text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-[redacted]", text)
+    text = re.sub(
+        r'(?i)(["\'](?:api_key|access_token|session_token|secret|password|authorization)["\']\s*:\s*["\'])[^"\']+(["\'])',
+        r"\1[redacted]\2",
+        text,
+    )
     return text[:2000]
 
 
@@ -486,7 +502,7 @@ async def _record_action(
             call_id=call_id,
             success=not result.startswith("[Error:"),
             arguments=_sanitize_action_arguments(arguments),
-            result=_sanitize_action_result(result),
+            result=_sanitize_action_result(tool_name, arguments, result),
             artifact=artifact,
         )
     except Exception:
