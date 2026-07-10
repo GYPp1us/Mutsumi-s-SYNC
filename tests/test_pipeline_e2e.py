@@ -549,6 +549,45 @@ class TestPipelineE2EMultiRound:
 
         await store.close()
 
+    async def test_image_cancelled_during_vision_is_persisted(self, monkeypatch):
+        config = make_config()
+        config.vision.enabled = True
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        started = asyncio.Event()
+
+        async def slow_vision(*, image_file, image_url, config):
+            started.set()
+            await asyncio.sleep(60)
+            return "late description"
+
+        monkeypatch.setattr(pipeline_module, "describe_image", slow_vision)
+        deps = PipelineDeps(
+            config=config, registry=build_registry(config, store), sender=CaptureSender(),
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="image_cancel"),
+            group_key="private:image_cancel",
+        )
+        task = asyncio.create_task(pipeline(
+            "keep this caption",
+            MessageType.IMAGE,
+            "photo.png",
+            None,
+            deps=deps,
+        ))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        saved = await store.get_messages(group_key="private:image_cancel", category="image")
+        assert len(saved) == 1
+        payload = json.loads(saved[0].content)
+        assert payload["status"] == "cancelled"
+        assert payload["user"] == "keep this caption"
+        assert payload["input_metadata"]["image_file"] == "photo.png"
+        await store.close()
+
 class TestPipelineE2EDebounce:
     """Verify debounce integration in full pipeline flow."""
 
