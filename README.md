@@ -11,7 +11,9 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - OpenAI-compatible LLM provider with DeepSeek reasoning support.
 - Built-in tool registry with hot snapshot/version tracking.
 - SQLite message store, summaries, self notes, and media storage.
-- Context assembly with provider-native `system`, a persistent `Context Packet`, and a temporary `Runtime Injection`.
+- Five-layer context assembly: stable provider-native `system`, a persistent `Context Packet`, a timestamped working window, temporary `Runtime Injection`, and current input.
+- A separate persona prompt injected at the end of the first `Context Packet` user message.
+- Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
 - Priority Override memory, injected once per request in `Runtime Injection` for unusually important instructions.
@@ -19,8 +21,9 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
 - Interactive tester with `/inject` and `/break`.
-- Dashboard TUI with selectable colored logs, scrolling, copy support, command history, config commands, and memory view.
-- Assistant `content` is the normal user-visible reply channel, with `|` splitting for multiple QQ messages.
+- Structured action ledger for verified tool/send outcomes; generated-image markers never enter assistant history.
+- Dashboard TUI and tester as local debugging surfaces; production behavior is defined by `main.py` and may have a different registry.
+- Assistant `content` is the normal user-visible reply channel and is currently sent as one QQ message; `|` is literal text.
 - `no_reply` tool for deliberate silent turns.
 - `send` tool support for special message segments, legacy text sends, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
 - `scheduler` tool for durable one-shot scheduled pipeline triggers.
@@ -49,7 +52,7 @@ bottle/docs/               # architecture references, including current context/
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.10+
 - NapCat for real QQ I/O
 - Node.js 20+ only if `send.markdown_image` is enabled
 
@@ -105,10 +108,16 @@ model:
   reasoning_effort: max
 
 context:
-  window_max_tokens: 100000
-  window_min_tokens: 50000
+  model_context_tokens: 131072
+  compression_trigger_ratio: 0.8
+  compression_target_ratio: 0.5
+  reserved_output_tokens: 8192
+  recent_actions_max_count: 12
   summaries_max_count: 180
   summaries_min_count: 90
+
+prompts:
+  persona: ""
 
 heartbeat:
   enabled: true
@@ -177,13 +186,15 @@ $env:PYTHONPATH = "."
 python -m src.mutsumi_sync.tui.dashboard config.yaml
 ```
 
-Dashboard highlights:
+Dashboard commands include:
 
 - Real-time colored logs.
 - Log selection and Ctrl+C copy.
 - PageUp/PageDown scrolling independent from command cursor focus.
 - Command history with Up/Down.
 - `/watch`, `/auto`, `/memory`, `/config`, `/inject`, `/break`, `/connect`.
+
+The Dashboard and tester are diagnostic surfaces, not production registry authorities. Verify production tool behavior through `src/mutsumi_sync/main.py`, tests, and service logs.
 
 ## Streaming Logs
 
@@ -200,17 +211,7 @@ The text log uses readable UTC+8 timestamps and strips ANSI color by default. It
 
 Assistant `content` is user-visible. The pipeline sends only the final LLM round that has no `tool_calls`.
 
-Use an unescaped `|` to split one assistant `content` into multiple QQ messages:
-
-```text
-第一条|第二条|第三条
-```
-
-Use `\|` when the reply needs a literal pipe character:
-
-```text
-a \| b|下一条
-```
+Pipe-based multi-message framing is disabled while a replacement protocol is being designed. `a | b` and `a \| b` are both sent unchanged in one QQ message.
 
 Reasoning content is logged for debugging but is never sent to users. Tools are for memory, config, queries, external APIs, special message segments, or silent control. For ordinary text replies, write assistant `content`; do not call `send`.
 
@@ -218,7 +219,7 @@ Use `no_reply` when the turn should intentionally produce no visible message. Th
 
 ## Context And Memory Protocol
 
-The LLM request uses a provider-native `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, summaries, and other persistent background context; it is not a fresh user request. Later user/assistant messages are the working conversation window.
+The LLM request uses one provider-native `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, recent verified actions, and the configured `prompts.persona` at the very end; it is not a fresh user request. Later user/assistant messages are the working conversation window.
 
 Summaries, self notes, and window messages are annotated with readable UTC+8 timestamps. Older self-note lines without timestamps are injected as `很久之前`.
 
@@ -228,11 +229,15 @@ Before the current user request, the pipeline injects a temporary `[Runtime Inje
 
 Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false`, so they do not write message records, update windows, or create summaries.
 
+Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete record-ID turns and stores a trusted `covered_through_message_id`. Legacy `last_message_id` values are ignored during restart restoration. Only successful conversation records are restored; memory, action artifacts, cancelled/error/no-reply records are excluded.
+
+Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate tool result says `staged`, while the final success or failure is stored in the action ledger.
+
 ## Heartbeat And Vision
 
 The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output, suppresses cold-session pokes, and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
 
-Incoming image messages can use a separate vision provider when `vision.enabled` is true. `provider: openai-compatible` uses `vision.model`, `vision.base_url`, and `vision.api_key`. `provider: volcengine-ocr` uses Volcengine Visual OCR `OCRNormal` with `vision.access_key_id` and `vision.secret_access_key`; `vision.session_token` is optional for temporary credentials. It extracts visible text and stores it as the image description. The description is saved with the image record and added to the working window.
+Incoming image messages can use a separate vision provider when `vision.enabled` is true. `provider: openai-compatible` uses `vision.model`, `vision.base_url`, and `vision.api_key`. `provider: volcengine-ocr` uses Volcengine Visual OCR `OCRNormal` with `vision.access_key_id` and `vision.secret_access_key`; `vision.session_token` is optional for temporary credentials. Captions and image metadata are preserved, the vision description or error is assembled into a synthetic user input, and that input runs through the normal LLM/tool/reply pipeline.
 
 ## Scheduled Tasks
 
@@ -312,6 +317,8 @@ The core invariant is that `pipeline()` remains one async function. It receives 
 Cancellation is native asyncio cancellation: a newer message cancels the previous task for the same key via `Task.cancel()`.
 
 Tool registry changes are tracked by a monotonic `registry.version`. Pipelines compare their snapshot version after tool calls so same-invocation tool changes are visible on the next LLM round.
+
+The canonical semantic design is [docs/current-design.md](docs/current-design.md). Files under `bottle/docs/` are historical design sources rather than current behavior contracts.
 
 Heartbeat pipelines use `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`. Ordinary user pipelines keep `remember_input=True` and persist the inbound message before any cancellation-sensitive LLM or tool work.
 

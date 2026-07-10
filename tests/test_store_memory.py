@@ -27,6 +27,28 @@ class TestSummaries:
             assert summaries[1]["summary"] == "summary two"
             assert summaries[0]["seq"] == 1
             assert summaries[1]["seq"] == 2
+            assert summaries[0]["kind"] == "message"
+            assert summaries[0]["covered_through_message_id"] is None
+        finally:
+            await store.close()
+            os.unlink(path)
+
+    async def test_compaction_summary_has_trusted_coverage(self):
+        store, path = await make_store()
+        try:
+            await store.add_summary(
+                "g1",
+                "mixed",
+                "older complete turns",
+                kind="compaction",
+                covered_through_message_id=42,
+            )
+
+            boundary = await store.get_newest_compaction_summary("g1")
+
+            assert boundary is not None
+            assert boundary["kind"] == "compaction"
+            assert boundary["covered_through_message_id"] == 42
         finally:
             await store.close()
             os.unlink(path)
@@ -96,6 +118,32 @@ class TestMessageUpdates:
 
             assert saved[0]["content"] == '{"status": "responded"}'
             assert saved[0]["created_at"] is not None
+        finally:
+            await store.close()
+            os.unlink(path)
+
+
+class TestActionLedger:
+    async def test_save_and_get_recent_actions(self):
+        store, path = await make_store()
+        try:
+            action_id = await store.save_action(
+                group_key="g1",
+                tool_name="send",
+                call_id="call-1",
+                success=True,
+                arguments={"markdown_image_sha256": "abc"},
+                result="message_id=99",
+                artifact={"file": "rendered.png", "message_id": 99},
+            )
+
+            actions = await store.get_recent_actions("g1", limit=5)
+
+            assert action_id > 0
+            assert len(actions) == 1
+            assert actions[0]["success"] is True
+            assert actions[0]["arguments"]["markdown_image_sha256"] == "abc"
+            assert actions[0]["artifact"]["message_id"] == 99
         finally:
             await store.close()
             os.unlink(path)

@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import logging
+import json
 from typing import Iterable
 
 import httpx
 from pydantic import BaseModel
 
 logger = logging.getLogger("mutsumi.sender")
+
+
+def send_succeeded(result: object) -> bool:
+    return isinstance(result, dict) and result.get("status") == "ok"
+
+
+def send_failure_message(result: object) -> str:
+    if not isinstance(result, dict):
+        return f"malformed NapCat response: {result!r}"
+    detail = result.get("message") or result.get("wording") or result.get("msg")
+    if detail:
+        return str(detail)
+    return json.dumps(result, ensure_ascii=False)
 
 
 class Peer(BaseModel):

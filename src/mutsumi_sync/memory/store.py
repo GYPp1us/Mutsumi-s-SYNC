@@ -95,11 +95,28 @@ class MessageStore:
             source      TEXT    NOT NULL,
             summary     TEXT    NOT NULL,
             last_message_id INTEGER DEFAULT 0,
+            kind        TEXT    NOT NULL DEFAULT 'message',
+            covered_through_message_id INTEGER,
             created_at  REAL    NOT NULL DEFAULT (julianday('now'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_summaries_group
             ON summaries(group_key, seq);
+
+        CREATE TABLE IF NOT EXISTS actions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_key       TEXT    NOT NULL,
+            tool_name       TEXT    NOT NULL,
+            call_id         TEXT    NOT NULL DEFAULT '',
+            success         INTEGER NOT NULL,
+            arguments_json  TEXT    NOT NULL,
+            result          TEXT    NOT NULL,
+            artifact_json   TEXT,
+            created_at      REAL    NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_actions_group_time
+            ON actions(group_key, id);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
             content, group_key, category,
@@ -157,6 +174,14 @@ class MessageStore:
             )
         except Exception:
             pass
+        for statement in (
+            "ALTER TABLE summaries ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'",
+            "ALTER TABLE summaries ADD COLUMN covered_through_message_id INTEGER",
+        ):
+            try:
+                await self._conn.execute(statement)
+            except Exception:
+                pass
 
         await self._conn.commit()
         logger.info("MessageStore initialized at %s", self.db_path)
@@ -252,7 +277,16 @@ class MessageStore:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
-    async def add_summary(self, group_key: str, source: str, summary: str, last_message_id: int = 0) -> int:
+    async def add_summary(
+        self,
+        group_key: str,
+        source: str,
+        summary: str,
+        last_message_id: int = 0,
+        *,
+        kind: str = "message",
+        covered_through_message_id: int | None = None,
+    ) -> int:
         self._ensure_initialized()
         cursor = await self._conn.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM summaries WHERE group_key = ?",
@@ -262,8 +296,10 @@ class MessageStore:
         next_seq = row[0] if row else 1
 
         cursor = await self._conn.execute(
-            "INSERT INTO summaries (group_key, seq, source, summary, last_message_id) VALUES (?, ?, ?, ?, ?)",
-            (group_key, next_seq, source, summary, last_message_id),
+            "INSERT INTO summaries "
+            "(group_key, seq, source, summary, last_message_id, kind, covered_through_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (group_key, next_seq, source, summary, last_message_id, kind, covered_through_message_id),
         )
         await self._conn.commit()
         return cursor.lastrowid
@@ -271,7 +307,9 @@ class MessageStore:
     async def get_summaries(self, group_key: str, limit: int = 180) -> list[dict]:
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT id, group_key, seq, source, summary, last_message_id, created_at FROM summaries WHERE group_key = ? ORDER BY seq ASC LIMIT ?",
+            "SELECT id, group_key, seq, source, summary, last_message_id, kind, "
+            "covered_through_message_id, created_at FROM summaries "
+            "WHERE group_key = ? ORDER BY seq ASC LIMIT ?",
             (group_key, limit),
         )
         rows = await cursor.fetchall()
@@ -282,6 +320,8 @@ class MessageStore:
                 "source": r["source"],
                 "summary": r["summary"],
                 "last_message_id": r["last_message_id"],
+                "kind": r["kind"],
+                "covered_through_message_id": r["covered_through_message_id"],
                 "created_at": r["created_at"],
             }
             for r in rows
@@ -408,19 +448,119 @@ class MessageStore:
         rows = await cursor.fetchall()
         return [r["group_key"] for r in rows]
 
-    async def get_newest_summary(self, group_key: str) -> dict | None:
-        """Return the summary with the highest last_message_id for a group."""
+    async def get_newest_compaction_summary(self, group_key: str) -> dict | None:
+        """Return the newest summary with an explicitly trusted coverage boundary."""
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT id, seq, source, summary, last_message_id FROM summaries "
-            "WHERE group_key = ? ORDER BY last_message_id DESC LIMIT 1",
+            "SELECT id, seq, source, summary, kind, covered_through_message_id FROM summaries "
+            "WHERE group_key = ? AND kind = 'compaction' "
+            "AND covered_through_message_id IS NOT NULL "
+            "ORDER BY covered_through_message_id DESC LIMIT 1",
             (group_key,),
         )
         row = await cursor.fetchone()
         if row is None:
             return None
-        return {"id": row["id"], "seq": row["seq"], "source": row["source"],
-                "summary": row["summary"], "last_message_id": row["last_message_id"]}
+        return {
+            "id": row["id"],
+            "seq": row["seq"],
+            "source": row["source"],
+            "summary": row["summary"],
+            "kind": row["kind"],
+            "covered_through_message_id": row["covered_through_message_id"],
+        }
+
+    async def get_restorable_messages(
+        self,
+        group_key: str,
+        *,
+        after_id: int = 0,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return newest successful conversation rows in chronological order."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, date, group_key, category, content, created_at FROM messages "
+            "WHERE group_key = ? AND id > ? "
+            "AND category IN ('short_text', 'long_text', 'image', 'text', 'mixed') "
+            "ORDER BY id DESC",
+            (group_key, after_id),
+        )
+        rows = await cursor.fetchall()
+        selected: list[dict] = []
+        for row in rows:
+            try:
+                parsed = json.loads(row["content"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(parsed, dict) or parsed.get("status") != "responded":
+                continue
+            if not str(parsed.get("user", "")).strip():
+                continue
+            selected.append({
+                "id": row["id"],
+                "date": row["date"],
+                "group_key": row["group_key"],
+                "category": row["category"],
+                "content": row["content"],
+                "created_at": row["created_at"],
+            })
+            if len(selected) >= limit:
+                break
+        selected.reverse()
+        return selected
+
+    async def save_action(
+        self,
+        *,
+        group_key: str,
+        tool_name: str,
+        call_id: str,
+        success: bool,
+        arguments: dict,
+        result: str,
+        artifact: dict | None = None,
+    ) -> int:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "INSERT INTO actions "
+            "(group_key, tool_name, call_id, success, arguments_json, result, artifact_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                group_key,
+                tool_name,
+                call_id,
+                1 if success else 0,
+                json.dumps(arguments, ensure_ascii=False),
+                result,
+                json.dumps(artifact, ensure_ascii=False) if artifact is not None else None,
+            ),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_recent_actions(self, group_key: str, limit: int = 12) -> list[dict]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, tool_name, call_id, success, arguments_json, result, artifact_json, created_at "
+            "FROM actions WHERE group_key = ? ORDER BY id DESC LIMIT ?",
+            (group_key, limit),
+        )
+        rows = list(await cursor.fetchall())
+        rows.reverse()
+        return [
+            {
+                "id": row["id"],
+                "tool_name": row["tool_name"],
+                "call_id": row["call_id"],
+                "success": bool(row["success"]),
+                "arguments": json.loads(row["arguments_json"]),
+                "result": row["result"],
+                "artifact": json.loads(row["artifact_json"]) if row["artifact_json"] else None,
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     async def get_messages_after(self, group_key: str, after_id: int, limit: int = 200) -> list[dict]:
         """Return messages with id > after_id, ordered by id ASC."""

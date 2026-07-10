@@ -15,6 +15,13 @@ class FakeSender:
         return {"status": "ok", "data": {"message_id": 12345}}
 
 
+class FailedSender(FakeSender):
+    async def send(self, peer, segments):
+        self.last_peer = peer
+        self.last_segments = segments
+        return {"status": "failed", "retcode": 1200, "message": "upload failed"}
+
+
 class TestSendTool:
     async def test_send_text(self):
         sender = FakeSender()
@@ -29,6 +36,26 @@ class TestSendTool:
         peer = Peer(chat_type=1, peer_uid="12345")
         result = await send_tool({}, sender=sender, peer=peer)
         assert result.startswith("[Error:")
+
+    async def test_napcat_failed_result_is_tool_error(self):
+        sender = FailedSender()
+        peer = Peer(chat_type=1, peer_uid="12345")
+
+        result = await send_tool(
+            {"markdown_image": "# failure"},
+            sender=sender,
+            peer=peer,
+            config=Config(render={"markdown_image": {"enabled": True}}),
+            markdown_renderer=self._fake_renderer,
+        )
+
+        assert result.startswith("[Error:")
+        assert "upload failed" in result
+        assert "artifacts" not in result
+
+    @staticmethod
+    async def _fake_renderer(markdown: str, *, config: Config) -> str:
+        return "rendered.png"
 
     async def test_send_with_image(self):
         sender = FakeSender()

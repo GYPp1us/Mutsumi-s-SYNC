@@ -61,6 +61,25 @@ class TestConfigManager:
         result = await config_manager({"action": "reload"}, config=c)
         assert "Error" in result
 
+    async def test_reload_preserves_deep_model_types(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "render:\n"
+            "  markdown_image:\n"
+            "    enabled: true\n"
+            "    node_path: custom-node\n",
+            encoding="utf-8",
+        )
+        c = Config.load(str(path))
+        c.render.markdown_image.enabled = False
+
+        result = await config_manager({"action": "reload"}, config=c)
+
+        assert result.startswith("[OK]")
+        assert c.render.markdown_image.enabled is True
+        assert c.render.markdown_image.node_path == "custom-node"
+        assert c.render.markdown_image.__class__.__name__ == "MarkdownImageRenderConfig"
+
     async def test_unknown_action(self):
         c = self.make_config()
         result = await config_manager({"action": "delete"}, config=c)
@@ -95,3 +114,27 @@ class TestConfigManager:
             "  ws_url: ws://example\n"
         )
         assert yaml.safe_load(saved)["model"]["temperature"] == 0.2
+
+    async def test_set_updates_arbitrary_depth_without_reordering(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        original = (
+            "# renderer settings\n"
+            "render:\n"
+            "  markdown_image:\n"
+            "    enabled: false  # keep inline comment\n"
+            "    node_path: node\n"
+            "model:\n"
+            "  model: deepseek-chat\n"
+        )
+        path.write_text(original, encoding="utf-8")
+        c = Config.load(str(path))
+
+        result = await config_manager(
+            {"action": "set", "key": "render.markdown_image.enabled", "value": "true"},
+            config=c,
+        )
+
+        assert result.startswith("[OK]")
+        saved = path.read_text(encoding="utf-8")
+        assert saved == original.replace("enabled: false", "enabled: true")
+        assert yaml.safe_load(saved)["render"]["markdown_image"]["enabled"] is True

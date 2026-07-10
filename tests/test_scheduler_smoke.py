@@ -1,9 +1,10 @@
 import asyncio
+import json
 import tempfile
 import os
 import time
 from src.mutsumi_sync.config import Config
-from src.mutsumi_sync.memory.store import MessageStore, ScheduledTaskRecord
+from src.mutsumi_sync.memory.store import MessageStore, ScheduledTaskRecord, StoredMessage
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.receiver import MessageEvent
 from src.mutsumi_sync.scheduler import PipelineScheduler
@@ -171,6 +172,90 @@ async def test_shutdown_does_not_write_placeholder_summaries():
         assert summaries == []
     finally:
         await reopened.close()
+        os.unlink(store_path)
+
+
+async def test_startup_restores_only_uncovered_successful_conversation_rows():
+    config = Config.load("config.example.yaml")
+    config.heartbeat.enabled = False
+    registry = ToolRegistry()
+    sender = FakeSender()
+    store, store_path = make_store()
+    await store.initialize()
+    key = "private:restore-clean"
+
+    def record(user, bot, status):
+        return json.dumps({"user": user, "bot": bot, "status": status, "source": "user"})
+
+    covered_id = await store.save(StoredMessage(
+        date="2026-07-11", group_key=key, category="short_text",
+        content=record("covered question", "covered answer", "responded"),
+    ))
+    await store.save(StoredMessage(
+        date="2026-07-11", group_key=key, category="memory", content="private fact",
+    ))
+    await store.save(StoredMessage(
+        date="2026-07-11", group_key=key, category="short_text",
+        content=record("cancelled question", None, "cancelled"),
+    ))
+    visible_id = await store.save(StoredMessage(
+        date="2026-07-11", group_key=key, category="long_text",
+        content=record("visible question", "visible answer", "responded"),
+    ))
+    await store.save(StoredMessage(
+        date="2026-07-11", group_key=key, category="short_text",
+        content=record("silent question", None, "no_reply"),
+    ))
+    await store.add_summary(
+        key, "mixed", "covered turn", kind="compaction",
+        covered_through_message_id=covered_id,
+    )
+
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+    try:
+        await scheduler.startup()
+
+        restored = scheduler._windows[key].get_context()
+        assert [item["content"] for item in restored] == ["visible question", "visible answer"]
+        assert [item["record_id"] for item in restored] == [visible_id, visible_id]
+        assert scheduler._windows[key].coverage_trusted is True
+    finally:
+        await scheduler.shutdown()
+        os.unlink(store_path)
+
+
+async def test_startup_marks_truncated_restore_coverage_untrusted():
+    config = Config.load("config.example.yaml")
+    config.heartbeat.enabled = False
+    store, store_path = make_store()
+    await store.initialize()
+    key = "private:restore-truncated"
+    for index in range(201):
+        await store.save(StoredMessage(
+            date="2026-07-11",
+            group_key=key,
+            category="short_text",
+            content=json.dumps({
+                "user": f"question {index}",
+                "bot": f"answer {index}",
+                "status": "responded",
+                "source": "user",
+            }),
+        ))
+    scheduler = PipelineScheduler(
+        config=config,
+        registry=ToolRegistry(),
+        sender=FakeSender(),
+        store=store,
+    )
+    try:
+        await scheduler.startup()
+
+        assert scheduler._windows[key].coverage_trusted is False
+        assert len(scheduler._windows[key]) == 400
+        assert scheduler._windows[key].get_context()[0]["content"] == "question 1"
+    finally:
+        await scheduler.shutdown()
         os.unlink(store_path)
 
 

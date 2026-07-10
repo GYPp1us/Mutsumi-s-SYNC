@@ -1,13 +1,16 @@
 # Current Context, Heartbeat, And Vision Rules
 
 - LLM requests use a provider-native non-empty `system` message for durable platform rules.
-- The first `user` message is a `[Context Packet]` containing self-note, summaries, and other persistent context. It is context, not a fresh user request.
+- The first `user` message is a `[Context Packet]` containing self-note, typed summaries, recent verified actions, and `prompts.persona` at the end. It is context, not a fresh user request.
 - Working conversation messages after the Context Packet are only the current working context window.
 - A temporary `[Runtime Injection]` user message is inserted immediately before the current user request. It carries current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override. It is not user-authored chat and must not be written to durable history.
 - Summaries, self-note entries, and working-window messages must be timestamped in a readable UTC+8 form. Existing self-note lines without timestamps are injected with `很久之前`.
 - `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is injected only once in Runtime Injection and should be used only for high-priority instructions.
 - Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
-- `send(markdown_image=...)` records a structured sent-image artifact with source Markdown, generated file path, and message id when available.
+- Pipe-based reply splitting is disabled. Assistant content is sent once and `|` remains literal.
+- `send(markdown_image=...)` records verified success/failure in the structured action ledger. Successful artifacts carry the generated file, message id, and Markdown hash; artifact markers must not enter assistant history.
+- Memory writes remain staged until cancellation-protected cleanup. Immediate tool feedback must say `staged`, and each final operation is committed and ledgered exactly once.
+- Only `compaction` summaries may carry `covered_through_message_id`; per-message summaries and legacy `last_message_id` values never skip raw records on restart.
 - Heartbeat uses `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`: real LLM call, no visible QQ output, no message/window/summary memory pollution.
 - Heartbeat is silent and must not send cold-session pokes.
 - `heartbeat.interval_seconds` defaults to `2700`. `heartbeat.aggressive_provider_cache_retention` controls whether heartbeat prefers active conversation context for provider cache retention.
@@ -33,9 +36,11 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | SQLite 消息/摘要/自我印象存储 | 可用 |
 | 上下文拼接与窗口回收 | 可用，CONTEXT 日志不截断 |
 | 生产日志文件 | 可用，NDJSON 结构化日志与 human-readable `.log` 双写 |
-| Dashboard TUI | 可用，支持彩色日志、滚动、选择复制、命令历史 |
-| 交互式 tester | 可用，支持 `/inject`、`/break`、FakeSender |
-| 输出协议 | assistant `content` 是用户可见回复，未转义 `|` 分成多条 QQ 消息 |
+| Dashboard TUI | 调试界面，不保证与生产 registry 完全一致 |
+| 交互式 tester | 调试界面，支持 `/inject`、`/break`、FakeSender |
+| 输出协议 | assistant `content` 是用户可见回复，整段发送，`|` 为字面量 |
+| Action ledger | 可用，记录真实工具/发送结果，不用 assistant 文本猜测副作用 |
+| Token-aware compaction | 可用，按完整 provider 请求估算并压缩完整 turn |
 | `no_reply` 工具 | 可用，用于本轮故意静默 |
 | `scheduler` 工具 | 可用，持久化一次性定时触发 pipeline |
 | `send` 工具 | 特殊发送与兼容工具，支持 text/image/image_url/face/at/reply/forward/markdown_image |
@@ -45,12 +50,13 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 
 开始任何代码工作前，按顺序阅读：
 
-1. `README.md` - 面向用户和维护者的当前说明。
-2. `init.md` - 当前项目章程与架构约束。
-3. `bottle/docs/architecture-for-humans.md` - 原始人类版架构设计书。
-4. `bottle/docs/architecture-for-ai.md` - 原始结构化架构设计书。
+1. `docs/current-design.md` - 当前语义与架构事实源。
+2. `README.md` - 面向用户和维护者的当前说明。
+3. `init.md` - 当前项目章程与架构约束。
+4. `bottle/docs/architecture-for-humans.md` - 原始人类版架构设计书。
+5. `bottle/docs/architecture-for-ai.md` - 原始结构化架构设计书。
 
-`bottle/docs/` 是 v3 重写的设计来源；如果它与当前代码冲突，以 `README.md`、`init.md` 和源码测试为准。
+`bottle/docs/` 是 v3 重写的历史设计来源；如果冲突，以 `docs/current-design.md`、源码和测试为准。
 
 ## 初次运行
 
@@ -141,7 +147,7 @@ npx playwright install-deps chromium
 ## LLM 输出协议
 
 - 最终轮 assistant `content` 会发送给用户；reasoning_content 永远不发送。
-- 如果要分多条 QQ 消息，使用未转义的 `|` 分隔；正文里的字面量竖线写成 `\|`。
+- 当前不支持 content 内分条；`|` 和 `\|` 均按原文发送，等待新协议定案。
 - 有 `tool_calls` 的轮次只执行工具并回填结果，中间 content 不发送；没有工具的最终 content 才发送。
 - 普通文字不要调用 `send` 工具。`send` 只用于 `markdown_image`、图片、表情、@、回复、转发等特殊消息段，或旧兼容路径。
 - 本轮不应回复时调用 `no_reply`，并保持 content 为空。
@@ -180,6 +186,9 @@ npm run check
 6. Skill/Tool 加载不应在导入期执行不受控副作用。
 7. 配置修改工具必须尽量局部修改 YAML，不应整份重排用户配置文件。
 8. 日志链路要诚实打印 pipeline 所有关键分支，不用 UI 滚动状态掩盖日志缺失。
+9. provider tool schema 是唯一工具事实源，system/persona prompt 不维护手写工具清单。
+10. 发送与工具副作用只有真实成功结果才能进入 action ledger；不得从 assistant prose 推断成功。
+11. 压缩只处理完整持久化 turn，并只用可信 compaction coverage 跳过启动恢复记录。
 
 ## 代码约定
 

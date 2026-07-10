@@ -5,6 +5,7 @@ import logging
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from .markdown_renderer import render_markdown_image
+from ..message.sender import send_failure_message, send_succeeded
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -78,6 +79,8 @@ async def send_tool(
 
     try:
         result = await sender.send(peer, segments)
+        if not send_succeeded(result):
+            return f"[Error: NapCat send failed: {send_failure_message(result)}]"
         if artifacts and isinstance(result, dict):
             result = dict(result)
             result["artifacts"] = artifacts
