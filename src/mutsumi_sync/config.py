@@ -75,6 +75,11 @@ class ContextConfig(BaseModel):
     max_tokens: int = 4096
     window_max_tokens: int = 100000
     window_min_tokens: int = 50000
+    model_context_tokens: int = 131072
+    compression_trigger_ratio: float = 0.8
+    compression_target_ratio: float = 0.5
+    reserved_output_tokens: int = 8192
+    recent_actions_max_count: int = 12
     summaries_max_count: int = 180
     summaries_min_count: int = 90
     debounce_timeout: float = 1.5
@@ -92,6 +97,7 @@ class SummarizerConfig(BaseModel):
     api_key: str = ""
     base_url: str = "https://api.deepseek.com/v1"
     temperature: float = 0.3
+    max_input_tokens: int = 32000
 
 
 class SessionConfig(BaseModel):
