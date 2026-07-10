@@ -689,7 +689,11 @@ async def _compact_context_for_request(
     to_archive = [item for group in removed_groups for item in group]
     kept = [item for group in groups[len(removed_groups):] for item in group]
     record_ids = [int(item["record_id"]) for item in to_archive if item.get("record_id") is not None]
-    covered_through = max(record_ids) if record_ids else None
+    covered_through = (
+        max(record_ids)
+        if record_ids and deps.window.coverage_trusted
+        else None
+    )
     combined = "\n".join(
         f"{_with_context_timestamp(str(item.get('content', '')), item.get('created_at'))}\n"
         f"role: {item.get('role', 'unknown')}"

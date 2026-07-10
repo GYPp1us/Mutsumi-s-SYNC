@@ -5,8 +5,9 @@ from collections import deque
 
 
 class MessageWindow:
-    def __init__(self, max_size: int = 20):
+    def __init__(self, max_size: int = 20, *, coverage_trusted: bool = True):
         self.max_size = max_size
+        self.coverage_trusted = coverage_trusted
         self._window: deque[dict] = deque()
 
     def add(
