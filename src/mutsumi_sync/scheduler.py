@@ -300,34 +300,46 @@ class PipelineScheduler:
         group_keys = await self.store.get_message_group_keys()
 
         for gk in group_keys:
-            boundary = await self.store.get_newest_summary(gk)
-            after_id = boundary["last_message_id"] if boundary else 0
+            boundary = await self.store.get_newest_compaction_summary(gk)
+            after_id = boundary["covered_through_message_id"] if boundary else 0
 
-            uncovered = await self.store.get_messages_after(gk, after_id, limit=200)
+            uncovered = await self.store.get_restorable_messages(gk, after_id=after_id, limit=201)
             if not uncovered:
                 continue
 
-            window = MessageWindow()
+            restore_truncated = len(uncovered) > 200
+            if restore_truncated:
+                uncovered = uncovered[-200:]
+            window = MessageWindow(coverage_trusted=not restore_truncated)
             for msg in uncovered:
-                try:
-                    parsed = json.loads(msg["content"])
-                except (json.JSONDecodeError, TypeError):
-                    window.add(user_id=gk, message=msg["content"][:500], created_at=msg.get("created_at"))
-                    continue
-
-                if isinstance(parsed, dict):
-                    user_text = parsed.get("user", "")
-                    bot_text = parsed.get("bot", "")
-                    if user_text:
-                        window.add(user_id=gk, message=str(user_text), created_at=msg.get("created_at"))
-                    if bot_text:
-                        window.add(user_id=gk, message=str(bot_text), is_bot=True, created_at=msg.get("created_at"))
-                else:
-                    window.add(user_id=gk, message=str(parsed)[:500], created_at=msg.get("created_at"))
+                parsed = json.loads(msg["content"])
+                user_text = parsed.get("user", "")
+                bot_text = parsed.get("bot", "")
+                if user_text:
+                    window.add(
+                        user_id=gk,
+                        message=str(user_text),
+                        created_at=msg.get("created_at"),
+                        record_id=msg["id"],
+                    )
+                if bot_text:
+                    window.add(
+                        user_id=gk,
+                        message=str(bot_text),
+                        is_bot=True,
+                        created_at=msg.get("created_at"),
+                        record_id=msg["id"],
+                    )
 
             self._windows[gk] = window
             self._ensure_user_state(gk)
-            logger.info("[STARTUP] restored window %s: %d items (after id %d)", gk, len(window), after_id)
+            logger.info(
+                "[STARTUP] restored window %s: %d items (after id %d, coverage_trusted=%s)",
+                gk,
+                len(window),
+                after_id,
+                window.coverage_trusted,
+            )
 
         if self.config.heartbeat.enabled and self._heartbeat_task is None:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())

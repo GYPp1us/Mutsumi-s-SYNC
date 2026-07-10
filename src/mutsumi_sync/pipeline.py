@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -11,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Callable, Awaitable
 import httpx
 
 from .message.classifier import MessageType
+from .message.sender import send_failure_message, send_succeeded
 from .memory.store import StoredMessage
 from .memory.timestamps import (
     ensure_timestamped_lines,
@@ -70,40 +73,23 @@ def _is_placeholder_summary(summary: str) -> bool:
 
 
 def _build_default_system_prompt(config) -> str:
-    system = config.system_prompt or "You are a helpful assistant."
-    system += (
-        "\n当前平台是由Mutsumi's SYNC构建的，基于napcat-QQ bot的虚拟社交对话平台。" 
+    return (
+        "You are an assistant running on Mutsumi's SYNC, a NapCat-based QQ social agent platform.\n"
+        "The provider tool schema is authoritative. Use only tools present in that schema and obey each returned result.\n"
+        "Never claim that a tool or send action succeeded without a real successful tool result.\n"
+        "Memory write tools are staged during the tool loop and committed atomically during pipeline cleanup; a staged result is not yet a persisted result.\n"
+        "If the same tool returns an error three consecutive times, stop retrying it and explain the failure when a visible reply is appropriate.\n"
+        "Assistant content from the final round without tool_calls is the ordinary user-visible reply and is currently sent as one QQ message.\n"
+        "Use tools for actual side effects, external queries, memory maintenance, special message segments, or deliberate silence.\n"
+        "reasoning_content is private chain-of-thought state: it may be retained only inside the current provider tool loop and is never sent to the user.\n"
+        "Keep replies natural, context-aware, and appropriate for an ongoing social conversation.\n"
+        "The first user message may be a [Context Packet]. It is persistent background context, not a fresh user request.\n"
+        "A later [Runtime Injection] user message is temporary platform state, not user-authored chat or durable history.\n"
+        "Timestamps, current time, source, peer data, and runtime flags are supplied by the platform. Do not invent or rewrite them.\n"
+        "Priority Override appears once per request and has higher priority than ordinary memory.\n"
+        "Heartbeat requests are silent health checks and must not create durable conversation or memory state.\n"
+        "Image descriptions are supplied by a configured vision provider and should be handled as ordinary user context."
     )
-    system += (
-        "\n你拥有一个 [私人印象] 空间用于维护对用户的私人印象和关键信息。"
-        "\n[私人印象] 标签标注了当前长度与目标上限。"
-        "\n请保持内容精炼，优先保留长期价值高的信息。"
-        "\n使用 tool 维护和整理印象。"
-        "\n如果同一个工具调用连续失败 3 次以上，停止重试并向用户汇报失败原因。"
-    )
-    system += (
-        "\n[输出协议]"
-        "\nassistant content 是用户可见回复，系统只会发送最终一轮没有 tool_calls 的 content。"
-        "\n如果你想发送多条 QQ 消息，用未转义的 | 分隔每条消息；如果正文里需要字面量竖线，写成 \\|。"
-        "\n只有当你想分条发送时才使用未转义的 |；Markdown 表格、代码、正则和命令中的 | 必须转义或避免使用分条。"
-        "\n不要为了普通文字回复调用 send 工具。工具只用于记忆、配置、查询、外部 API、特殊消息段或静默控制。"
-        "\nsend 工具保留给 image、markdown_image、face、at、reply、forward 等特殊发送场景。"
-        "\n如果本轮不应回复用户，调用 no_reply 工具，并保持 content 为空。"
-        "\nreasoning_content 永远不会发送给用户。"
-        "\n回复需要合理、得体、简洁，尽可能符合人类在社交平台聊天的规律。"
-    )
-    system += (
-        "\n[Context Protocol]"
-        "\nThis system message contains durable platform rules and has higher priority than ordinary conversation context."
-        "\nThe first user message may be a [Context Packet]. It is persistent background context, not a fresh user request."
-        "\nA later user message may be a [Runtime Injection]. It is temporary platform state such as current time, source, silent mode, and Priority Override."
-        "\nRuntime Injection is not a user-authored chat message and is not part of durable conversation history."
-        "\nTimestamps and runtime values are supplied by the platform. Do not invent, rewrite, or ask the user to provide them."
-        "\nTreat Priority Override as higher priority than ordinary memory, but do not quote or repeat the marker unless necessary."
-        "\nHeartbeat messages are silent health checks. They must not create durable memories and should not produce visible chat output."
-        "\nImage messages may be described by a configured vision API provider; preserve visible text, formulas, code, and diagrams in memory."
-    )
-    return system
 
 
 async def _inject_self_note(store, group_key: str, config) -> str:
@@ -185,6 +171,24 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
         if summary_texts:
             messages.append({"role": "system", "content": "[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]"})
 
+    actions = await store.get_recent_actions(
+        deps.group_key,
+        limit=config.context.recent_actions_max_count,
+    )
+    if actions:
+        action_lines = []
+        for action in actions:
+            stamp = format_context_timestamp(action.get("created_at"))
+            outcome = "success" if action.get("success") else "failure"
+            result_text = str(action.get("result", "")).replace("\n", " ")[:240]
+            action_lines.append(
+                f"{stamp} | {action.get('tool_name', 'unknown')} | {outcome} | {result_text}"
+            )
+        bootstrap_sections.append(
+            "Recent verified actions (platform records, not assistant claims):\n"
+            + "\n".join(action_lines)
+        )
+
     extra_system_sections = [
         str(m.get("content", ""))
         for m in messages[1:]
@@ -198,6 +202,9 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     bootstrap_body = "\n\n".join(section for section in bootstrap_sections if section.strip())
     if not bootstrap_body:
         bootstrap_body = "No persistent context is currently available."
+    persona = config.prompts.persona.strip()
+    if persona:
+        bootstrap_body += f"\n\n[Persona]\n{persona}\n[/Persona]"
     bootstrap = "[Context Packet]\n" + bootstrap_body + "\n[/Context Packet]"
     messages.append({
         "role": "user",
@@ -319,16 +326,25 @@ def _message_record_content(
     response: str | None = None,
     status: str = "received",
     source: str = "user",
+    input_metadata: dict | None = None,
 ) -> str:
-    return json.dumps({
+    payload = {
         "user": message,
         "bot": response,
         "status": status,
         "source": source,
-    }, ensure_ascii=False)
+    }
+    if input_metadata:
+        payload["input_metadata"] = input_metadata
+    return json.dumps(payload, ensure_ascii=False)
 
 
-async def _save_inbound_msg(deps: PipelineDeps, message: str, category: str) -> int | None:
+async def _save_inbound_msg(
+    deps: PipelineDeps,
+    message: str,
+    category: str,
+    input_metadata: dict | None = None,
+) -> int | None:
     if not deps.remember_input:
         return None
     try:
@@ -337,7 +353,11 @@ async def _save_inbound_msg(deps: PipelineDeps, message: str, category: str) -> 
             date=today,
             group_key=deps.group_key,
             category=category,
-            content=_message_record_content(message, source=deps.source),
+            content=_message_record_content(
+                message,
+                source=deps.source,
+                input_metadata=input_metadata,
+            ),
         ))
         logger.info("[PIPE] saved inbound message category=%s id=%s source=%s", category, msg_id, deps.source)
         return msg_id
@@ -354,13 +374,20 @@ async def _update_saved_msg(
     *,
     response: str | None,
     status: str,
+    input_metadata: dict | None = None,
 ) -> None:
     if not deps.remember_input or msg_id is None:
         return
     try:
         await deps.store.update_message_content(
             msg_id,
-            _message_record_content(message, response=response, status=status, source=deps.source),
+            _message_record_content(
+                message,
+                response=response,
+                status=status,
+                source=deps.source,
+                input_metadata=input_metadata,
+            ),
         )
         logger.info("[PIPE] saved message category=%s response=%s", category, "yes" if response else "no")
     except Exception:
@@ -390,22 +417,17 @@ async def _recover_inbound_msg_id(deps: PipelineDeps, message: str, category: st
     return None
 
 
-async def _save_send_artifacts(deps: PipelineDeps, reply_result: str) -> list[str]:
-    if not deps.remember_input:
-        return []
+def _extract_send_artifact(reply_result: str) -> dict | None:
     try:
         parsed = json.loads(reply_result)
     except (json.JSONDecodeError, TypeError):
-        return []
+        return None
     if not isinstance(parsed, dict):
-        return []
+        return None
 
     artifacts = parsed.get("artifacts", [])
     if not isinstance(artifacts, list):
-        return []
-
-    summaries: list[str] = []
-    today = date.today().isoformat()
+        return None
     message_id = parsed.get("data", {}).get("message_id") if isinstance(parsed.get("data"), dict) else None
     for artifact in artifacts:
         if not isinstance(artifact, dict):
@@ -415,16 +437,76 @@ async def _save_send_artifacts(deps: PipelineDeps, reply_result: str) -> list[st
         record = dict(artifact)
         if message_id is not None:
             record["message_id"] = message_id
-        await deps.store.save(StoredMessage(
-            date=today,
+        markdown = str(record.pop("markdown", ""))
+        if markdown:
+            record["markdown_sha256"] = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+            record["markdown_chars"] = len(markdown)
+        return record
+    return None
+
+
+def _sanitize_action_arguments(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(secret in lowered for secret in ("api_key", "token", "secret", "password", "authorization")):
+                sanitized[key] = "[redacted]"
+            elif key == "markdown_image" and isinstance(item, str):
+                sanitized["markdown_image_sha256"] = hashlib.sha256(item.encode("utf-8")).hexdigest()
+                sanitized["markdown_image_chars"] = len(item)
+            else:
+                sanitized[key] = _sanitize_action_arguments(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_action_arguments(item) for item in value]
+    return value
+
+
+def _is_sensitive_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(
+        secret in lowered
+        for secret in ("api_key", "access_token", "session_token", "secret", "password", "authorization")
+    )
+
+
+def _sanitize_action_result(tool_name: str, arguments: dict, result: str) -> str:
+    if tool_name == "config_manager" and _is_sensitive_name(str(arguments.get("key", ""))):
+        return "[redacted sensitive config result]"
+    text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~-]+", "Bearer [redacted]", result)
+    text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-[redacted]", text)
+    text = re.sub(
+        r'(?i)(["\'](?:api_key|access_token|session_token|secret|password|authorization)["\']\s*:\s*["\'])[^"\']+(["\'])',
+        r"\1[redacted]\2",
+        text,
+    )
+    return text[:2000]
+
+
+async def _record_action(
+    deps: PipelineDeps,
+    *,
+    tool_name: str,
+    call_id: str,
+    arguments: dict,
+    result: str,
+    artifact: dict | None = None,
+) -> None:
+    if not deps.remember_input:
+        return
+    try:
+        await deps.store.save_action(
             group_key=deps.group_key,
-            category="image",
-            content=json.dumps(record, ensure_ascii=False),
-        ))
-        source = record.get("source", "image")
-        file = record.get("file", "")
-        summaries.append(f"[sent image: {source}, file={file}, message_id={message_id}]")
-    return summaries
+            tool_name=tool_name,
+            call_id=call_id,
+            success=not result.startswith("[Error:"),
+            arguments=_sanitize_action_arguments(arguments),
+            result=_sanitize_action_result(tool_name, arguments, result),
+            artifact=artifact,
+        )
+    except Exception:
+        logger.exception("Failed to persist action ledger entry for %s", tool_name)
 
 
 def _log_context_size(messages: list[dict], deps: PipelineDeps) -> None:
@@ -447,105 +529,223 @@ async def _archive_if_needed(deps: PipelineDeps, user_msg: str, bot_replies: lis
         if _estimate_tokens(text) <= threshold:
             continue
         logger.warning("[ARCHIVE] archiving %s msg ~%d tokens", source, _estimate_tokens(text))
-        await _generate_and_save_summary(deps, source, text, summarizer_cfg)
+        await _generate_and_save_summary(
+            deps,
+            source,
+            text,
+            summarizer_cfg,
+            kind="message",
+        )
 
 
-async def _generate_and_save_summary(deps: PipelineDeps, source: str, text: str, summarizer_cfg) -> None:
+async def _generate_and_save_summary(
+    deps: PipelineDeps,
+    source: str,
+    text: str,
+    summarizer_cfg,
+    *,
+    kind: str = "message",
+    covered_through_message_id: int | None = None,
+) -> bool:
     api_key = summarizer_cfg.api_key or deps.config.model.api_key
     if not api_key:
-        return
+        logger.warning("[SUMMARY] skipped kind=%s because no API key is configured", kind)
+        return False
 
     base_url = summarizer_cfg.base_url or deps.config.model.base_url
     try:
+        max_chars = max(1000, int(summarizer_cfg.max_input_tokens) * ESTIMATE_CHARS_PER_TOKEN)
+        chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
+        if len(chunks) > 1:
+            logger.info("[SUMMARY] explicitly chunking input chars=%d chunks=%d", len(text), len(chunks))
+
         async with httpx.AsyncClient(timeout=30) as client:
-            payload = {
-                "model": summarizer_cfg.model,
-                "messages": [
-                    {"role": "system", "content": "用1-2句话中文总结以下对话内容，不超过100字。"},
-                    {"role": "user", "content": text[:2000]},
-                ],
-                "temperature": summarizer_cfg.temperature,
-                "max_tokens": 150,
-            }
-            resp = await client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
-            )
-            if resp.status_code == 200:
+            partials: list[str] = []
+            for index, chunk in enumerate(chunks, start=1):
+                payload = {
+                    "model": summarizer_cfg.model,
+                    "messages": [
+                        {"role": "system", "content": "用1-2句话中文总结以下内容，不超过100字，保留事实、时间和未解决事项。"},
+                        {"role": "user", "content": chunk},
+                    ],
+                    "temperature": summarizer_cfg.temperature,
+                    "max_tokens": 150,
+                }
+                resp = await client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if resp.status_code != 200:
+                    logger.error("[SUMMARY] chunk=%d failed status=%d", index, resp.status_code)
+                    return False
                 data = resp.json()
-                summary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                if summary:
-                    max_id = await deps.store.get_max_message_id(deps.group_key)
-                    summary_id = await deps.store.add_summary(
-                        deps.group_key, source, summary.strip(),
-                        last_message_id=max_id,
-                    )
-                    await deps.store.trim_summaries(
-                        deps.group_key,
-                        max_count=deps.config.context.summaries_max_count,
-                        min_count=deps.config.context.summaries_min_count,
-                    )
+                partial = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if not str(partial).strip():
+                    logger.error("[SUMMARY] chunk=%d returned empty content", index)
+                    return False
+                partials.append(str(partial).strip())
+
+            summary = "\n".join(partials)
+            if len(partials) > 1:
+                synthesis_payload = {
+                    "model": summarizer_cfg.model,
+                    "messages": [
+                        {"role": "system", "content": "将这些分段摘要合并为简洁、无重复的中文摘要，保留时间顺序。"},
+                        {"role": "user", "content": summary},
+                    ],
+                    "temperature": summarizer_cfg.temperature,
+                    "max_tokens": 300,
+                }
+                resp = await client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=synthesis_payload,
+                )
+                if resp.status_code != 200:
+                    return False
+                summary = str(
+                    resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                ).strip()
+                if not summary:
+                    return False
+
+            await deps.store.add_summary(
+                deps.group_key,
+                source,
+                summary,
+                kind=kind,
+                covered_through_message_id=covered_through_message_id,
+            )
+            await deps.store.trim_summaries(
+                deps.group_key,
+                max_count=deps.config.context.summaries_max_count,
+                min_count=deps.config.context.summaries_min_count,
+            )
+            logger.info(
+                "[SUMMARY] saved kind=%s covered_through=%s chars=%d",
+                kind,
+                covered_through_message_id,
+                len(summary),
+            )
+            return True
     except Exception:
         logger.exception("Failed to generate/save summary")
+        return False
+
+
+def _estimate_request_tokens(messages: list[dict], tools: list[dict]) -> int:
+    serialized = json.dumps(
+        {"messages": messages, "tools": tools},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return _estimate_tokens(serialized)
+
+
+def _window_turn_groups(items: list[dict]) -> list[list[dict]]:
+    groups: list[list[dict]] = []
+    group_keys: list[tuple[str, int]] = []
+    legacy_turn = 0
+    for item in items:
+        record_id = item.get("record_id")
+        if record_id is not None:
+            key = ("record", int(record_id))
+        else:
+            if item.get("role") == "user" or not groups:
+                legacy_turn += 1
+            key = ("legacy", legacy_turn)
+        if not groups or group_keys[-1] != key:
+            groups.append([])
+            group_keys.append(key)
+        groups[-1].append(item)
+    return groups
+
+
+async def _compact_context_for_request(
+    message: str,
+    deps: PipelineDeps,
+    messages: list[dict],
+) -> bool:
+    config = deps.config.context
+    tools = deps.registry.to_openai_schema()
+    estimate = _estimate_request_tokens(messages, tools)
+    trigger = max(1, int(config.model_context_tokens * config.compression_trigger_ratio) - config.reserved_output_tokens)
+    target = max(1, int(config.model_context_tokens * config.compression_target_ratio) - config.reserved_output_tokens)
+    if estimate <= trigger:
+        logger.info(
+            "[CONTEXT BUDGET] estimated=%d trigger=%d target=%d capacity=%d",
+            estimate,
+            trigger,
+            target,
+            config.model_context_tokens,
+        )
+        return False
+
+    items = list(deps.window)
+    groups = _window_turn_groups(items)
+    if len(groups) <= 1:
+        logger.warning(
+            "[CONTEXT BUDGET] over trigger estimated=%d but no complete old turn is compactable",
+            estimate,
+        )
+        return False
+
+    removed_groups: list[list[dict]] = []
+    removed_tokens = 0
+    for group in groups[:-1]:
+        removed_groups.append(group)
+        removed_tokens += sum(
+            _estimate_tokens(_with_context_timestamp(str(item.get("content", "")), item.get("created_at")))
+            for item in group
+        )
+        if estimate - removed_tokens <= target:
+            break
+
+    to_archive = [item for group in removed_groups for item in group]
+    kept = [item for group in groups[len(removed_groups):] for item in group]
+    record_ids = [int(item["record_id"]) for item in to_archive if item.get("record_id") is not None]
+    covered_through = (
+        max(record_ids)
+        if record_ids and deps.window.coverage_trusted
+        else None
+    )
+    combined = "\n".join(
+        f"{_with_context_timestamp(str(item.get('content', '')), item.get('created_at'))}\n"
+        f"role: {item.get('role', 'unknown')}"
+        for item in to_archive
+    )
+    saved = await _generate_and_save_summary(
+        deps,
+        "mixed",
+        combined,
+        deps.config.summarizer,
+        kind="compaction",
+        covered_through_message_id=covered_through,
+    )
+    if not saved:
+        logger.error("[CONTEXT BUDGET] compaction summary failed; window left unchanged")
+        return False
+
+    deps.window.replace(kept)
+    logger.warning(
+        "[CONTEXT BUDGET] compacted items=%d->%d estimated=%d target=%d covered_through=%s",
+        len(items),
+        len(kept),
+        estimate,
+        target,
+        covered_through,
+    )
+    return True
 
 
 async def _recycle_window_if_needed(deps: PipelineDeps) -> None:
-    config = deps.config.context
-    total = sum(_estimate_msg_tokens(m) for m in deps.window.get_context())
-    if total <= config.window_max_tokens:
-        return
-
-    items = list(deps.window)
-    accumulated = 0
-    cutoff_idx = 0
-    for i, msg in enumerate(items):
-        accumulated += _estimate_msg_tokens(msg)
-        if (total - accumulated) <= config.window_min_tokens:
-            cutoff_idx = i + 1
-            break
-
-    if cutoff_idx == 0:
-        cutoff_idx = len(items) // 2
-
-    to_archive = items[:cutoff_idx]
-    kept = items[cutoff_idx:]
-
-    combined = "\n".join(
-        f"[{m.get('role', 'unknown')}]: {str(m.get('content', ''))[:500]}"
-        for m in to_archive
-    )
-    if combined.strip():
-        summarizer_cfg = deps.config.summarizer
-        await _generate_and_save_summary(deps, "mixed", combined, summarizer_cfg)
-
-    deps.window.replace(kept)
-    logger.warning("[RECYCLE] window %d→%d items", len(items), len(kept))
+    messages = await _build_context("", deps)
+    await _compact_context_for_request("", deps, messages)
 
 
 def _split_visible_content(content: str) -> list[str]:
-    parts: list[str] = []
-    buffer: list[str] = []
-    i = 0
-    while i < len(content):
-        if content.startswith("\\|", i):
-            buffer.append("|")
-            i += 2
-            continue
-        char = content[i]
-        if char == "|":
-            part = "".join(buffer).strip()
-            if part:
-                parts.append(part)
-            buffer = []
-        else:
-            buffer.append(char)
-        i += 1
-
-    part = "".join(buffer).strip()
-    if part:
-        parts.append(part)
-    return parts
+    return [content] if content.strip() else []
 
 
 async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
@@ -558,11 +758,31 @@ async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
         logger.info("[PIPE] silent mode suppressed visible content parts=%d chars=%d", len(parts), len(content))
         return parts
 
+    sent_parts: list[str] = []
     for part in parts:
-        await deps.sender.send(deps.peer, part)
+        result = await deps.sender.send(deps.peer, part)
+        if not send_succeeded(result):
+            error = f"[Error: NapCat send failed: {send_failure_message(result)}]"
+            logger.error("[PIPE] visible content send failed: %s", error)
+            await _record_action(
+                deps,
+                tool_name="assistant_content",
+                call_id="",
+                arguments={"chars": len(part)},
+                result=error,
+            )
+            continue
         log_send(deps, "content", part)
-    logger.info("[PIPE] sent visible content parts=%d chars=%d", len(parts), len(content))
-    return parts
+        await _record_action(
+            deps,
+            tool_name="assistant_content",
+            call_id="",
+            arguments={"chars": len(part)},
+            result=json.dumps(result, ensure_ascii=False),
+        )
+        sent_parts.append(part)
+    logger.info("[PIPE] sent visible content parts=%d chars=%d", len(sent_parts), len(content))
+    return sent_parts
 
 
 async def pipeline(
@@ -582,56 +802,76 @@ async def pipeline(
         await _save_msg(deps, message, MessageType.MEDIA.value, None)
         return
 
-    if msg_type == MessageType.IMAGE:
-        _report_state(deps, "IMAGE")
-        logger.info("[PIPE] branch=image unsupported image_file=%s image_url=%s", bool(image_file), bool(image_url))
-        image_description: str | None = None
-        if deps.config.vision.enabled:
-            image_description = await describe_image(image_file=image_file, image_url=image_url, config=deps.config)
-            if image_description.startswith("[Error:"):
-                bot_reply = f"收到图片，但图像识别失败：{image_description}"
-            else:
-                bot_reply = f"收到图片：{image_description}"
-        else:
-            bot_reply = "收到图片，暂不支持图片识别"
-        if not deps.silent:
-            await deps.sender.send(deps.peer, bot_reply)
-        if deps.remember_input:
-            deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
-            deps.window.add(user_id=str(deps.peer.peer_uid), message=bot_reply, is_bot=True)
-            today = date.today().isoformat()
-            await deps.store.save(StoredMessage(
-                date=today,
-                group_key=deps.group_key,
-                category=MessageType.IMAGE.value,
-                content=json.dumps({
-                    "user": message,
-                    "bot": bot_reply,
-                    "status": "responded",
-                    "source": deps.source,
-                    "image_file": image_file,
-                    "image_url": image_url,
-                    "image_description": image_description,
-                }, ensure_ascii=False),
-            ))
-        deps.session.touch()
-        return
-        await deps.sender.send(deps.peer, "收到图片，暂不支持图片识别")
-        deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
-        deps.window.add(user_id=str(deps.peer.peer_uid), message="[图片]", is_bot=True)
-        deps.session.touch()
-        await _save_msg(deps, message, MessageType.IMAGE.value,
-                        f"image_file={image_file}, image_url={image_url}" if image_file or image_url else None)
-        return
-
-    _pending_writes: list[tuple[str, dict, Callable[[], Awaitable[None]]]] = []
+    _pending_writes: list[tuple[str, str, dict, Callable[[], Awaitable[str]]]] = []
     bot_replies: list[str] = []
     responded = False
     final_status = "received"
     inbound_msg_id: int | None = None
+    input_metadata: dict | None = None
+    if msg_type == MessageType.IMAGE:
+        _report_state(deps, "IMAGE_DESCRIBE")
+        logger.info("[PIPE] branch=image describe image_file=%s image_url=%s", bool(image_file), bool(image_url))
+        caption = message.strip()
+        input_metadata = {
+            "kind": "image",
+            "caption": caption,
+            "image_file": image_file,
+            "image_url": image_url,
+            "image_description": None,
+        }
+        inbound_msg_id = await _save_inbound_msg(
+            deps,
+            message,
+            msg_type.value,
+            input_metadata,
+        )
+        try:
+            if deps.config.vision.enabled:
+                image_description = await describe_image(
+                    image_file=image_file,
+                    image_url=image_url,
+                    config=deps.config,
+                )
+            else:
+                image_description = "Vision provider is not enabled; visual contents are unavailable."
+        except asyncio.CancelledError:
+            await _update_saved_msg(
+                deps,
+                inbound_msg_id,
+                message,
+                msg_type.value,
+                response=None,
+                status="cancelled",
+                input_metadata=input_metadata,
+            )
+            raise
+        except Exception as exc:
+            logger.exception("[PIPE] vision provider raised unexpectedly")
+            image_description = f"[Error: vision provider failed: {exc}]"
+        input_metadata["image_description"] = image_description
+        lines = ["The user sent an image."]
+        if caption:
+            lines.append(f"Caption: {caption}")
+        lines.append(f"Vision description: {image_description}")
+        if image_file:
+            lines.append(f"Image file reference: {image_file}")
+        if image_url:
+            lines.append(f"Image URL reference: {image_url}")
+        message = "\n".join(lines)
 
     try:
-        inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value)
+        if inbound_msg_id is None:
+            inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
+        else:
+            await _update_saved_msg(
+                deps,
+                inbound_msg_id,
+                message,
+                msg_type.value,
+                response=None,
+                status="received",
+                input_metadata=input_metadata,
+            )
         deps.session.mark_pending()
 
         is_cold = deps.session.is_cold(deps.config.session.timeout)
@@ -643,6 +883,8 @@ async def pipeline(
 
         _report_state(deps, "CTX_build")
         messages = await _build_context(message, deps)
+        if await _compact_context_for_request(message, deps, messages):
+            messages = await _build_context(message, deps)
         _log_context_size(messages, deps)
         logger.info("[PIPE] context built msgs=%d", len(messages))
         send_count = 0
@@ -665,6 +907,12 @@ async def pipeline(
                 result.input_tokens,
                 result.output_tokens,
             )
+            if result.input_tokens:
+                logger.info(
+                    "[CONTEXT BUDGET] provider_prompt_tokens=%d estimated_request_tokens=%d",
+                    result.input_tokens,
+                    _estimate_request_tokens(messages, deps.registry.to_openai_schema()),
+                )
 
             if deps.token_counter is not None:
                 deps.token_counter["input"] += result.input_tokens
@@ -694,12 +942,15 @@ async def pipeline(
                         msg_type.value,
                         response="\n".join(visible_parts),
                         status=final_status,
+                        input_metadata=input_metadata,
                     )
+                elif not deps.silent:
+                    final_status = "error"
                 break
 
             send_calls = [tc for tc in result.tool_calls if tc["name"] == "send"]
             other_calls = [tc for tc in result.tool_calls if tc["name"] != "send"]
-            no_reply_called = any(tc["name"] == NO_REPLY_TOOL for tc in other_calls)
+            no_reply_called = any(tc["name"] == NO_REPLY_TOOL for tc in result.tool_calls)
             logger.info(
                 "[PIPE] branch=tool_calls send=%d no_reply=%d other=%d",
                 len(send_calls),
@@ -710,83 +961,87 @@ async def pipeline(
             tc_results: dict[str, str] = {}
             _report_state(deps, f"LOOP_{step + 1}:Exec_Tools")
 
-            for tc in send_calls:
-                if send_count >= MAX_SENDS_PER_LOOP:
-                    reply_result = f"[Error: send limit reached: {MAX_SENDS_PER_LOOP}]"
-                    logger.warning("[PIPE] send limit reached max=%d", MAX_SENDS_PER_LOOP)
-                    tc_results[tc["id"]] = reply_result
-                    log_tool_call(deps, "send", tc["arguments"], reply_result)
-                    continue
-                try:
-                    if deps.silent:
-                        reply_result = "[OK] send suppressed by silent pipeline"
+            for tc in result.tool_calls:
+                logger.info("[PIPE] executing tool name=%s queued=%s", tc["name"], tc["name"] in WRITE_TOOLS)
+                tool_name = tc["name"]
+                tool_args = tc["arguments"]
+                call_id = tc["id"]
+                staged = False
+                artifact = None
+
+                if tool_name == last_tool_name and consecutive_fails >= 3:
+                    tr = (
+                        f"[Error: tool '{tool_name}' stopped after three consecutive failures; "
+                        "report the failure instead of retrying]"
+                    )
+                elif tool_name == "send":
+                    if send_count >= MAX_SENDS_PER_LOOP:
+                        tr = f"[Error: send limit reached: {MAX_SENDS_PER_LOOP}]"
+                    elif deps.silent:
+                        tr = "[OK] send suppressed by silent pipeline"
                     else:
-                        reply_result = await send_tool(
-                            tc["arguments"],
-                            sender=deps.sender,
-                            peer=deps.peer,
-                            config=deps.config,
-                        )
-                    log_send(deps, "tool", tc["arguments"])
-                    log_tool_call(deps, "send", tc["arguments"], reply_result)
-                    if not str(reply_result).startswith("[Error:"):
-                        text_reply = str(tc["arguments"].get("text", ""))
+                        try:
+                            tr = await send_tool(
+                                tool_args,
+                                sender=deps.sender,
+                                peer=deps.peer,
+                                config=deps.config,
+                            )
+                        except Exception as e:
+                            logger.exception("send_tool failed")
+                            tr = f"[Error: {e}]"
+                    send_count += 1
+                    if not str(tr).startswith("[Error:"):
+                        text_reply = str(tool_args.get("text", ""))
                         if text_reply:
                             bot_replies.append(text_reply)
-                        artifact_summaries = await _save_send_artifacts(deps, str(reply_result))
-                        bot_replies.extend(artifact_summaries)
+                        artifact = _extract_send_artifact(str(tr))
                         responded = True
                         final_status = "responded"
-                except Exception as e:
-                    logger.exception("send_tool failed")
-                    reply_result = f"[Error: {e}]"
-                tc_results[tc["id"]] = str(reply_result)
-                send_count += 1
-
-            for tc in other_calls:
-                logger.info("[PIPE] executing tool name=%s queued=%s", tc["name"], tc["name"] in WRITE_TOOLS)
-                if tc["name"] == last_tool_name:
-                    consecutive_fails += 1
-                else:
-                    consecutive_fails = 0
-                    last_tool_name = tc["name"]
-
-                if consecutive_fails >= 5:
-                    msg = (
-                        f"[Error: tool '{tc['name']}' called {consecutive_fails} times "
-                        f"consecutively without success, please report failure to user]"
-                    )
-                    tc_results[tc["id"]] = msg
-                    log_tool_call(deps, tc["name"], tc["arguments"], msg)
-                    continue
-                if tc["name"] in WRITE_TOOLS and not deps.remember_input:
+                    log_send(deps, "tool", tool_args)
+                elif tool_name in WRITE_TOOLS and not deps.remember_input:
                     tr = "[OK] write tool suppressed by non-remembering pipeline]"
-                    tc_results[tc["id"]] = tr
-                    log_tool_call(deps, tc["name"], tc["arguments"], tr)
-                elif tc["name"] in WRITE_TOOLS:
-                    tool_name = tc["name"]
-                    tool_args = tc["arguments"]
+                elif tool_name in WRITE_TOOLS:
                     _pending_writes.append((
-                        tool_name, tool_args,
+                        tool_name, call_id, tool_args,
                         lambda tn=tool_name, ta=tool_args: deps.registry.execute(
                             tn, ta, store=deps.store, group_key=deps.group_key,
                             config=deps.config, sender=deps.sender, peer=deps.peer,
                         ),
                     ))
-                    tc_results[tc["id"]] = "[OK] queued"
-                    log_tool_call(deps, tool_name, tool_args, "[OK] queued", queued=True)
+                    tr = "[OK] staged for atomic commit during pipeline cleanup"
+                    staged = True
                 else:
                     try:
                         tr = await deps.registry.execute(
-                            tc["name"], tc["arguments"],
+                            tool_name, tool_args,
                             store=deps.store, group_key=deps.group_key,
                             config=deps.config, sender=deps.sender, peer=deps.peer,
                         )
                     except Exception as e:
-                        logger.exception("Tool %s failed", tc["name"])
+                        logger.exception("Tool %s failed", tool_name)
                         tr = f"[Error: {e}]"
-                    tc_results[tc["id"]] = tr
-                    log_tool_call(deps, tc["name"], tc["arguments"], tr)
+
+                tr = str(tr)
+                tc_results[call_id] = tr
+                is_failure = tr.startswith("[Error:")
+                if tool_name != last_tool_name:
+                    last_tool_name = tool_name
+                    consecutive_fails = 1 if is_failure else 0
+                elif is_failure:
+                    consecutive_fails += 1
+                else:
+                    consecutive_fails = 0
+                log_tool_call(deps, tool_name, tool_args, tr, queued=staged)
+                if not staged:
+                    await _record_action(
+                        deps,
+                        tool_name=tool_name,
+                        call_id=call_id,
+                        arguments=tool_args,
+                        result=tr,
+                        artifact=artifact,
+                    )
 
             logger.info("[PIPE] appended %d tool results to context", len(result.tool_calls))
             assistant_msg: dict[str, Any] = {
@@ -825,10 +1080,19 @@ async def pipeline(
             _log_context_size(messages, deps)
 
         if responded and deps.remember_input:
-            deps.window.add(user_id=str(deps.peer.peer_uid), message=message)
+            deps.window.add(
+                user_id=str(deps.peer.peer_uid),
+                message=message,
+                record_id=inbound_msg_id,
+            )
             combined_bot_reply = "\n".join(bot_replies)
             if combined_bot_reply:
-                deps.window.add(user_id=str(deps.peer.peer_uid), message=combined_bot_reply, is_bot=True)
+                deps.window.add(
+                    user_id=str(deps.peer.peer_uid),
+                    message=combined_bot_reply,
+                    is_bot=True,
+                    record_id=inbound_msg_id,
+                )
             logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
         elif responded:
             logger.info("[PIPE] response produced; window unchanged for source=%s", deps.source)
@@ -843,12 +1107,14 @@ async def pipeline(
             msg_type.value,
             response=combined_response,
             status=final_status,
+            input_metadata=input_metadata,
         )
 
         _report_state(deps, "DONE")
 
     except asyncio.CancelledError:
         logger.info("[PIPE] cancelled for %s", deps.peer.peer_uid)
+        final_status = "cancelled"
         if inbound_msg_id is None:
             inbound_msg_id = await _recover_inbound_msg_id(deps, message, msg_type.value)
         await _update_saved_msg(
@@ -858,10 +1124,12 @@ async def pipeline(
             msg_type.value,
             response=None,
             status="cancelled",
+            input_metadata=input_metadata,
         )
         raise
     except Exception as e:
         logger.exception("[PIPE] error for %s", deps.peer.peer_uid)
+        final_status = "error"
         await _update_saved_msg(
             deps,
             inbound_msg_id,
@@ -869,6 +1137,7 @@ async def pipeline(
             msg_type.value,
             response=None,
             status="error",
+            input_metadata=input_metadata,
         )
         if not responded:
             await deps.sender.send(deps.peer, f"模型暂时不可用: {e}")
@@ -876,21 +1145,33 @@ async def pipeline(
         deps.session.clear_pending()
         logger.info("[PIPE] cleanup start pending_writes=%d", len(_pending_writes))
 
-        for tool_name, tool_args, write_fn in _pending_writes:
-            try:
-                result = await write_fn()
-                log_tool_call(deps, tool_name, tool_args, str(result), queued=False)
-            except Exception:
-                logger.exception("Post-write failed for %s", tool_name)
+        async def _flush_pending_writes() -> None:
+            for tool_name, call_id, tool_args, write_fn in _pending_writes:
+                try:
+                    result = str(await write_fn())
+                    log_tool_call(deps, tool_name, tool_args, result, queued=False)
+                except Exception as exc:
+                    logger.exception("Post-write failed for %s", tool_name)
+                    result = f"[Error: {exc}]"
+                await _record_action(
+                    deps,
+                    tool_name=tool_name,
+                    call_id=call_id,
+                    arguments=tool_args,
+                    result=result,
+                )
 
-        if deps.remember_input:
+        flush_task = asyncio.create_task(_flush_pending_writes())
+        try:
+            await asyncio.shield(flush_task)
+        except asyncio.CancelledError:
+            await flush_task
+            raise
+
+        if deps.remember_input and final_status == "responded":
             try:
                 await _archive_if_needed(deps, message, bot_replies)
             except Exception:
                 logger.exception("Archive failed")
 
-            try:
-                await _recycle_window_if_needed(deps)
-            except Exception:
-                logger.exception("Window recycle failed")
         logger.info("[PIPE] cleanup complete")

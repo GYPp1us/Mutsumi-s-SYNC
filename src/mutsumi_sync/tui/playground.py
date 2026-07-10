@@ -156,9 +156,9 @@ async def run_scenario(scenario_path: str) -> None:
     print(f"\n{_BOLD}{_CYAN}=========[SCENARIO] {scenario_name}========={_RESET}\n")
 
     config = Config.load("config.yaml")
-    original_prompt = config.system_prompt
+    original_prompt = config.prompts.persona
     if scenario.get("prompt"):
-        config.system_prompt = scenario["prompt"]
+        config.prompts.persona = scenario["prompt"]
 
     store = MessageStore()
     await store.initialize()
@@ -194,7 +194,7 @@ async def run_scenario(scenario_path: str) -> None:
         except Exception:
             logger.exception("Step %d failed", i + 1)
 
-    config.system_prompt = original_prompt
+    config.prompts.persona = original_prompt
 
     print()
     print(f"{_BOLD}{_CYAN}=========[SCENARIO COMPLETE] {scenario_name}========={_RESET}")
