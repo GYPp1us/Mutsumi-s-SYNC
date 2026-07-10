@@ -9,13 +9,21 @@ class MessageWindow:
         self.max_size = max_size
         self._window: deque[dict] = deque()
 
-    def add(self, user_id: str, message: str, is_bot: bool = False, created_at: float | None = None) -> None:
+    def add(
+        self,
+        user_id: str,
+        message: str,
+        is_bot: bool = False,
+        created_at: float | None = None,
+        record_id: int | None = None,
+    ) -> None:
         role = "assistant" if is_bot else "user"
         self._window.append({
             "role": role,
             "content": message,
             "user_id": user_id,
             "created_at": created_at if created_at is not None else time.time(),
+            "record_id": record_id,
         })
 
     def replace(self, items: list[dict]) -> None:
@@ -28,6 +36,7 @@ class MessageWindow:
                 "role": m["role"],
                 "content": m["content"],
                 "created_at": m.get("created_at"),
+                "record_id": m.get("record_id"),
             }
             for m in self._window
         ]
