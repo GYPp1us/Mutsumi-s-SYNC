@@ -61,6 +61,25 @@ class TestConfigManager:
         result = await config_manager({"action": "reload"}, config=c)
         assert "Error" in result
 
+    async def test_reload_preserves_deep_model_types(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "render:\n"
+            "  markdown_image:\n"
+            "    enabled: true\n"
+            "    node_path: custom-node\n",
+            encoding="utf-8",
+        )
+        c = Config.load(str(path))
+        c.render.markdown_image.enabled = False
+
+        result = await config_manager({"action": "reload"}, config=c)
+
+        assert result.startswith("[OK]")
+        assert c.render.markdown_image.enabled is True
+        assert c.render.markdown_image.node_path == "custom-node"
+        assert c.render.markdown_image.__class__.__name__ == "MarkdownImageRenderConfig"
+
     async def test_unknown_action(self):
         c = self.make_config()
         result = await config_manager({"action": "delete"}, config=c)
