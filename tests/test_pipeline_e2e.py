@@ -939,6 +939,39 @@ class TestPipelineE2EDebounce:
         assert "task #7 registered" in context[1]["content"]
         await store.close()
 
+    async def test_action_ledger_redacts_sensitive_config_result(self, monkeypatch):
+        config = make_config()
+        config.model.api_key = "sk-super-secret-value"
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        calls = iter([
+            LLMResult(tool_calls=[{
+                "id": "secret-read",
+                "name": "config_manager",
+                "arguments": {"action": "get", "key": "model.api_key"},
+            }]),
+            LLMResult(content="done"),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            return next(calls)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=build_registry(config, store), sender=CaptureSender(),
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="redaction"),
+            group_key="private:redaction",
+        )
+
+        await pipeline("read config", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        actions = await store.get_recent_actions("private:redaction")
+        config_action = next(item for item in actions if item["tool_name"] == "config_manager")
+        assert config_action["result"] == "[redacted sensitive config result]"
+        assert "sk-super-secret-value" not in json.dumps(actions)
+        await store.close()
+
     async def test_send_only_tool_round_continues_to_next_llm_call(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()
