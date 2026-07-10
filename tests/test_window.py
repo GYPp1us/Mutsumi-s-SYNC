@@ -46,3 +46,11 @@ class TestMessageWindow:
         w.add(user_id="bot", message="reply", is_bot=True)
         ctx = w.get_context()
         assert ctx[0]["role"] == "assistant"
+
+    def test_record_id_is_preserved_for_complete_turn_compaction(self):
+        w = MessageWindow()
+        w.add(user_id="u", message="question", record_id=17)
+        w.add(user_id="u", message="answer", is_bot=True, record_id=17)
+
+        assert [item["record_id"] for item in w.get_context()] == [17, 17]
+        assert [item["record_id"] for item in w] == [17, 17]
