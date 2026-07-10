@@ -95,3 +95,27 @@ class TestConfigManager:
             "  ws_url: ws://example\n"
         )
         assert yaml.safe_load(saved)["model"]["temperature"] == 0.2
+
+    async def test_set_updates_arbitrary_depth_without_reordering(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        original = (
+            "# renderer settings\n"
+            "render:\n"
+            "  markdown_image:\n"
+            "    enabled: false  # keep inline comment\n"
+            "    node_path: node\n"
+            "model:\n"
+            "  model: deepseek-chat\n"
+        )
+        path.write_text(original, encoding="utf-8")
+        c = Config.load(str(path))
+
+        result = await config_manager(
+            {"action": "set", "key": "render.markdown_image.enabled", "value": "true"},
+            config=c,
+        )
+
+        assert result.startswith("[OK]")
+        saved = path.read_text(encoding="utf-8")
+        assert saved == original.replace("enabled: false", "enabled: true")
+        assert yaml.safe_load(saved)["render"]["markdown_image"]["enabled"] is True

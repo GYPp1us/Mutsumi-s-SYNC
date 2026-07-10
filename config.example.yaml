@@ -12,6 +12,8 @@ model:
   provider: deepseek
   temperature: 0.5
   reasoning_effort: max
+prompts:
+  persona: ''
 vision:
   enabled: false
   provider: openai-compatible

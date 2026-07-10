@@ -32,6 +32,7 @@ class TestConfig:
         assert c.logging.stream_store.path == "data/logs/mutsumi.ndjson"
         assert c.logging.text_file.enabled is True
         assert c.logging.text_file.path == "data/logs/mutsumi.log"
+        assert c.prompts.persona == ""
         assert c.dirty is False
 
     def test_load_missing_file(self):
@@ -87,6 +88,24 @@ class TestConfig:
         c = Config()
         c.set("model.temperature", "0.3")
         assert c.model.temperature == 0.3
+
+    def test_set_type_coercion_bool_is_strict(self):
+        c = Config()
+
+        assert c.set("render.markdown_image.enabled", "true").startswith("[OK]")
+        assert c.render.markdown_image.enabled is True
+        assert c.set("render.markdown_image.enabled", "false").startswith("[OK]")
+        assert c.render.markdown_image.enabled is False
+        assert c.set("render.markdown_image.enabled", "not-a-bool").startswith("[Error:")
+        assert c.render.markdown_image.enabled is False
+
+    def test_legacy_system_prompt_loads_as_persona(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("system_prompt: legacy persona\n", encoding="utf-8")
+
+        c = Config.load(str(path))
+
+        assert c.prompts.persona == "legacy persona"
 
     def test_get_value(self):
         c = Config()
