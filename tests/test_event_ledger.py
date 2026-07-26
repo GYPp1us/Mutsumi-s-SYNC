@@ -110,3 +110,21 @@ async def test_projection_replaces_covered_global_events_with_episode(tmp_path):
         assert "public fact two" not in context
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_media_ledger_deduplicates_binary_and_keeps_description(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        first = await store.register_media(b"same image", kind="image", ext="png")
+        second = await store.register_media(b"same image", kind="image", ext="png")
+        assert first.media_id == second.media_id
+        assert first.sha256 == second.sha256
+        assert len(await store.list_media(kind="image")) == 1
+        await store.update_media_description(first.media_id, "A small blue square.", "blue square")
+        saved = await store.get_media(first.media_id)
+        assert saved is not None
+        assert saved.short_description == "blue square"
+    finally:
+        await store.close()
