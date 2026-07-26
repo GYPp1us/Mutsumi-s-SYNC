@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
@@ -19,6 +20,99 @@ class MessageCategory(str, Enum):
     AUDIO = "audio"
     VIDEO = "video"
     MIXED = "mixed"
+
+
+class EventType(str, Enum):
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    MEDIA = "media"
+    STATE_CHANGE = "state_change"
+
+
+@dataclass
+class EventRecord:
+    """Immutable fact in the global event ledger."""
+
+    conversation_id: str
+    actor_id: str
+    actor_kind: str
+    event_type: str
+    content: str = ""
+    event_id: str | None = None
+    actor_name: str = ""
+    audience: str = "bot:self"
+    visibility: str = "private"
+    media_ids: list[str] | None = None
+    pipeline_id: str = ""
+    status: str = "finalized"
+    created_at: float | None = None
+    sequence: int | None = None
+
+    def to_insert_values(self) -> tuple:
+        return (
+            self.event_id or str(uuid.uuid4()),
+            self.conversation_id,
+            self.actor_id,
+            self.actor_kind,
+            self.actor_name,
+            self.event_type,
+            self.content,
+            json.dumps(self.media_ids or [], ensure_ascii=False),
+            self.pipeline_id,
+            self.visibility,
+            self.audience,
+            self.status,
+        )
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "EventRecord":
+        return cls(
+            event_id=row["event_id"],
+            sequence=row["sequence"],
+            conversation_id=row["conversation_id"],
+            actor_id=row["actor_id"],
+            actor_kind=row["actor_kind"],
+            actor_name=row["actor_name"],
+            event_type=row["event_type"],
+            content=row["content"],
+            media_ids=json.loads(row["media_ids_json"] or "[]"),
+            pipeline_id=row["pipeline_id"],
+            visibility=row["visibility"],
+            audience=row["audience"],
+            status=row["status"],
+            created_at=row["created_at"],
+        )
+
+
+@dataclass
+class EpisodeRecord:
+    conversation_id: str
+    first_sequence: int
+    last_sequence: int
+    narrative: str
+    episode_id: str | None = None
+    status: str = "ready"
+    participants_json: str = "[]"
+    open_loops: str = ""
+    media_ids_json: str = "[]"
+    created_at: float | None = None
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "EpisodeRecord":
+        return cls(
+            episode_id=row["episode_id"],
+            conversation_id=row["conversation_id"],
+            first_sequence=row["first_sequence"],
+            last_sequence=row["last_sequence"],
+            narrative=row["narrative"],
+            status=row["status"],
+            participants_json=row["participants_json"],
+            open_loops=row["open_loops"],
+            media_ids_json=row["media_ids_json"],
+            created_at=row["created_at"],
+        )
 
 
 @dataclass
@@ -118,6 +212,47 @@ class MessageStore:
         CREATE INDEX IF NOT EXISTS idx_actions_group_time
             ON actions(group_key, id);
 
+        CREATE TABLE IF NOT EXISTS events (
+            sequence         INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id         TEXT NOT NULL UNIQUE,
+            conversation_id  TEXT NOT NULL,
+            actor_id         TEXT NOT NULL,
+            actor_kind       TEXT NOT NULL,
+            actor_name       TEXT NOT NULL DEFAULT '',
+            event_type       TEXT NOT NULL,
+            content          TEXT NOT NULL DEFAULT '',
+            media_ids_json   TEXT NOT NULL DEFAULT '[]',
+            pipeline_id      TEXT NOT NULL DEFAULT '',
+            visibility       TEXT NOT NULL DEFAULT 'private',
+            audience         TEXT NOT NULL DEFAULT 'bot:self',
+            status           TEXT NOT NULL DEFAULT 'finalized',
+            created_at       REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_events_conversation
+            ON events(conversation_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_events_actor
+            ON events(actor_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_events_status
+            ON events(status, sequence);
+
+        CREATE TABLE IF NOT EXISTS episodes (
+            episode_id       TEXT PRIMARY KEY,
+            conversation_id  TEXT NOT NULL,
+            first_sequence   INTEGER NOT NULL,
+            last_sequence    INTEGER NOT NULL,
+            participants_json TEXT NOT NULL DEFAULT '[]',
+            narrative        TEXT NOT NULL,
+            open_loops       TEXT NOT NULL DEFAULT '',
+            media_ids_json   TEXT NOT NULL DEFAULT '[]',
+            status           TEXT NOT NULL DEFAULT 'ready',
+            created_at       REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+            UNIQUE(conversation_id, first_sequence, last_sequence)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_episodes_conversation
+            ON episodes(conversation_id, first_sequence);
+
         CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
             content, group_key, category,
             content=messages
@@ -194,6 +329,92 @@ class MessageStore:
         )
         await self._conn.commit()
         return cursor.lastrowid
+
+    async def append_event(self, event: EventRecord) -> EventRecord:
+        """Append one immutable fact and return it with its ledger sequence."""
+        self._ensure_initialized()
+        values = event.to_insert_values()
+        cursor = await self._conn.execute(
+            "INSERT INTO events (event_id, conversation_id, actor_id, actor_kind, "
+            "actor_name, event_type, content, media_ids_json, pipeline_id, "
+            "visibility, audience, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            values,
+        )
+        await self._conn.commit()
+        row_cursor = await self._conn.execute(
+            "SELECT * FROM events WHERE sequence = ?", (cursor.lastrowid,)
+        )
+        row = await row_cursor.fetchone()
+        if row is None:
+            raise RuntimeError("event insert succeeded but the row cannot be read")
+        return EventRecord.from_row(row)
+
+    async def update_event_status(self, event_id: str, status: str, content: str | None = None) -> None:
+        """Update lifecycle state without changing an event's identity."""
+        self._ensure_initialized()
+        if content is None:
+            await self._conn.execute(
+                "UPDATE events SET status = ? WHERE event_id = ?", (status, event_id)
+            )
+        else:
+            await self._conn.execute(
+                "UPDATE events SET status = ?, content = ? WHERE event_id = ?",
+                (status, content, event_id),
+            )
+        await self._conn.commit()
+
+    async def get_events(
+        self,
+        *,
+        conversation_id: str | None = None,
+        after_sequence: int = 0,
+        limit: int = 200,
+        finalized_only: bool = True,
+    ) -> list[EventRecord]:
+        self._ensure_initialized()
+        query = "SELECT * FROM events WHERE sequence > ?"
+        params: list[Any] = [after_sequence]
+        if conversation_id is not None:
+            query += " AND conversation_id = ?"
+            params.append(conversation_id)
+        if finalized_only:
+            query += " AND status = 'finalized'"
+        query += " ORDER BY sequence ASC LIMIT ?"
+        params.append(limit)
+        cursor = await self._conn.execute(query, params)
+        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def get_events_by_sequence(self, first_sequence: int, last_sequence: int) -> list[EventRecord]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM events WHERE sequence BETWEEN ? AND ? ORDER BY sequence ASC",
+            (first_sequence, last_sequence),
+        )
+        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def add_episode(self, episode: EpisodeRecord) -> str:
+        self._ensure_initialized()
+        episode_id = episode.episode_id or f"ep_{uuid.uuid4().hex}"
+        await self._conn.execute(
+            "INSERT INTO episodes (episode_id, conversation_id, first_sequence, last_sequence, "
+            "participants_json, narrative, open_loops, media_ids_json, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (episode_id, episode.conversation_id, episode.first_sequence, episode.last_sequence,
+             episode.participants_json, episode.narrative, episode.open_loops,
+             episode.media_ids_json, episode.status),
+        )
+        await self._conn.commit()
+        return episode_id
+
+    async def get_episodes(self, conversation_id: str, limit: int = 20) -> list[EpisodeRecord]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM episodes WHERE conversation_id = ? ORDER BY first_sequence DESC LIMIT ?",
+            (conversation_id, limit),
+        )
+        rows = list(await cursor.fetchall())
+        rows.reverse()
+        return [EpisodeRecord.from_row(row) for row in rows]
 
     async def update_message_content(self, msg_id: int, content: str) -> None:
         self._ensure_initialized()
