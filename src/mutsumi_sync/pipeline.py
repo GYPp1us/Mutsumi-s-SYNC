@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
 import httpx
@@ -494,6 +495,26 @@ def _extract_send_artifact(reply_result: str) -> dict | None:
     return None
 
 
+async def _register_sent_media(deps: PipelineDeps, tool_args: dict, artifact: dict | None) -> list[str]:
+    media_ids: list[str] = []
+    file_path = str((artifact or {}).get("file") or tool_args.get("image") or "").strip()
+    image_url = str(tool_args.get("image_url") or "").strip()
+    try:
+        if file_path and Path(file_path).is_file():
+            media = await deps.store.register_media(
+                Path(file_path).read_bytes(),
+                kind="image",
+                ext=Path(file_path).suffix,
+            )
+            media_ids.append(media.media_id)
+        elif image_url:
+            media = await deps.store.register_external_media(image_url, kind="image")
+            media_ids.append(media.media_id)
+    except Exception:
+        logger.exception("[MEDIA] failed to register outbound media")
+    return media_ids
+
+
 def _sanitize_action_arguments(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
@@ -865,6 +886,7 @@ async def pipeline(
     inbound_msg_id: int | None = None
     inbound_event_id: str | None = None
     input_metadata: dict | None = None
+    input_media_id: str | None = None
     if msg_type == MessageType.IMAGE:
         _report_state(deps, "IMAGE_DESCRIBE")
         logger.info("[PIPE] branch=image describe image_file=%s image_url=%s", bool(image_file), bool(image_url))
@@ -875,6 +897,7 @@ async def pipeline(
             "image_file": image_file,
             "image_url": image_url,
             "image_description": None,
+            "media_id": None,
         }
         inbound_msg_id = await _save_inbound_msg(
             deps,
@@ -882,6 +905,18 @@ async def pipeline(
             msg_type.value,
             input_metadata,
         )
+        if image_file:
+            try:
+                media = await deps.store.register_media(
+                    Path(image_file).read_bytes(),
+                    kind="image",
+                    ext=Path(image_file).suffix,
+                )
+                input_media_id = media.media_id
+                input_metadata["media_id"] = media.media_id
+                logger.info("[MEDIA] inbound registered media_id=%s", media.media_id)
+            except Exception:
+                logger.exception("[MEDIA] failed to register inbound file")
         inbound_event_id = await _append_event(
             deps,
             event_type=EventType.INBOUND.value,
@@ -892,6 +927,7 @@ async def pipeline(
             visibility=_conversation_visibility(deps),
             audience="bot:self",
             status="received",
+            media_ids=[input_media_id] if input_media_id else None,
         )
         try:
             if deps.config.vision.enabled:
@@ -921,10 +957,8 @@ async def pipeline(
         if caption:
             lines.append(f"Caption: {caption}")
         lines.append(f"Vision description: {image_description}")
-        if image_file:
-            lines.append(f"Image file reference: {image_file}")
-        if image_url:
-            lines.append(f"Image URL reference: {image_url}")
+        if input_media_id:
+            lines.append(f"Media ledger reference: {input_media_id}")
         message = "\n".join(lines)
 
     try:
@@ -1077,13 +1111,14 @@ async def pipeline(
                         artifact = _extract_send_artifact(str(tr))
                         responded = True
                         final_status = "responded"
+                        sent_media_ids = await _register_sent_media(deps, tool_args, artifact)
                         await _append_event(
                             deps,
                             event_type=EventType.OUTBOUND.value,
                             content=str(tool_args.get("text", "")) or "[special media segment]",
                             visibility=_conversation_visibility(deps),
                             audience=deps.conversation_id or deps.group_key,
-                            media_ids=[str(artifact.get("message_id"))] if artifact and artifact.get("message_id") else None,
+                            media_ids=sent_media_ids or None,
                         )
                     log_send(deps, "tool", tool_args)
                 elif tool_name in WRITE_TOOLS and not deps.remember_input:

@@ -19,6 +19,7 @@ from .tools.priority_override import priority_override_tool, PRIORITY_OVERRIDE_S
 from .tools.send import send_tool, SEND_TOOL_SCHEMA
 from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 from .tools.scheduler import scheduler_tool, SCHEDULER_SCHEMA
+from .tools.media import media_search, MEDIA_SEARCH_SCHEMA, sticker_manage, STICKER_MANAGE_SCHEMA
 
 logger = logging.getLogger("mutsumi.main")
 
@@ -83,6 +84,26 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
         description="保存一条信息到长期记忆",
         parameters=MEMORY_SAVE_SCHEMA,
         handler=_memory_save,
+    ))
+
+    async def _media_search(args: dict, **deps) -> str:
+        return await media_search(args, store=store, **deps)
+
+    registry.register(Tool(
+        name="sticker_search",
+        description="Search the global media ledger for stickers. With no query, list all available stickers.",
+        parameters=MEDIA_SEARCH_SCHEMA,
+        handler=_media_search,
+    ))
+
+    async def _sticker_manage(args: dict, **deps) -> str:
+        return await sticker_manage(args, store=store, **deps)
+
+    registry.register(Tool(
+        name="sticker_manage",
+        description="Describe, archive, or restore a sticker in the global media ledger.",
+        parameters=STICKER_MANAGE_SCHEMA,
+        handler=_sticker_manage,
     ))
 
     async def _self_note(args: dict, **deps) -> str:
