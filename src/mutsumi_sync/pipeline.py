@@ -371,6 +371,14 @@ def _conversation_visibility(deps: PipelineDeps) -> str:
     return "group" if (deps.peer.chat_type == 2) else "private"
 
 
+def _short_image_description(description: str) -> str:
+    for line in description.splitlines():
+        if line.lower().startswith("short description:"):
+            return line.split(":", 1)[1].strip()
+    first = description.splitlines()[0].strip() if description.splitlines() else description.strip()
+    return first[:120]
+
+
 def _message_record_content(
     message: str,
     *,
@@ -969,6 +977,12 @@ async def pipeline(
             logger.exception("[PIPE] vision provider raised unexpectedly")
             image_description = f"[Error: vision provider failed: {exc}]"
         input_metadata["image_description"] = image_description
+        if input_media_id:
+            await deps.store.update_media_description(
+                input_media_id,
+                image_description,
+                _short_image_description(image_description),
+            )
         lines = ["The user sent an image."]
         if caption:
             lines.append(f"Caption: {caption}")
@@ -1330,6 +1344,12 @@ async def pipeline(
                 except Exception as exc:
                     logger.exception("Post-write failed for %s", tool_name)
                     result = f"[Error: {exc}]"
+                await _append_event(
+                    deps,
+                    event_type=EventType.TOOL_RESULT.value,
+                    content=_sanitize_action_result(tool_name, tool_args, result),
+                    visibility="private",
+                )
                 await _record_action(
                     deps,
                     tool_name=tool_name,

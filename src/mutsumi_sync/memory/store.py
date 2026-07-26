@@ -499,7 +499,8 @@ class MessageStore:
         dest_dir = self.media_dir / subdir
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        record = await self.register_media(data, kind=str(category), ext=ext)
+        kind = category.value if isinstance(category, MessageCategory) else str(category)
+        record = await self.register_media(data, kind=kind, ext=ext)
         filepath = Path(record.path)
         media_id = record.media_id
         digest = record.sha256
