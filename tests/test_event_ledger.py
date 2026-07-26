@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.mutsumi_sync.memory.store import EpisodeRecord, EventRecord, MessageStore, EventType
+from src.mutsumi_sync.memory.projection import build_global_life_context
 
 
 @pytest.mark.asyncio
@@ -78,5 +79,34 @@ async def test_event_status_can_finalize_or_cancel_without_changing_identity(tmp
         assert rows[0].content == "in progress"
         assert rows[0].status == "cancelled"
         assert await store.get_events(conversation_id="qq:private:alice") == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_projection_replaces_covered_global_events_with_episode(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        first = await store.append_event(EventRecord(
+            conversation_id="qq:private:alice", actor_id="qq:user:alice",
+            actor_kind="human", event_type=EventType.INBOUND.value,
+            content="public fact one", visibility="global",
+        ))
+        second = await store.append_event(EventRecord(
+            conversation_id="qq:private:alice", actor_id="bot:self",
+            actor_kind="bot", event_type=EventType.OUTBOUND.value,
+            content="public fact two", visibility="global",
+        ))
+        await store.add_episode(EpisodeRecord(
+            conversation_id="qq:private:alice",
+            first_sequence=first.sequence or 0,
+            last_sequence=second.sequence or 0,
+            narrative="Alice and Mutsumi established two public facts.",
+        ))
+        context = await build_global_life_context(store, "qq:private:bob")
+        assert "<episode" in context
+        assert "public fact one" not in context
+        assert "public fact two" not in context
     finally:
         await store.close()

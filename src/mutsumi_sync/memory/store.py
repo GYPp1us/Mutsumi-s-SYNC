@@ -416,6 +416,15 @@ class MessageStore:
         rows.reverse()
         return [EpisodeRecord.from_row(row) for row in rows]
 
+    async def get_latest_episode_sequence(self, conversation_id: str) -> int:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT COALESCE(MAX(last_sequence), 0) FROM episodes WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row[0] or 0)
+
     async def update_message_content(self, msg_id: int, content: str) -> None:
         self._ensure_initialized()
         await self._conn.execute(
