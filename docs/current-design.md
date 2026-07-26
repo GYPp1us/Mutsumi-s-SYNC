@@ -174,6 +174,11 @@ descriptions, references, and lifecycle status. `sticker_search` and
 `sticker_manage` query or maintain this ledger; they are not required for the
 pipeline to remember that media happened.
 
+`bot_state` is the explicit maintenance interface for global bot-self
+canonical state. It supports add/replace/clear and is staged like other memory
+writes. It may contain the bot's identity, values, experiences, or plans, but
+must never be used as a shortcut for a user's private relationship memory.
+
 ## 12. Output Gate
 
 Ordinary assistant `content` is flat text. Obvious complex Markdown (headings,

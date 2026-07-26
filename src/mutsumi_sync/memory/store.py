@@ -307,6 +307,14 @@ class MessageStore:
         CREATE INDEX IF NOT EXISTS idx_media_kind_status
             ON media_ledger(kind, status);
 
+        CREATE TABLE IF NOT EXISTS canonical_state (
+            state_key        TEXT PRIMARY KEY,
+            content          TEXT NOT NULL,
+            source_event_ids TEXT NOT NULL DEFAULT '[]',
+            version          INTEGER NOT NULL DEFAULT 1,
+            updated_at       REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
         CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
             content, group_key, category,
             content=messages
@@ -608,6 +616,48 @@ class MessageStore:
         await self._conn.execute(
             "UPDATE media_ledger SET status = ? WHERE media_id = ?", (status, media_id)
         )
+        await self._conn.commit()
+
+    async def get_canonical_state(self, state_key: str = "bot:self") -> dict | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT state_key, content, source_event_ids, version, updated_at "
+            "FROM canonical_state WHERE state_key = ?", (state_key,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "state_key": row["state_key"],
+            "content": row["content"],
+            "source_event_ids": json.loads(row["source_event_ids"] or "[]"),
+            "version": row["version"],
+            "updated_at": row["updated_at"],
+        }
+
+    async def upsert_canonical_state(
+        self,
+        content: str,
+        *,
+        state_key: str = "bot:self",
+        source_event_ids: list[str] | None = None,
+    ) -> int:
+        self._ensure_initialized()
+        existing = await self.get_canonical_state(state_key)
+        version = int(existing["version"] if existing else 0) + 1
+        await self._conn.execute(
+            "INSERT INTO canonical_state (state_key, content, source_event_ids, version) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(state_key) DO UPDATE SET "
+            "content=excluded.content, source_event_ids=excluded.source_event_ids, "
+            "version=excluded.version, updated_at=strftime('%s', 'now')",
+            (state_key, content, json.dumps(source_event_ids or [], ensure_ascii=False), version),
+        )
+        await self._conn.commit()
+        return version
+
+    async def clear_canonical_state(self, state_key: str = "bot:self") -> None:
+        self._ensure_initialized()
+        await self._conn.execute("DELETE FROM canonical_state WHERE state_key = ?", (state_key,))
         await self._conn.commit()
 
     async def get_messages(

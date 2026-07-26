@@ -2,6 +2,8 @@
 
 ## Global Event Ledger Rules
 
+- `bot_state` is the only explicit global bot-self state tool; relationship facts remain conversation-scoped.
+
 - `events` is the append-first global fact source. It carries actor, conversation, visibility, audience, lifecycle, tool, and media provenance.
 - Global storage is not global prompt injection. Private events remain private; group events remain in their group; only explicitly global events cross conversations.
 - Cross-conversation events are documentary records with actor IDs, never simulated provider `user` or `assistant` turns.
