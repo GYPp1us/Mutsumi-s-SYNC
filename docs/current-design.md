@@ -17,6 +17,11 @@ or `README.md`, this document and the tests take precedence.
 
 ## 2. Provider Request Layout
 
+The canonical stable prompt lives in `src/mutsumi_sync/prompts.py`. Runtime,
+experiment, message-summary, and Episode-summary prompts are derived from that
+source; they must not introduce conflicting actor, privacy, tool, media, or
+output rules.
+
 Every LLM request has these layers, in order:
 
 1. A provider-native `system` message containing only stable platform rules.
