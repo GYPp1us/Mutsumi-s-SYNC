@@ -372,20 +372,24 @@ class PipelineScheduler:
     async def startup(self) -> None:
         logger.info("[STARTUP] restoring windows from database")
         group_keys = await self.store.get_message_group_keys()
-
+        restored: dict[str, list[dict]] = {}
+        scopes: dict[str, list[str]] = {}
         for gk in group_keys:
+            parts = gk.split(":")
+            conversation_id = ":".join(parts[:2]) if len(parts) >= 3 and parts[0] == "group" else gk
+            scopes.setdefault(conversation_id, []).append(gk)
             boundary = await self.store.get_newest_compaction_summary(gk)
             after_id = boundary["covered_through_message_id"] if boundary else 0
-
             uncovered = await self.store.get_restorable_messages(gk, after_id=after_id, limit=201)
-            if not uncovered:
-                continue
+            restored.setdefault(conversation_id, []).extend(uncovered)
 
-            restore_truncated = len(uncovered) > 200
+        for conversation_id, rows in restored.items():
+            rows.sort(key=lambda item: int(item.get("id") or 0))
+            restore_truncated = len(rows) > 200
             if restore_truncated:
-                uncovered = uncovered[-200:]
+                rows = rows[-200:]
             window = MessageWindow(coverage_trusted=not restore_truncated)
-            for msg in uncovered:
+            for msg in rows:
                 parsed = json.loads(msg["content"])
                 user_text = parsed.get("user", "")
                 bot_text = parsed.get("bot", "")
@@ -405,13 +409,16 @@ class PipelineScheduler:
                         record_id=msg["id"],
                     )
 
-            self._windows[gk] = window
-            self._ensure_user_state(gk)
+            self._windows[conversation_id] = window
+            self._ensure_user_state(conversation_id)
+            if conversation_id.startswith("group:"):
+                for scope in scopes.get(conversation_id, []):
+                    self._alias_legacy_group_state(conversation_id, scope)
             logger.info(
                 "[STARTUP] restored window %s: %d items (after id %d, coverage_trusted=%s)",
-                gk,
+                conversation_id,
                 len(window),
-                after_id,
+                0,
                 window.coverage_trusted,
             )
 
