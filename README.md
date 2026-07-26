@@ -11,6 +11,8 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - OpenAI-compatible LLM provider with DeepSeek reasoning support.
 - Built-in tool registry with hot snapshot/version tracking.
 - SQLite message store, summaries, self notes, and media storage.
+- Global Event Ledger with provenance-preserving cross-conversation projections and idle Episode summaries.
+- Pipeline-native Media Ledger with SHA deduplication, stable media IDs, and global sticker search/maintenance tools.
 - Five-layer context assembly: stable provider-native `system`, a persistent `Context Packet`, a timestamped working window, temporary `Runtime Injection`, and current input.
 - A separate persona prompt injected at the end of the first `Context Packet` user message.
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
@@ -115,6 +117,8 @@ context:
   recent_actions_max_count: 12
   summaries_max_count: 180
   summaries_min_count: 90
+  episode_idle_seconds: 1800
+  episode_max_events: 160
 
 prompts:
   persona: ""
@@ -232,6 +236,25 @@ Inbound user text is saved before the LLM call. If the task is cancelled, the sa
 Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete record-ID turns and stores a trusted `covered_through_message_id`. Legacy `last_message_id` values are ignored during restart restoration. Only successful conversation records are restored; memory, action artifacts, cancelled/error/no-reply records are excluded.
 
 Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate tool result says `staged`, while the final success or failure is stored in the action ledger.
+
+### Global Event And Media Ledger
+
+The `events` table is the append-first interaction ledger. It records actor,
+conversation, visibility, lifecycle, tool, and media provenance. Global storage
+does not mean global prompt injection: private events remain private, group
+events remain in their group, and only explicitly global records cross
+conversations. Cross-conversation records are documentary data with actor IDs,
+never simulated `user` or `assistant` turns.
+
+A group has one shared conversation window while members retain separate actor
+and legacy memory scopes. After about 30 minutes of idle time, finalized events
+may be summarized into an Episode with exact sequence coverage. Raw events are
+never deleted; context projection chooses either the Episode or its covered raw
+events, keeping requests near the 100K-token attention budget.
+
+Incoming and successfully outgoing media are automatically registered with a
+stable SHA-derived `media_id`. `sticker_search` without a query lists all
+available stickers; `sticker_manage` updates descriptions or lifecycle status.
 
 ## Heartbeat And Vision
 
