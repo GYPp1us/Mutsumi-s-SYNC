@@ -83,6 +83,8 @@ class ContextConfig(BaseModel):
     summaries_max_count: int = 180
     summaries_min_count: int = 90
     debounce_timeout: float = 1.5
+    episode_idle_seconds: int = 1800
+    episode_max_events: int = 160
 
 
 class MemoryConfig(BaseModel):

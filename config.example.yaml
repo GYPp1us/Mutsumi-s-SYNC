@@ -8,6 +8,8 @@ context:
   summaries_max_count: 180
   summaries_min_count: 90
   debounce_timeout: 1.5
+  episode_idle_seconds: 1800
+  episode_max_events: 160
 model:
   api_key: ''
   base_url: https://api.deepseek.com/v1

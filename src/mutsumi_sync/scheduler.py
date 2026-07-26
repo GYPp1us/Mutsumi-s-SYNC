@@ -70,6 +70,7 @@ class PipelineScheduler:
         self.on_state_change: Callable[[], None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._scheduled_tasks: dict[int, asyncio.Task[None]] = {}
+        self._episode_timers: dict[str, asyncio.Task[None]] = {}
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
@@ -165,8 +166,37 @@ class PipelineScheduler:
         self._cancel_debounce_timer(key)
         self._pending_events.pop(key, None)
 
+    def _cancel_episode_timer(self, conversation_id: str) -> None:
+        task = self._episode_timers.pop(conversation_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    def _schedule_episode_summary(self, conversation_id: str) -> None:
+        self._cancel_episode_timer(conversation_id)
+        self._episode_timers[conversation_id] = asyncio.create_task(
+            self._wait_and_summarize_episode(conversation_id)
+        )
+
+    async def _wait_and_summarize_episode(self, conversation_id: str) -> None:
+        try:
+            from .memory.episodes import summarize_pending_episode
+            await asyncio.sleep(max(1, int(self.config.context.episode_idle_seconds)))
+            await summarize_pending_episode(
+                self.store,
+                self.config,
+                conversation_id,
+                max_events=max(1, int(self.config.context.episode_max_events)),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[EPISODE] idle summary failed conversation=%s", conversation_id)
+        finally:
+            self._episode_timers.pop(conversation_id, None)
+
     async def dispatch(self, event: MessageEvent) -> None:
         key = self._make_key(event)
+        self._cancel_episode_timer(key)
 
         from .message.classifier import classify_message
         classified = classify_message(event.message, event.raw_message)
@@ -253,6 +283,7 @@ class PipelineScheduler:
                 logger.exception("[SCHED] unhandled error in pipeline for %s", key)
             finally:
                 self.clear_pipeline_state(key)
+                self._schedule_episode_summary(key)
 
         task = asyncio.create_task(_run())
         self._tasks[key] = task
@@ -302,6 +333,7 @@ class PipelineScheduler:
                 logger.exception("[SCHED] unhandled error in pipeline for %s", key)
             finally:
                 self.clear_pipeline_state(key)
+                self._schedule_episode_summary(key)
 
         task = asyncio.create_task(_run())
         self._tasks[key] = task
@@ -536,6 +568,15 @@ class PipelineScheduler:
             except asyncio.CancelledError:
                 pass
         self._scheduled_tasks.clear()
+
+        for task in list(self._episode_timers.values()):
+            task.cancel()
+        for task in list(self._episode_timers.values()):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._episode_timers.clear()
 
         for key in list(self._keys()):
             self._cleanup_debounce(key)
