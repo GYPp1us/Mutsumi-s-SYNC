@@ -32,6 +32,7 @@ logger = logging.getLogger("mutsumi.pipeline")
 
 MAX_TOOL_STEPS = 10
 MAX_SENDS_PER_LOOP = 5
+MAX_OUTPUT_REWRITES = 2
 WRITE_TOOLS = {"self_note", "memory_save", "priority_override"}
 NO_REPLY_TOOL = "no_reply"
 
@@ -818,6 +819,21 @@ def _split_visible_content(content: str) -> list[str]:
     return [content] if content.strip() else []
 
 
+def _unsupported_markdown_features(content: str) -> list[str]:
+    features: list[str] = []
+    if re.search(r"(?m)^\s{0,3}#{1,6}\s", content):
+        features.append("heading")
+    if "```" in content or "~~~" in content:
+        features.append("code fence")
+    if re.search(r"(?m)^\s*\|.*\|\s*$", content):
+        features.append("table")
+    if re.search(r"!\[[^\]]*\]\([^)]*\)|\[[^\]]+\]\(https?://[^)]+\)", content):
+        features.append("link or image")
+    if "$$" in content or re.search(r"\\\(|\\\[", content):
+        features.append("LaTeX")
+    return features
+
+
 async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
     parts = _split_visible_content(content)
     if not parts:
@@ -1003,6 +1019,7 @@ async def pipeline(
         send_count = 0
         last_tool_name = ""
         consecutive_fails = 0
+        output_rewrites = 0
 
         for step in range(MAX_TOOL_STEPS):
             log_context(messages, deps)
@@ -1043,6 +1060,26 @@ async def pipeline(
 
             if not result.tool_calls and result.content:
                 logger.info("[PIPE] branch=content_only chars=%d", len(result.content))
+                rich_features = _unsupported_markdown_features(result.content)
+                if rich_features and not deps.silent:
+                    output_rewrites += 1
+                    logger.warning(
+                        "[OUTPUT GATE] rejected Markdown features=%s rewrite=%d/%d",
+                        ",".join(rich_features), output_rewrites, MAX_OUTPUT_REWRITES,
+                    )
+                    if output_rewrites > MAX_OUTPUT_REWRITES:
+                        final_status = "error"
+                        break
+                    messages.append({"role": "assistant", "content": result.content})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[Output Gate] This content was not sent because ordinary QQ replies must be flat plain text. "
+                            "Rewrite it without Markdown, or call send with markdown_image for complex Markdown. "
+                            f"Detected: {', '.join(rich_features)}. Do not claim that the rejected content was sent."
+                        ),
+                    })
+                    continue
                 visible_parts = await _send_visible_content(deps, result.content)
                 if visible_parts:
                     responded = True
