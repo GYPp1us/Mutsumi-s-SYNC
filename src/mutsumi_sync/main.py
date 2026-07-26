@@ -20,6 +20,7 @@ from .tools.send import send_tool, SEND_TOOL_SCHEMA
 from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 from .tools.scheduler import scheduler_tool, SCHEDULER_SCHEMA
 from .tools.media import media_search, MEDIA_SEARCH_SCHEMA, sticker_manage, STICKER_MANAGE_SCHEMA
+from .tools.bot_state import bot_state_tool, BOT_STATE_SCHEMA
 
 logger = logging.getLogger("mutsumi.main")
 
@@ -114,6 +115,16 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
         description="管理对用户的私人印象。add:追加, replace:覆盖",
         parameters=SELF_NOTE_SCHEMA,
         handler=_self_note,
+    ))
+
+    async def _bot_state(args: dict, **deps) -> str:
+        return await bot_state_tool(args, store=store, **deps)
+
+    registry.register(Tool(
+        name="bot_state",
+        description="Maintain globally shared facts about the bot itself: identity, experience, values, or long-term plans. Never store a user's private facts here.",
+        parameters=BOT_STATE_SCHEMA,
+        handler=_bot_state,
     ))
 
     async def _priority_override(args: dict, **deps) -> str:

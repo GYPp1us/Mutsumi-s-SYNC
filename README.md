@@ -13,6 +13,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - SQLite message store, summaries, self notes, and media storage.
 - Global Event Ledger with provenance-preserving cross-conversation projections and idle Episode summaries.
 - Pipeline-native Media Ledger with SHA deduplication, stable media IDs, and global sticker search/maintenance tools.
+- Explicit `bot_state` canonical projection for facts about the bot itself, separate from private relationship memory.
 - Five-layer context assembly: stable provider-native `system`, a persistent `Context Packet`, a timestamped working window, temporary `Runtime Injection`, and current input.
 - A separate persona prompt injected at the end of the first `Context Packet` user message.
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
