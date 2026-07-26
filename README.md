@@ -110,7 +110,7 @@ model:
   reasoning_effort: max
 
 context:
-  model_context_tokens: 131072
+  model_context_tokens: 100000
   compression_trigger_ratio: 0.8
   compression_target_ratio: 0.5
   reserved_output_tokens: 8192
