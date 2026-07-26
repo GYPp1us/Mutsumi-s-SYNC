@@ -56,3 +56,27 @@ async def test_episode_keeps_exact_event_coverage(tmp_path):
         assert episodes[0].open_loops == "finish the plan"
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_event_status_can_finalize_or_cancel_without_changing_identity(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        event = await store.append_event(EventRecord(
+            conversation_id="qq:private:alice",
+            actor_id="qq:user:alice",
+            actor_kind="human",
+            event_type=EventType.INBOUND.value,
+            content="in progress",
+            status="received",
+        ))
+        await store.update_event_status(event.event_id or "", "cancelled")
+        rows = await store.get_events(conversation_id="qq:private:alice", finalized_only=False)
+        assert len(rows) == 1
+        assert rows[0].event_id == event.event_id
+        assert rows[0].content == "in progress"
+        assert rows[0].status == "cancelled"
+        assert await store.get_events(conversation_id="qq:private:alice") == []
+    finally:
+        await store.close()

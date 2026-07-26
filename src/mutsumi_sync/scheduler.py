@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
@@ -37,6 +38,10 @@ class PipelineDeps:
     source: str = "user"
     silent: bool = False
     remember_input: bool = True
+    conversation_id: str = ""
+    actor_id: str = ""
+    actor_name: str = ""
+    pipeline_id: str = ""
 
 
 class PipelineScheduler:
@@ -54,6 +59,7 @@ class PipelineScheduler:
 
         self._windows: dict[str, MessageWindow] = {}
         self._sessions: dict[str, SessionState] = {}
+        self._legacy_aliases: set[str] = set()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._pending_events: dict[str, list[MessageEvent]] = {}
         self._debounce_timers: dict[str, asyncio.Task[None]] = {}
@@ -67,6 +73,23 @@ class PipelineScheduler:
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
+            return f"group:{event.group_id}"
+        return f"private:{event.user_id}"
+
+    @staticmethod
+    def _actor_id(event: MessageEvent) -> str:
+        return f"qq:user:{event.user_id}"
+
+    @staticmethod
+    def _actor_name(event: MessageEvent) -> str:
+        sender = event.sender or {}
+        return str(sender.get("card") or sender.get("nickname") or event.user_id)
+
+    @staticmethod
+    def _storage_key(event: MessageEvent) -> str:
+        if event.message_type == "group" and event.group_id:
+            # Keep legacy per-actor memory scopes while the window/event stream
+            # is shared by the actual group conversation.
             return f"group:{event.group_id}:{event.user_id}"
         return f"private:{event.user_id}"
 
@@ -107,6 +130,13 @@ class PipelineScheduler:
             self._windows[key] = MessageWindow()
         if key not in self._sessions:
             self._sessions[key] = SessionState()
+
+    def _alias_legacy_group_state(self, key: str, storage_key: str) -> None:
+        if key == storage_key or not key.startswith("group:"):
+            return
+        self._windows[storage_key] = self._windows[key]
+        self._sessions[storage_key] = self._sessions[key]
+        self._legacy_aliases.add(storage_key)
 
     @staticmethod
     def _peer_from_key(key: str) -> Peer:
@@ -182,6 +212,8 @@ class PipelineScheduler:
 
         await self.cancel_user(key)
         self._ensure_user_state(key)
+        storage_key = self._storage_key(events[0])
+        self._alias_legacy_group_state(key, storage_key)
 
         from .pipeline import pipeline
 
@@ -193,7 +225,11 @@ class PipelineScheduler:
             window=self._windows[key],
             session=self._sessions[key],
             peer=PEER,
-            group_key=key,
+            group_key=self._storage_key(events[0]),
+            conversation_id=key,
+            actor_id=self._actor_id(events[0]),
+            actor_name=self._actor_name(events[0]),
+            pipeline_id=f"{key}:{time.time_ns()}",
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -225,6 +261,8 @@ class PipelineScheduler:
         PEER = self._make_peer(event)
         await self.cancel_user(key)
         self._ensure_user_state(key)
+        storage_key = self._storage_key(event)
+        self._alias_legacy_group_state(key, storage_key)
 
         from .pipeline import pipeline
 
@@ -236,7 +274,11 @@ class PipelineScheduler:
             window=self._windows[key],
             session=self._sessions[key],
             peer=PEER,
-            group_key=key,
+            group_key=self._storage_key(event),
+            conversation_id=key,
+            actor_id=self._actor_id(event),
+            actor_name=self._actor_name(event),
+            pipeline_id=f"{key}:{time.time_ns()}",
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -503,4 +545,4 @@ class PipelineScheduler:
         logger.info("[SHUTDOWN] complete")
 
     def _keys(self) -> list[str]:
-        return list(self._windows.keys())
+        return [key for key in self._windows if key not in self._legacy_aliases]
