@@ -1,5 +1,15 @@
 # Current Context, Heartbeat, And Vision Rules
 
+## Global Event Ledger Rules
+
+- `events` is the append-first global fact source. It carries actor, conversation, visibility, audience, lifecycle, tool, and media provenance.
+- Global storage is not global prompt injection. Private events remain private; group events remain in their group; only explicitly global events cross conversations.
+- Cross-conversation events are documentary records with actor IDs, never simulated provider `user` or `assistant` turns.
+- A group has one shared conversation window while members retain independent actor identity and legacy memory/action scopes.
+- Episodes summarize only finalized events and store exact sequence coverage. Raw events are never deleted, and a projection selects an Episode or its covered raw events, never both.
+- Media is pipeline-native. SHA-derived media IDs and descriptions are recorded automatically; `sticker_search` and `sticker_manage` maintain the global media ledger.
+- Ordinary assistant content must pass the flat-text output gate. Complex Markdown goes through `send.markdown_image`.
+
 - LLM requests use a provider-native non-empty `system` message for durable platform rules.
 - The first `user` message is a `[Context Packet]` containing self-note, typed summaries, recent verified actions, and `prompts.persona` at the end. It is context, not a fresh user request.
 - Working conversation messages after the Context Packet are only the current working context window.
