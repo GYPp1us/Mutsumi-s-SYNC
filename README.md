@@ -257,6 +257,10 @@ Incoming and successfully outgoing media are automatically registered with a
 stable SHA-derived `media_id`. `sticker_search` without a query lists all
 available stickers; `sticker_manage` updates descriptions or lifecycle status.
 
+Prompt ownership is centralized in `src/mutsumi_sync/prompts.py`. The runtime,
+summary workers, and context experiment use the same protocol definitions so
+historical data is interpreted consistently at every LLM boundary.
+
 ## Heartbeat And Vision
 
 The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output, suppresses cold-session pokes, and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
