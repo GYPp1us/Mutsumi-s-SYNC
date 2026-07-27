@@ -4,7 +4,7 @@ import inspect
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 logger = logging.getLogger("mutsumi.tools.registry")
 
@@ -16,6 +16,8 @@ class Tool:
     parameters: dict  # JSON Schema
     handler: Callable[..., Awaitable[str]]
     source: str = "builtin"
+    latency_class: Literal["fast", "normal", "long"] = "normal"
+    status_hint: str = ""
 
 
 @dataclass
@@ -33,6 +35,9 @@ class ToolRegistry:
             del self._tools[name]
             self.version += 1
             logger.info("Removed tool: %s", name)
+
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)
 
     async def execute(self, name: str, args: dict | None = None, **deps) -> str:
         args = args or {}

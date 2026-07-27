@@ -42,6 +42,7 @@ class EventType(str, Enum):
     TOOL_RESULT = "tool_result"
     MEDIA = "media"
     STATE_CHANGE = "state_change"
+    STATUS_UPDATE = "status_update"
 
 
 @dataclass
@@ -172,6 +173,18 @@ class StoredMessage:
             content=row["content"],
             created_at=row["created_at"] if "created_at" in keys else None,
         )
+
+
+@dataclass
+class InnerJournalRecord:
+    id: int
+    pipeline_id: str
+    source_conversation_id: str
+    source_actor_id: str
+    source_event_ids: list[str]
+    content: str
+    status: str
+    created_at: float | None = None
 
 
 @dataclass
@@ -314,6 +327,20 @@ class MessageStore:
             version          INTEGER NOT NULL DEFAULT 1,
             updated_at       REAL NOT NULL DEFAULT (strftime('%s', 'now'))
         );
+
+        CREATE TABLE IF NOT EXISTS inner_journal (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            pipeline_id           TEXT NOT NULL DEFAULT '',
+            source_conversation_id TEXT NOT NULL DEFAULT '',
+            source_actor_id       TEXT NOT NULL DEFAULT '',
+            source_event_ids_json TEXT NOT NULL DEFAULT '[]',
+            content               TEXT NOT NULL,
+            status                TEXT NOT NULL DEFAULT 'finalized',
+            created_at            REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_inner_journal_created
+            ON inner_journal(created_at DESC, id DESC);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
             content, group_key, category,
@@ -836,6 +863,69 @@ class MessageStore:
         if row is None:
             return None
         return {"id": row["id"], "content": row["content"], "created_at": row["created_at"]}
+
+    async def append_inner_journal(
+        self,
+        *,
+        content: str,
+        pipeline_id: str = "",
+        source_conversation_id: str = "",
+        source_actor_id: str = "",
+        source_event_ids: list[str] | None = None,
+        status: str = "finalized",
+    ) -> int | None:
+        """Append a subjective bot-state entry unless it duplicates the latest entry."""
+        self._ensure_initialized()
+        normalized = " ".join(content.split())
+        if not normalized:
+            return None
+
+        cursor = await self._conn.execute(
+            "SELECT id, content FROM inner_journal ORDER BY id DESC LIMIT 1"
+        )
+        latest = await cursor.fetchone()
+        if latest is not None and " ".join(str(latest["content"]).split()) == normalized:
+            return None
+
+        cursor = await self._conn.execute(
+            "INSERT INTO inner_journal "
+            "(pipeline_id, source_conversation_id, source_actor_id, source_event_ids_json, content, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                pipeline_id,
+                source_conversation_id,
+                source_actor_id,
+                json.dumps(source_event_ids or [], ensure_ascii=False),
+                content,
+                status,
+            ),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_inner_journal(self, limit: int = 200) -> list[dict[str, Any]]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, pipeline_id, source_conversation_id, source_actor_id, "
+            "source_event_ids_json, content, status, created_at "
+            "FROM inner_journal WHERE status = 'finalized' "
+            "ORDER BY id DESC LIMIT ?",
+            (max(1, int(limit)),),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "pipeline_id": row["pipeline_id"],
+                "source_conversation_id": row["source_conversation_id"],
+                "source_actor_id": row["source_actor_id"],
+                "source_event_ids": json.loads(row["source_event_ids_json"] or "[]"),
+                "content": row["content"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+            }
+            for row in reversed(rows)
+        ]
 
     async def upsert_priority_override(self, group_key: str, content: str) -> None:
         self._ensure_initialized()

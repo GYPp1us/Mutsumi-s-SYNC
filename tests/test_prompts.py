@@ -7,12 +7,16 @@ def test_runtime_prompt_contains_current_protocol_boundaries():
     prompt = _build_default_system_prompt(config)
     assert prompt == config.prompts.system.runtime
     for phrase in (
-        "普通 content 必须是扁平纯文本",
+        "TO_USER 必须是扁平纯文本",
         "使用 markdown_image",
         "历史 Event",
         "Canonical Bot State",
         "不得把一个 actor 的事实转移给另一个 actor",
         "Media Ledger",
+        "[TO_SELF]",
+        "[TO_USER]",
+        "status_update",
+        "Self Context",
     ):
         assert phrase in prompt
 

@@ -102,6 +102,34 @@ class TestPriorityOverride:
             os.unlink(path)
 
 
+class TestInnerJournal:
+    async def test_append_deduplicates_latest_and_preserves_provenance(self):
+        store, path = await make_store()
+        try:
+            first_id = await store.append_inner_journal(
+                content="我会记得这件事。",
+                pipeline_id="pipe-1",
+                source_conversation_id="private:1",
+                source_actor_id="qq:user:1",
+                source_event_ids=["event-1"],
+            )
+            duplicate_id = await store.append_inner_journal(
+                content="  我会记得这件事。  ",
+                source_conversation_id="private:2",
+            )
+
+            assert first_id is not None
+            assert duplicate_id is None
+            entries = await store.get_inner_journal()
+            assert len(entries) == 1
+            assert entries[0]["source_conversation_id"] == "private:1"
+            assert entries[0]["source_actor_id"] == "qq:user:1"
+            assert entries[0]["source_event_ids"] == ["event-1"]
+        finally:
+            await store.close()
+            os.unlink(path)
+
+
 class TestMessageUpdates:
     async def test_update_message_content(self):
         store, path = await make_store()
