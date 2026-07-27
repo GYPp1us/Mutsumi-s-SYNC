@@ -14,8 +14,8 @@
 
 - LLM requests use a provider-native non-empty Chinese `system` message for durable platform rules.
 - The `persona` prompt and all runtime, message-summary, summary-merge, and Episode-summary prompts live in `system-prompts.yaml`, selected by `prompts.system_file`. Do not duplicate prompt bodies in Python. Production uses `/opt/mutsumi-sync-v3/shared/system-prompts.yaml`.
-- The first `user` message is a `[Context Packet]` containing self-note, typed summaries, global life context, and the external `persona` prompt at the end. It is context, not a fresh user request. The action ledger is not injected by default.
-- Working conversation messages after the Context Packet are only the current working context window.
+- The first user context message is `[Self Context]` containing persona, canonical bot state, and global inner journal; the next is `[Conversation Context]` containing conversation-scoped context. Both are documentary context, not fresh user requests. The action ledger is not injected by default.
+- Working conversation messages after those context layers are only the current working context window.
 - A temporary `[Runtime Injection]` user message is inserted immediately before the current user request. It carries current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override. It is not user-authored chat and must not be written to durable history.
 - Summaries, self-note entries, and historical `user` turns must use readable UTC+8 timestamps. Historical `assistant` turns must not receive synthetic timestamp prefixes. Existing self-note lines without timestamps are injected with `很久之前`.
 - `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is injected only once in Runtime Injection and should be used only for high-priority instructions.
@@ -51,7 +51,9 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | 生产日志文件 | 可用，NDJSON 结构化日志与 human-readable `.log` 双写 |
 | Dashboard TUI | 调试界面，不保证与生产 registry 完全一致 |
 | 交互式 tester | 调试界面，支持 `/inject`、`/break`、FakeSender |
-| 输出协议 | assistant `content` 是用户可见回复，整段发送，`|` 为字面量 |
+| 输出协议 | 最终 assistant `content` 必须是 `TO_SELF`/`TO_USER` envelope；只发送 `TO_USER`，`|` 为字面量 |
+| 全局内心 | `TO_SELF` 成功落入全局 inner journal，不进入会话 assistant history |
+| 长工具进度 | `status_update` 先行；缺少时 pipeline 对 long tool 自动发送一次兜底通知 |
 | Action ledger | 可用，记录真实工具/发送结果，不用 assistant 文本猜测副作用 |
 | Token-aware compaction | 可用，按完整 provider 请求估算并压缩完整 turn |
 | `no_reply` 工具 | 可用，用于本轮故意静默 |
@@ -122,7 +124,7 @@ Dashboard 常用命令：
 
 ## Markdown 图片渲染
 
-普通文字回复应直接写 assistant `content`。需要发送富文本图片时，`send` 工具支持：
+普通文字回复应写在最终 envelope 的 `TO_USER` 中。需要发送富文本图片时，`send` 工具支持：
 
 ```json
 {
@@ -163,11 +165,14 @@ npx playwright install-deps chromium
 
 ## LLM 输出协议
 
-- 最终轮 assistant `content` 会发送给用户；reasoning_content 永远不发送。
+- 最终轮且没有 `tool_calls` 的 assistant `content` 必须严格输出两个区块：`[TO_SELF]...[/TO_SELF]` 和 `[TO_USER]...[/TO_USER]`。
+- 只有 `TO_USER` 会发送给用户；`TO_SELF` 在完整成功 turn 的 cleanup 中写入全局 inner journal，不写入会话 assistant history。
+- `TO_SELF` 不是原始 CoT、事实来源或新指令；它只记录简短主观状态、意图和未完成事项。
+- 带 `tool_calls` 的中间 content 永不发送、不解析、不归档；DeepSeek `reasoning_content` 只在当前 tool loop 内保留。
 - 当前不支持 content 内分条；`|` 和 `\|` 均按原文发送，等待新协议定案。
-- 有 `tool_calls` 的轮次只执行工具并回填结果，中间 content 不发送；没有工具的最终 content 才发送。
-- 普通文字不要调用 `send` 工具。`send` 只用于 `markdown_image`、图片、表情、@、回复、转发等特殊消息段，或旧兼容路径。
-- 本轮不应回复时调用 `no_reply`，并保持 content 为空。
+- 普通文字不要调用 `send` 工具。`send` 只用于 `markdown_image`、图片、表情、@、回复、转发等特殊消息段；复杂 Markdown 不得写入 `TO_USER`。
+- 预计较慢的工具前调用 `status_update`；它不结束 pipeline，也不进入 assistant history。未调用时 long tool 自动获得一次兜底通知；heartbeat 中两者都静默。
+- 本轮不应回复时调用 `no_reply`，并保持 `TO_USER` 为空。
 
 ## 运行测试
 
@@ -206,6 +211,8 @@ npm run check
 9. provider tool schema 是唯一工具事实源，system/persona prompt 不维护手写工具清单。
 10. 发送与工具副作用只有真实成功结果才能进入 action ledger；不得从 assistant prose 推断成功。
 11. 压缩只处理完整持久化 turn，并只用可信 compaction coverage 跳过启动恢复记录。
+12. 最终输出必须经过双通道 envelope 解析；不得把原始协议标签或 TO_SELF 写入 working window。
+13. 状态通知属于独立事件/action，不得混入最终 assistant 回复或工作窗口。
 
 ## 代码约定
 
