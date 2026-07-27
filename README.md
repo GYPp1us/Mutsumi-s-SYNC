@@ -212,6 +212,19 @@ Each line is one JSON object with schema `mutsumi.log.v1`, timestamp, level, log
 
 The text log uses readable UTC+8 timestamps and strips ANSI color by default. It is deliberately redundant with the NDJSON store: the text file is for humans, while NDJSON remains the durable structured source.
 
+## Reset Production Data
+
+The production host has `/opt/mutsumi-sync-v3/reset_production_data.sh` for clearing test or historical bot state. It stops the backend, removes everything under `/opt/mutsumi-sync-v3/shared/data` (SQLite history, logs, media artifacts, and temporary files), and starts the backend again. Configuration, code, and shared system prompts are preserved.
+
+Run a preview first, then confirm interactively:
+
+```bash
+/opt/mutsumi-sync-v3/reset_production_data.sh --dry-run
+/opt/mutsumi-sync-v3/reset_production_data.sh
+```
+
+Use `--yes` only when the data reset has been explicitly confirmed.
+
 ## LLM Output Protocol
 
 Assistant `content` is user-visible. The pipeline sends only the final LLM round that has no `tool_calls`.

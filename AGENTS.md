@@ -157,6 +157,10 @@ cd tools/markdown-renderer
 npx playwright install-deps chromium
 ```
 
+## 生产数据重置
+
+生产机 `/opt/mutsumi-sync-v3/reset_production_data.sh` 用于清理测试或历史状态。它会停止 `mutsumi-sync-v3.service`，删除共享目录 `/opt/mutsumi-sync-v3/shared/data` 下的数据库、日志、媒体文件及临时文件，再启动服务；不会删除代码、配置或共享 `system-prompts.yaml`。执行前先运行 `--dry-run`，正常执行需要输入 `CLEAR`，自动化场景才使用 `--yes`。
+
 ## LLM 输出协议
 
 - 最终轮 assistant `content` 会发送给用户；reasoning_content 永远不发送。
