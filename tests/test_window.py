@@ -55,6 +55,18 @@ class TestMessageWindow:
         assert [item["record_id"] for item in w.get_context()] == [17, 17]
         assert [item["record_id"] for item in w] == [17, 17]
 
+    def test_actor_provenance_is_preserved_in_context(self):
+        w = MessageWindow()
+        w.add(
+            user_id="qq:user:42",
+            actor_name="Alice",
+            message="hello from the group",
+        )
+
+        context = w.get_context()[0]
+        assert context["user_id"] == "qq:user:42"
+        assert context["actor_name"] == "Alice"
+
     def test_coverage_trust_can_mark_a_truncated_restore(self):
         w = MessageWindow(coverage_trusted=False)
 

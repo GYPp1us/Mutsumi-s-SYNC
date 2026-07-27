@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 from .memory.window import MessageWindow
@@ -37,6 +37,11 @@ class PipelineDeps:
     source: str = "user"
     silent: bool = False
     remember_input: bool = True
+    conversation_id: str = ""
+    actor_id: str = ""
+    actor_name: str = ""
+    pipeline_id: str = ""
+    inbound_events: list[dict[str, str]] = field(default_factory=list)
 
 
 class PipelineScheduler:
@@ -54,6 +59,7 @@ class PipelineScheduler:
 
         self._windows: dict[str, MessageWindow] = {}
         self._sessions: dict[str, SessionState] = {}
+        self._legacy_aliases: set[str] = set()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._pending_events: dict[str, list[MessageEvent]] = {}
         self._debounce_timers: dict[str, asyncio.Task[None]] = {}
@@ -64,9 +70,27 @@ class PipelineScheduler:
         self.on_state_change: Callable[[], None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._scheduled_tasks: dict[int, asyncio.Task[None]] = {}
+        self._episode_timers: dict[str, asyncio.Task[None]] = {}
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
+            return f"group:{event.group_id}"
+        return f"private:{event.user_id}"
+
+    @staticmethod
+    def _actor_id(event: MessageEvent) -> str:
+        return f"qq:user:{event.user_id}"
+
+    @staticmethod
+    def _actor_name(event: MessageEvent) -> str:
+        sender = event.sender or {}
+        return str(sender.get("card") or sender.get("nickname") or event.user_id)
+
+    @staticmethod
+    def _storage_key(event: MessageEvent) -> str:
+        if event.message_type == "group" and event.group_id:
+            # Keep legacy per-actor memory scopes while the window/event stream
+            # is shared by the actual group conversation.
             return f"group:{event.group_id}:{event.user_id}"
         return f"private:{event.user_id}"
 
@@ -108,6 +132,13 @@ class PipelineScheduler:
         if key not in self._sessions:
             self._sessions[key] = SessionState()
 
+    def _alias_legacy_group_state(self, key: str, storage_key: str) -> None:
+        if key == storage_key or not key.startswith("group:"):
+            return
+        self._windows[storage_key] = self._windows[key]
+        self._sessions[storage_key] = self._sessions[key]
+        self._legacy_aliases.add(storage_key)
+
     @staticmethod
     def _peer_from_key(key: str) -> Peer:
         from .message.sender import Peer
@@ -135,8 +166,37 @@ class PipelineScheduler:
         self._cancel_debounce_timer(key)
         self._pending_events.pop(key, None)
 
+    def _cancel_episode_timer(self, conversation_id: str) -> None:
+        task = self._episode_timers.pop(conversation_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    def _schedule_episode_summary(self, conversation_id: str) -> None:
+        self._cancel_episode_timer(conversation_id)
+        self._episode_timers[conversation_id] = asyncio.create_task(
+            self._wait_and_summarize_episode(conversation_id)
+        )
+
+    async def _wait_and_summarize_episode(self, conversation_id: str) -> None:
+        try:
+            from .memory.episodes import summarize_pending_episode
+            await asyncio.sleep(max(1, int(self.config.context.episode_idle_seconds)))
+            await summarize_pending_episode(
+                self.store,
+                self.config,
+                conversation_id,
+                max_events=max(1, int(self.config.context.episode_max_events)),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[EPISODE] idle summary failed conversation=%s", conversation_id)
+        finally:
+            self._episode_timers.pop(conversation_id, None)
+
     async def dispatch(self, event: MessageEvent) -> None:
         key = self._make_key(event)
+        self._cancel_episode_timer(key)
 
         from .message.classifier import classify_message
         classified = classify_message(event.message, event.raw_message)
@@ -162,18 +222,34 @@ class PipelineScheduler:
         from .message.classifier import classify_message, MessageType
 
         texts: list[str] = []
+        text_events: list[tuple[MessageEvent, str]] = []
         final_type = MessageType.SHORT_TEXT
         final_image_file: str | None = None
         final_image_url: str | None = None
         for ev in events:
             c = classify_message(ev.message, ev.raw_message)
             if c.content:
-                texts.append(c.content)
+                text_events.append((ev, c.content))
             if c.msg_type == MessageType.IMAGE:
                 final_type = MessageType.IMAGE
                 final_image_file = c.image_file or final_image_file
                 final_image_url = c.image_url or final_image_url
 
+        actor_ids = {self._actor_id(ev) for ev, _ in text_events}
+        multiple_group_actors = key.startswith("group:") and len(actor_ids) > 1
+        inbound_events = [
+            {
+                "actor_id": self._actor_id(ev),
+                "actor_name": self._actor_name(ev),
+                "content": content,
+            }
+            for ev, content in text_events
+        ]
+        for ev, content in text_events:
+            if multiple_group_actors:
+                texts.append(f"Speaker {self._actor_name(ev)} ({self._actor_id(ev)}):\n{content}")
+            else:
+                texts.append(content)
         merged_message = "\n".join(texts)
         if len(merged_message) >= 50:
             final_type = MessageType.LONG_TEXT
@@ -182,9 +258,13 @@ class PipelineScheduler:
 
         await self.cancel_user(key)
         self._ensure_user_state(key)
+        storage_key = self._storage_key(events[0])
+        self._alias_legacy_group_state(key, storage_key)
 
         from .pipeline import pipeline
 
+        actor_id = "qq:group:multiple" if multiple_group_actors else self._actor_id(events[0])
+        actor_name = "Multiple group members" if multiple_group_actors else self._actor_name(events[0])
         deps = PipelineDeps(
             config=self.config,
             registry=self.registry,
@@ -193,7 +273,12 @@ class PipelineScheduler:
             window=self._windows[key],
             session=self._sessions[key],
             peer=PEER,
-            group_key=key,
+            group_key=self._storage_key(events[0]),
+            conversation_id=key,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            pipeline_id=f"{key}:{time.time_ns()}",
+            inbound_events=inbound_events,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -217,6 +302,7 @@ class PipelineScheduler:
                 logger.exception("[SCHED] unhandled error in pipeline for %s", key)
             finally:
                 self.clear_pipeline_state(key)
+                self._schedule_episode_summary(key)
 
         task = asyncio.create_task(_run())
         self._tasks[key] = task
@@ -225,6 +311,8 @@ class PipelineScheduler:
         PEER = self._make_peer(event)
         await self.cancel_user(key)
         self._ensure_user_state(key)
+        storage_key = self._storage_key(event)
+        self._alias_legacy_group_state(key, storage_key)
 
         from .pipeline import pipeline
 
@@ -236,7 +324,11 @@ class PipelineScheduler:
             window=self._windows[key],
             session=self._sessions[key],
             peer=PEER,
-            group_key=key,
+            group_key=self._storage_key(event),
+            conversation_id=key,
+            actor_id=self._actor_id(event),
+            actor_name=self._actor_name(event),
+            pipeline_id=f"{key}:{time.time_ns()}",
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -260,6 +352,7 @@ class PipelineScheduler:
                 logger.exception("[SCHED] unhandled error in pipeline for %s", key)
             finally:
                 self.clear_pipeline_state(key)
+                self._schedule_episode_summary(key)
 
         task = asyncio.create_task(_run())
         self._tasks[key] = task
@@ -298,46 +391,59 @@ class PipelineScheduler:
     async def startup(self) -> None:
         logger.info("[STARTUP] restoring windows from database")
         group_keys = await self.store.get_message_group_keys()
-
+        restored: dict[str, list[dict]] = {}
+        scopes: dict[str, list[str]] = {}
         for gk in group_keys:
+            parts = gk.split(":")
+            conversation_id = ":".join(parts[:2]) if len(parts) >= 3 and parts[0] == "group" else gk
+            scopes.setdefault(conversation_id, []).append(gk)
             boundary = await self.store.get_newest_compaction_summary(gk)
             after_id = boundary["covered_through_message_id"] if boundary else 0
-
             uncovered = await self.store.get_restorable_messages(gk, after_id=after_id, limit=201)
-            if not uncovered:
-                continue
+            for row in uncovered:
+                row["storage_key"] = gk
+            restored.setdefault(conversation_id, []).extend(uncovered)
 
-            restore_truncated = len(uncovered) > 200
+        for conversation_id, rows in restored.items():
+            rows.sort(key=lambda item: int(item.get("id") or 0))
+            restore_truncated = len(rows) > 200
             if restore_truncated:
-                uncovered = uncovered[-200:]
+                rows = rows[-200:]
             window = MessageWindow(coverage_trusted=not restore_truncated)
-            for msg in uncovered:
+            for msg in rows:
                 parsed = json.loads(msg["content"])
                 user_text = parsed.get("user", "")
                 bot_text = parsed.get("bot", "")
+                storage_key = str(msg.get("storage_key") or msg.get("group_key") or conversation_id)
+                parts = storage_key.split(":")
+                actor_id = f"qq:user:{parts[2]}" if len(parts) >= 3 and parts[0] == "group" else storage_key
                 if user_text:
                     window.add(
-                        user_id=gk,
+                        user_id=actor_id,
                         message=str(user_text),
                         created_at=msg.get("created_at"),
                         record_id=msg["id"],
                     )
                 if bot_text:
                     window.add(
-                        user_id=gk,
+                        user_id="bot:self",
                         message=str(bot_text),
                         is_bot=True,
                         created_at=msg.get("created_at"),
                         record_id=msg["id"],
+                        actor_name="Mutsumi",
                     )
 
-            self._windows[gk] = window
-            self._ensure_user_state(gk)
+            self._windows[conversation_id] = window
+            self._ensure_user_state(conversation_id)
+            if conversation_id.startswith("group:"):
+                for scope in scopes.get(conversation_id, []):
+                    self._alias_legacy_group_state(conversation_id, scope)
             logger.info(
                 "[STARTUP] restored window %s: %d items (after id %d, coverage_trusted=%s)",
-                gk,
+                conversation_id,
                 len(window),
-                after_id,
+                0,
                 window.coverage_trusted,
             )
 
@@ -495,6 +601,15 @@ class PipelineScheduler:
                 pass
         self._scheduled_tasks.clear()
 
+        for task in list(self._episode_timers.values()):
+            task.cancel()
+        for task in list(self._episode_timers.values()):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._episode_timers.clear()
+
         for key in list(self._keys()):
             self._cleanup_debounce(key)
             await self.cancel_user(key)
@@ -503,4 +618,4 @@ class PipelineScheduler:
         logger.info("[SHUTDOWN] complete")
 
     def _keys(self) -> list[str]:
-        return list(self._windows.keys())
+        return [key for key in self._windows if key not in self._legacy_aliases]
