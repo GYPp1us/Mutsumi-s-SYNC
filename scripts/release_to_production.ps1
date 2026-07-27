@@ -11,6 +11,7 @@ Default production paths:
 
   /opt/mutsumi-sync-v3/releases
   /opt/mutsumi-sync-v3/shared/config.yaml
+  /opt/mutsumi-sync-v3/shared/system-prompts.yaml
   /opt/mutsumi-sync-v3/shared/data
   journalctl -u mutsumi-sync-v3.service --since -2min --no-pager -l
 
@@ -318,11 +319,17 @@ archive="/tmp/mutsumi-release.tar"
 release_dir="`$deploy_root/releases/`$release_name"
 
 mkdir -p "`$deploy_root/releases"
+mkdir -p "`$deploy_root/shared/data"
 rm -rf "`$release_dir"
 mkdir -p "`$release_dir"
 tar -xf "`$archive" -C "`$release_dir"
 
 ln -sfn "`$deploy_root/shared/config.yaml" "`$release_dir/config.yaml"
+if [ ! -f "`$deploy_root/shared/system-prompts.yaml" ]; then
+  cp "`$release_dir/system-prompts.yaml" "`$deploy_root/shared/system-prompts.yaml"
+fi
+rm -f "`$release_dir/system-prompts.yaml"
+ln -sfn "`$deploy_root/shared/system-prompts.yaml" "`$release_dir/system-prompts.yaml"
 rm -rf "`$release_dir/data"
 ln -sfn "`$deploy_root/shared/data" "`$release_dir/data"
 

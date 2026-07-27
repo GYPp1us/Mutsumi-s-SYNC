@@ -24,11 +24,6 @@ from .memory.timestamps import (
 from .tools.send import send_tool
 from .vision import describe_image
 from .logging import log_context, log_llm_result, log_tool_call, log_send, ESTIMATE_CHARS_PER_TOKEN
-from .prompts import (
-    DEFAULT_SYSTEM_PROMPT,
-    MESSAGE_SUMMARY_SYSTEM_PROMPT,
-    SUMMARY_MERGE_SYSTEM_PROMPT,
-)
 
 if TYPE_CHECKING:
     from .scheduler import PipelineDeps
@@ -81,7 +76,7 @@ def _is_placeholder_summary(summary: str) -> bool:
 
 
 def _build_default_system_prompt(config) -> str:
-    return DEFAULT_SYSTEM_PROMPT
+    return config.prompts.system.runtime
 
 
 async def _inject_self_note(store, group_key: str, config) -> str:
@@ -678,7 +673,7 @@ async def _generate_and_save_summary(
                 payload = {
                     "model": summarizer_cfg.model,
                     "messages": [
-                        {"role": "system", "content": MESSAGE_SUMMARY_SYSTEM_PROMPT},
+                        {"role": "system", "content": deps.config.prompts.system.message_summary},
                         {"role": "user", "content": chunk},
                     ],
                     "temperature": summarizer_cfg.temperature,
@@ -704,7 +699,7 @@ async def _generate_and_save_summary(
                 synthesis_payload = {
                     "model": summarizer_cfg.model,
                     "messages": [
-                        {"role": "system", "content": SUMMARY_MERGE_SYSTEM_PROMPT},
+                        {"role": "system", "content": deps.config.prompts.system.summary_merge},
                         {"role": "user", "content": summary},
                     ],
                     "temperature": summarizer_cfg.temperature,
