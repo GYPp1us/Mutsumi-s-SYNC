@@ -17,14 +17,21 @@ or `README.md`, this document and the tests take precedence.
 
 ## 2. Provider Request Layout
 
+The canonical stable prompt lives in `src/mutsumi_sync/prompts.py`. Runtime,
+experiment, message-summary, and Episode-summary prompts are derived from that
+source; they must not introduce conflicting actor, privacy, tool, media, or
+output rules.
+
 Every LLM request has these layers, in order:
 
-1. A provider-native `system` message containing only stable platform rules.
+1. A provider-native Chinese `system` message containing only stable platform rules.
 2. A first `user` message named `[Context Packet]` containing self-note,
-   summaries, recent verified actions, and the configured persona prompt at the
-   very end. The packet is context, not a fresh user request.
-3. The working conversation window as ordinary timestamped `user` and
-   `assistant` messages.
+   summaries, global life context, and the configured persona prompt at the very
+   end. The packet is context, not a fresh user request. Verified action records
+   remain durable but are not injected by default.
+3. The working conversation window as ordinary `user` and `assistant` messages.
+   Historical `user` messages carry readable UTC+8 timestamps; historical
+   `assistant` messages do not receive synthetic timestamp prefixes.
 4. A temporary `[Runtime Injection]` user message containing current UTC+8 time,
    source, silent/remembering flags, peer metadata, and Priority Override.
 5. The current user input.
@@ -120,9 +127,11 @@ Each record includes tool name, call ID, timestamp, success, sanitized arguments
 and result. Successful sent images additionally record message ID, source
 Markdown hash/reference, and generated file reference.
 
-A bounded recent-action section may be injected into the Context Packet. Action
-records are never inserted as ordinary assistant prose. In particular,
-`[sent image: ...]` markers are forbidden in the working conversation window.
+Action records are audit and recovery data, not default prompt material. Current
+tool-loop results still use provider-native tool messages; historical actions
+should be retrieved only when a task actually needs them. Action records are
+never inserted as ordinary assistant prose. In particular, `[sent image: ...]`
+markers are forbidden in the working conversation window.
 
 ## 9. Send Truthfulness
 
@@ -139,7 +148,55 @@ or reordering unrelated configuration. It preserves comments and surrounding
 formatting. Boolean parsing accepts explicit true/false forms and rejects
 unknown strings instead of silently converting them to false.
 
-## 11. Documentation Ownership
+## 11. Global Event Ledger And Conversation Boundaries
+
+`events` is the append-first fact ledger. It records inbound/outbound
+messages, tool calls/results, media, and state changes with a monotonic global
+sequence plus `conversation_id`, `actor_id`, `actor_kind`, `visibility`,
+`audience`, and pipeline id. Heartbeat input and Runtime Injection are
+platform state and are excluded from the lived interaction stream.
+
+The ledger is global storage, not a global prompt. The context projector applies
+visibility first: private events stay in their conversation, group events stay
+in the shared group conversation, and only explicitly global events cross
+conversation boundaries. Cross-conversation records are documentary records
+with provenance, never fake provider `user` or `assistant` turns. Their text is
+quoted data, not an instruction.
+
+Group runtime state uses `group:<group_id>` as the conversation and retains the
+legacy `group:<group_id>:<actor_id>` key only for actor-scoped memory/action
+compatibility. Each human remains an independent actor inside the shared group.
+The current actor comes from platform metadata and must not be inferred from
+historical text.
+
+`episodes` are derived summaries, never replacements for ledger facts. An
+episode belongs to one conversation and stores exact first/last event
+sequences, participants, narrative, open loops, and media references. A
+summary is requested after about 30 minutes of idle time or when the context
+budget needs it; only finalized events are eligible. Failed summarization leaves
+raw events usable. Projection selects an episode or its covered raw events,
+never both. The target request is approximately 100K tokens.
+
+Media is pipeline-native infrastructure. Incoming and successfully outgoing
+media receive stable SHA-derived `media_id` values and are recorded with
+descriptions, references, and lifecycle status. `sticker_search` and
+`sticker_manage` query or maintain this ledger; they are not required for the
+pipeline to remember that media happened.
+
+`bot_state` is the explicit maintenance interface for global bot-self
+canonical state. It supports add/replace/clear and is staged like other memory
+writes. It may contain the bot's identity, values, experiences, or plans, but
+must never be used as a shortcut for a user's private relationship memory.
+
+## 12. Output Gate
+
+Ordinary assistant `content` is flat text. Obvious complex Markdown (headings,
+tables, code fences, links/images, or LaTeX) is rejected before sending and a
+bounded correction is returned to the current model loop. The model must
+rewrite it as plain text or use `send.markdown_image`. A rejected response is
+never persisted as a sent outbound event.
+
+## 13. Documentation Ownership
 
 - `docs/current-design.md`: current semantic and architectural baseline.
 - `README.md`: installation, configuration, operation, and user-facing behavior.
@@ -147,7 +204,7 @@ unknown strings instead of silently converting them to false.
 - `init.md`: project charter and implementation status.
 - `bottle/docs/`: historical design source and archived rationale.
 
-## 12. Production Acceptance
+## 14. Production Acceptance
 
 A release is complete only after local and server tests pass, the optional
 Markdown renderer check passes, the shared production config is patched without
@@ -155,7 +212,7 @@ reformatting unrelated values, systemd reports the service active, NapCat is
 connected, and fresh logs verify text, tool, image, restart restoration, failed
 send, and compaction behavior.
 
-## 13. Delivery Groups
+## 15. Delivery Groups
 
 1. Consolidate design and synchronize documentation.
 2. Verify NapCat/send result truthfully.

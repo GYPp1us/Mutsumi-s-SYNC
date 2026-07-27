@@ -75,7 +75,7 @@ class ContextConfig(BaseModel):
     max_tokens: int = 4096
     window_max_tokens: int = 100000
     window_min_tokens: int = 50000
-    model_context_tokens: int = 131072
+    model_context_tokens: int = 100000
     compression_trigger_ratio: float = 0.8
     compression_target_ratio: float = 0.5
     reserved_output_tokens: int = 8192
@@ -83,6 +83,8 @@ class ContextConfig(BaseModel):
     summaries_max_count: int = 180
     summaries_min_count: int = 90
     debounce_timeout: float = 1.5
+    episode_idle_seconds: int = 1800
+    episode_max_events: int = 160
 
 
 class MemoryConfig(BaseModel):

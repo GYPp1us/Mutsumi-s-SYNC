@@ -164,8 +164,9 @@ async def _describe_openai_compatible(
                     {
                         "type": "text",
                         "text": (
-                            "Describe this image for long-term chat memory. "
-                            "Be concise, factual, and preserve visible text, formulas, code, and diagrams."
+                            "Describe this image for long-term chat memory. Return exactly two plain-text lines: "
+                            "Description: a concise factual description preserving visible text, formulas, code, and diagrams; "
+                            "Short description: a short label under twenty words suitable for a media ledger search."
                         ),
                     },
                     {"type": "image_url", "image_url": {"url": url}},

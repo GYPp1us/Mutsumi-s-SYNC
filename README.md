@@ -11,7 +11,10 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - OpenAI-compatible LLM provider with DeepSeek reasoning support.
 - Built-in tool registry with hot snapshot/version tracking.
 - SQLite message store, summaries, self notes, and media storage.
-- Five-layer context assembly: stable provider-native `system`, a persistent `Context Packet`, a timestamped working window, temporary `Runtime Injection`, and current input.
+- Global Event Ledger with provenance-preserving cross-conversation projections and idle Episode summaries.
+- Pipeline-native Media Ledger with SHA deduplication, stable media IDs, and global sticker search/maintenance tools.
+- Explicit `bot_state` canonical projection for facts about the bot itself, separate from private relationship memory.
+- Five-layer context assembly: stable provider-native Chinese `system`, a persistent `Context Packet`, a working window with timestamps only on historical user turns, temporary `Runtime Injection`, and current input.
 - A separate persona prompt injected at the end of the first `Context Packet` user message.
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
@@ -108,13 +111,15 @@ model:
   reasoning_effort: max
 
 context:
-  model_context_tokens: 131072
+  model_context_tokens: 100000
   compression_trigger_ratio: 0.8
   compression_target_ratio: 0.5
   reserved_output_tokens: 8192
   recent_actions_max_count: 12
   summaries_max_count: 180
   summaries_min_count: 90
+  episode_idle_seconds: 1800
+  episode_max_events: 160
 
 prompts:
   persona: ""
@@ -219,9 +224,9 @@ Use `no_reply` when the turn should intentionally produce no visible message. Th
 
 ## Context And Memory Protocol
 
-The LLM request uses one provider-native `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, recent verified actions, and the configured `prompts.persona` at the very end; it is not a fresh user request. Later user/assistant messages are the working conversation window.
+The LLM request uses one provider-native Chinese `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, global life context, and the configured `prompts.persona` at the very end; it is not a fresh user request. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
 
-Summaries, self notes, and window messages are annotated with readable UTC+8 timestamps. Older self-note lines without timestamps are injected as `很久之前`.
+Summaries, self notes, and historical user turns are annotated with readable UTC+8 timestamps. Historical assistant turns are passed through without synthetic timestamp prefixes. Older self-note lines without timestamps are injected as `很久之前`.
 
 Before the current user request, the pipeline injects a temporary `[Runtime Injection]` user message with current UTC+8 time, source, silent/remembering flags, peer metadata, and the active Priority Override. Runtime Injection is platform state, not user-authored chat, and is not written to durable history.
 
@@ -232,6 +237,29 @@ Inbound user text is saved before the LLM call. If the task is cancelled, the sa
 Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete record-ID turns and stores a trusted `covered_through_message_id`. Legacy `last_message_id` values are ignored during restart restoration. Only successful conversation records are restored; memory, action artifacts, cancelled/error/no-reply records are excluded.
 
 Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate tool result says `staged`, while the final success or failure is stored in the action ledger.
+
+### Global Event And Media Ledger
+
+The `events` table is the append-first interaction ledger. It records actor,
+conversation, visibility, lifecycle, tool, and media provenance. Global storage
+does not mean global prompt injection: private events remain private, group
+events remain in their group, and only explicitly global records cross
+conversations. Cross-conversation records are documentary data with actor IDs,
+never simulated `user` or `assistant` turns.
+
+A group has one shared conversation window while members retain separate actor
+and legacy memory scopes. After about 30 minutes of idle time, finalized events
+may be summarized into an Episode with exact sequence coverage. Raw events are
+never deleted; context projection chooses either the Episode or its covered raw
+events, keeping requests near the 100K-token attention budget.
+
+Incoming and successfully outgoing media are automatically registered with a
+stable SHA-derived `media_id`. `sticker_search` without a query lists all
+available stickers; `sticker_manage` updates descriptions or lifecycle status.
+
+Prompt ownership is centralized in `src/mutsumi_sync/prompts.py`. The runtime,
+summary workers, and context experiment use the same protocol definitions so
+historical data is interpreted consistently at every LLM boundary.
 
 ## Heartbeat And Vision
 

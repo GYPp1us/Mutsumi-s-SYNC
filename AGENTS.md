@@ -1,10 +1,22 @@
 # Current Context, Heartbeat, And Vision Rules
 
-- LLM requests use a provider-native non-empty `system` message for durable platform rules.
-- The first `user` message is a `[Context Packet]` containing self-note, typed summaries, recent verified actions, and `prompts.persona` at the end. It is context, not a fresh user request.
+## Global Event Ledger Rules
+
+- `bot_state` is the only explicit global bot-self state tool; relationship facts remain conversation-scoped.
+
+- `events` is the append-first global fact source. It carries actor, conversation, visibility, audience, lifecycle, tool, and media provenance.
+- Global storage is not global prompt injection. Private events remain private; group events remain in their group; only explicitly global events cross conversations.
+- Cross-conversation events are documentary records with actor IDs, never simulated provider `user` or `assistant` turns.
+- A group has one shared conversation window while members retain independent actor identity and legacy memory/action scopes.
+- Episodes summarize only finalized events and store exact sequence coverage. Raw events are never deleted, and a projection selects an Episode or its covered raw events, never both.
+- Media is pipeline-native. SHA-derived media IDs and descriptions are recorded automatically; `sticker_search` and `sticker_manage` maintain the global media ledger.
+- Ordinary assistant content must pass the flat-text output gate. Complex Markdown goes through `send.markdown_image`.
+
+- LLM requests use a provider-native non-empty Chinese `system` message for durable platform rules.
+- The first `user` message is a `[Context Packet]` containing self-note, typed summaries, global life context, and `prompts.persona` at the end. It is context, not a fresh user request. The action ledger is not injected by default.
 - Working conversation messages after the Context Packet are only the current working context window.
 - A temporary `[Runtime Injection]` user message is inserted immediately before the current user request. It carries current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override. It is not user-authored chat and must not be written to durable history.
-- Summaries, self-note entries, and working-window messages must be timestamped in a readable UTC+8 form. Existing self-note lines without timestamps are injected with `很久之前`.
+- Summaries, self-note entries, and historical `user` turns must use readable UTC+8 timestamps. Historical `assistant` turns must not receive synthetic timestamp prefixes. Existing self-note lines without timestamps are injected with `很久之前`.
 - `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is injected only once in Runtime Injection and should be used only for high-priority instructions.
 - Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
 - Pipe-based reply splitting is disabled. Assistant content is sent once and `|` remains literal.

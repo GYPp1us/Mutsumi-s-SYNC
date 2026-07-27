@@ -8,13 +8,15 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
 import httpx
 
 from .message.classifier import MessageType
 from .message.sender import send_failure_message, send_succeeded
-from .memory.store import StoredMessage
+from .memory.store import EventRecord, EventType, StoredMessage
+from .memory.projection import build_global_life_context
 from .memory.timestamps import (
     ensure_timestamped_lines,
     format_context_timestamp,
@@ -22,6 +24,11 @@ from .memory.timestamps import (
 from .tools.send import send_tool
 from .vision import describe_image
 from .logging import log_context, log_llm_result, log_tool_call, log_send, ESTIMATE_CHARS_PER_TOKEN
+from .prompts import (
+    DEFAULT_SYSTEM_PROMPT,
+    MESSAGE_SUMMARY_SYSTEM_PROMPT,
+    SUMMARY_MERGE_SYSTEM_PROMPT,
+)
 
 if TYPE_CHECKING:
     from .scheduler import PipelineDeps
@@ -30,7 +37,8 @@ logger = logging.getLogger("mutsumi.pipeline")
 
 MAX_TOOL_STEPS = 10
 MAX_SENDS_PER_LOOP = 5
-WRITE_TOOLS = {"self_note", "memory_save", "priority_override"}
+MAX_OUTPUT_REWRITES = 2
+WRITE_TOOLS = {"self_note", "memory_save", "priority_override", "bot_state"}
 NO_REPLY_TOOL = "no_reply"
 
 
@@ -73,23 +81,7 @@ def _is_placeholder_summary(summary: str) -> bool:
 
 
 def _build_default_system_prompt(config) -> str:
-    return (
-        "You are an assistant running on Mutsumi's SYNC, a NapCat-based QQ social agent platform.\n"
-        "The provider tool schema is authoritative. Use only tools present in that schema and obey each returned result.\n"
-        "Never claim that a tool or send action succeeded without a real successful tool result.\n"
-        "Memory write tools are staged during the tool loop and committed atomically during pipeline cleanup; a staged result is not yet a persisted result.\n"
-        "If the same tool returns an error three consecutive times, stop retrying it and explain the failure when a visible reply is appropriate.\n"
-        "Assistant content from the final round without tool_calls is the ordinary user-visible reply and is currently sent as one QQ message.\n"
-        "Use tools for actual side effects, external queries, memory maintenance, special message segments, or deliberate silence.\n"
-        "reasoning_content is private chain-of-thought state: it may be retained only inside the current provider tool loop and is never sent to the user.\n"
-        "Keep replies natural, context-aware, and appropriate for an ongoing social conversation.\n"
-        "The first user message may be a [Context Packet]. It is persistent background context, not a fresh user request.\n"
-        "A later [Runtime Injection] user message is temporary platform state, not user-authored chat or durable history.\n"
-        "Timestamps, current time, source, peer data, and runtime flags are supplied by the platform. Do not invent or rewrite them.\n"
-        "Priority Override appears once per request and has higher priority than ordinary memory.\n"
-        "Heartbeat requests are silent health checks and must not create durable conversation or memory state.\n"
-        "Image descriptions are supplied by a configured vision provider and should be handled as ordinary user context."
-    )
+    return DEFAULT_SYSTEM_PROMPT
 
 
 async def _inject_self_note(store, group_key: str, config) -> str:
@@ -107,6 +99,14 @@ async def _inject_self_note(store, group_key: str, config) -> str:
         content = content[:chars] + "\n[truncated]"
 
     return f"[私人印象 — current: {current} / target: {target} tokens]\n{content}\n[/私人印象]"
+
+
+async def _inject_bot_state(store) -> str:
+    state = await store.get_canonical_state()
+    if not state or not str(state.get("content", "")).strip():
+        return ""
+    content = ensure_timestamped_lines(str(state["content"]))
+    return f"[Canonical Bot State]\n{content}\n[/Canonical Bot State]"
 
 
 async def _inject_priority_override(store, group_key: str) -> str:
@@ -145,6 +145,13 @@ def _with_context_timestamp(content: str, created_at: Any | None) -> str:
     return f"[time: {format_context_timestamp(created_at)}]\n{content}"
 
 
+def _window_item_content(item: dict[str, Any]) -> str:
+    content = str(item.get("content", ""))
+    if item.get("role") == "user":
+        return _with_context_timestamp(content, item.get("created_at"))
+    return content
+
+
 async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any]]:
     config = deps.config
     store = deps.store
@@ -159,6 +166,18 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     if self_note_text:
         bootstrap_sections.append(self_note_text)
 
+    bot_state_text = await _inject_bot_state(store)
+    if bot_state_text:
+        bootstrap_sections.append(bot_state_text)
+
+    life_context = await build_global_life_context(
+        store,
+        deps.conversation_id or deps.group_key,
+        limit=config.context.recent_actions_max_count * 2,
+    )
+    if life_context:
+        bootstrap_sections.append(life_context)
+
     summaries = await store.get_summaries(deps.group_key, limit=config.context.summaries_max_count)
     if summaries:
         summary_texts = []
@@ -166,28 +185,13 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
             if _is_placeholder_summary(str(s["summary"])):
                 continue
             source_label = "user" if s["source"] == "user" else "assistant"
-            timestamp = format_context_timestamp(s.get("created_at"))
-            summary_texts.append(f"[{timestamp}][{source_label}]: {s['summary']}")
+            if source_label == "user":
+                timestamp = format_context_timestamp(s.get("created_at"))
+                summary_texts.append(f"[{timestamp}][user]: {s['summary']}")
+            else:
+                summary_texts.append(f"[assistant]: {s['summary']}")
         if summary_texts:
             messages.append({"role": "system", "content": "[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]"})
-
-    actions = await store.get_recent_actions(
-        deps.group_key,
-        limit=config.context.recent_actions_max_count,
-    )
-    if actions:
-        action_lines = []
-        for action in actions:
-            stamp = format_context_timestamp(action.get("created_at"))
-            outcome = "success" if action.get("success") else "failure"
-            result_text = str(action.get("result", "")).replace("\n", " ")[:240]
-            action_lines.append(
-                f"{stamp} | {action.get('tool_name', 'unknown')} | {outcome} | {result_text}"
-            )
-        bootstrap_sections.append(
-            "Recent verified actions (platform records, not assistant claims):\n"
-            + "\n".join(action_lines)
-        )
 
     extra_system_sections = [
         str(m.get("content", ""))
@@ -201,7 +205,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     priority_override = await _inject_priority_override(store, deps.group_key)
     bootstrap_body = "\n\n".join(section for section in bootstrap_sections if section.strip())
     if not bootstrap_body:
-        bootstrap_body = "No persistent context is currently available."
+        bootstrap_body = "当前没有可用的持久上下文。"
     persona = config.prompts.persona.strip()
     if persona:
         bootstrap_body += f"\n\n[Persona]\n{persona}\n[/Persona]"
@@ -214,7 +218,14 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     window_ctx = deps.window.get_context()
     for m in window_ctx:
         role = m["role"]
-        content = _with_context_timestamp(str(m["content"]), m.get("created_at"))
+        content = str(m["content"])
+        if role == "user":
+            content = _with_context_timestamp(content, m.get("created_at"))
+        if deps.peer.chat_type == 2 and role == "user":
+            actor_id = str(m.get("user_id") or "unknown")
+            actor_name = str(m.get("actor_name") or actor_id)
+            if actor_id != "qq:group:multiple":
+                content = f"Speaker {actor_name} ({actor_id}):\n{content}"
         messages.append({"role": role, "content": content})
 
     messages.append({
@@ -318,6 +329,88 @@ async def _save_msg(deps: PipelineDeps, message: str, category: str, response: s
         logger.info("[PIPE] saved message category=%s response=%s", category, "yes" if response else "no")
     except Exception:
         logger.exception("Failed to save message to store")
+
+
+async def _append_event(
+    deps: PipelineDeps,
+    *,
+    event_type: str,
+    content: str,
+    actor_id: str | None = None,
+    actor_kind: str = "bot",
+    actor_name: str = "Mutsumi",
+    visibility: str = "private",
+    audience: str = "bot:self",
+    status: str = "finalized",
+    media_ids: list[str] | None = None,
+) -> str | None:
+    if not deps.remember_input:
+        return None
+    try:
+        event = await deps.store.append_event(EventRecord(
+            conversation_id=deps.conversation_id or deps.group_key,
+            actor_id=actor_id or (deps.actor_id if actor_kind == "human" else "bot:self"),
+            actor_kind=actor_kind,
+            actor_name=actor_name or (deps.actor_name if actor_kind == "human" else "Mutsumi"),
+            event_type=event_type,
+            content=content,
+            pipeline_id=deps.pipeline_id,
+            visibility=visibility,
+            audience=audience,
+            status=status,
+            media_ids=media_ids,
+        ))
+        return event.event_id
+    except Exception:
+        logger.exception("Failed to append event type=%s", event_type)
+        return None
+
+
+def _conversation_visibility(deps: PipelineDeps) -> str:
+    return "group" if (deps.peer.chat_type == 2) else "private"
+
+
+async def _append_inbound_events(
+    deps: PipelineDeps,
+    content: str,
+    *,
+    media_ids: list[str] | None = None,
+) -> list[str]:
+    inputs = deps.inbound_events or [{
+        "actor_id": deps.actor_id or "unknown",
+        "actor_name": deps.actor_name or deps.actor_id or "user",
+        "content": content,
+    }]
+    event_ids: list[str] = []
+    for item in inputs:
+        event_id = await _append_event(
+            deps,
+            event_type=EventType.INBOUND.value,
+            content=str(item.get("content") or content),
+            actor_id=str(item.get("actor_id") or "unknown"),
+            actor_kind="human",
+            actor_name=str(item.get("actor_name") or item.get("actor_id") or "user"),
+            visibility=_conversation_visibility(deps),
+            audience="bot:self",
+            status="received",
+            media_ids=media_ids,
+        )
+        if event_id:
+            event_ids.append(event_id)
+    return event_ids
+
+
+async def _update_event_statuses(deps: PipelineDeps, event_ids: list[str], status: str) -> None:
+    for event_id in event_ids:
+        await deps.store.update_event_status(event_id, status)
+
+
+def _short_image_description(description: str) -> str:
+    for line in description.splitlines():
+        if line.lower().startswith("short description:"):
+            return line.split(":", 1)[1].strip()
+    first = description.splitlines()[0].strip() if description.splitlines() else description.strip()
+    return first[:120]
 
 
 def _message_record_content(
@@ -445,6 +538,26 @@ def _extract_send_artifact(reply_result: str) -> dict | None:
     return None
 
 
+async def _register_sent_media(deps: PipelineDeps, tool_args: dict, artifact: dict | None) -> list[str]:
+    media_ids: list[str] = []
+    file_path = str((artifact or {}).get("file") or tool_args.get("image") or "").strip()
+    image_url = str(tool_args.get("image_url") or "").strip()
+    try:
+        if file_path and Path(file_path).is_file():
+            media = await deps.store.register_media(
+                Path(file_path).read_bytes(),
+                kind="image",
+                ext=Path(file_path).suffix,
+            )
+            media_ids.append(media.media_id)
+        elif image_url:
+            media = await deps.store.register_external_media(image_url, kind="image")
+            media_ids.append(media.media_id)
+    except Exception:
+        logger.exception("[MEDIA] failed to register outbound media")
+    return media_ids
+
+
 def _sanitize_action_arguments(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
@@ -565,7 +678,7 @@ async def _generate_and_save_summary(
                 payload = {
                     "model": summarizer_cfg.model,
                     "messages": [
-                        {"role": "system", "content": "用1-2句话中文总结以下内容，不超过100字，保留事实、时间和未解决事项。"},
+                        {"role": "system", "content": MESSAGE_SUMMARY_SYSTEM_PROMPT},
                         {"role": "user", "content": chunk},
                     ],
                     "temperature": summarizer_cfg.temperature,
@@ -591,7 +704,7 @@ async def _generate_and_save_summary(
                 synthesis_payload = {
                     "model": summarizer_cfg.model,
                     "messages": [
-                        {"role": "system", "content": "将这些分段摘要合并为简洁、无重复的中文摘要，保留时间顺序。"},
+                        {"role": "system", "content": SUMMARY_MERGE_SYSTEM_PROMPT},
                         {"role": "user", "content": summary},
                     ],
                     "temperature": summarizer_cfg.temperature,
@@ -695,10 +808,7 @@ async def _compact_context_for_request(
     removed_tokens = 0
     for group in groups[:-1]:
         removed_groups.append(group)
-        removed_tokens += sum(
-            _estimate_tokens(_with_context_timestamp(str(item.get("content", "")), item.get("created_at")))
-            for item in group
-        )
+        removed_tokens += sum(_estimate_tokens(_window_item_content(item)) for item in group)
         if estimate - removed_tokens <= target:
             break
 
@@ -711,7 +821,7 @@ async def _compact_context_for_request(
         else None
     )
     combined = "\n".join(
-        f"{_with_context_timestamp(str(item.get('content', '')), item.get('created_at'))}\n"
+        f"{_window_item_content(item)}\n"
         f"role: {item.get('role', 'unknown')}"
         for item in to_archive
     )
@@ -748,6 +858,21 @@ def _split_visible_content(content: str) -> list[str]:
     return [content] if content.strip() else []
 
 
+def _unsupported_markdown_features(content: str) -> list[str]:
+    features: list[str] = []
+    if re.search(r"(?m)^\s{0,3}#{1,6}\s", content):
+        features.append("heading")
+    if "```" in content or "~~~" in content:
+        features.append("code fence")
+    if re.search(r"(?m)^\s*\|.*\|\s*$", content):
+        features.append("table")
+    if re.search(r"!\[[^\]]*\]\([^)]*\)|\[[^\]]+\]\(https?://[^)]+\)", content):
+        features.append("link or image")
+    if "$$" in content or re.search(r"\\\(|\\\[", content):
+        features.append("LaTeX")
+    return features
+
+
 async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
     parts = _split_visible_content(content)
     if not parts:
@@ -781,6 +906,13 @@ async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
             result=json.dumps(result, ensure_ascii=False),
         )
         sent_parts.append(part)
+        await _append_event(
+            deps,
+            event_type=EventType.OUTBOUND.value,
+            content=part,
+            visibility=_conversation_visibility(deps),
+            audience=deps.conversation_id or deps.group_key,
+        )
     logger.info("[PIPE] sent visible content parts=%d chars=%d", len(sent_parts), len(content))
     return sent_parts
 
@@ -807,7 +939,9 @@ async def pipeline(
     responded = False
     final_status = "received"
     inbound_msg_id: int | None = None
+    inbound_event_ids: list[str] = []
     input_metadata: dict | None = None
+    input_media_id: str | None = None
     if msg_type == MessageType.IMAGE:
         _report_state(deps, "IMAGE_DESCRIBE")
         logger.info("[PIPE] branch=image describe image_file=%s image_url=%s", bool(image_file), bool(image_url))
@@ -818,12 +952,30 @@ async def pipeline(
             "image_file": image_file,
             "image_url": image_url,
             "image_description": None,
+            "media_id": None,
         }
         inbound_msg_id = await _save_inbound_msg(
             deps,
             message,
             msg_type.value,
             input_metadata,
+        )
+        if image_file:
+            try:
+                media = await deps.store.register_media(
+                    Path(image_file).read_bytes(),
+                    kind="image",
+                    ext=Path(image_file).suffix,
+                )
+                input_media_id = media.media_id
+                input_metadata["media_id"] = media.media_id
+                logger.info("[MEDIA] inbound registered media_id=%s", media.media_id)
+            except Exception:
+                logger.exception("[MEDIA] failed to register inbound file")
+        inbound_event_ids = await _append_inbound_events(
+            deps,
+            message,
+            media_ids=[input_media_id] if input_media_id else None,
         )
         try:
             if deps.config.vision.enabled:
@@ -844,24 +996,30 @@ async def pipeline(
                 status="cancelled",
                 input_metadata=input_metadata,
             )
+            await _update_event_statuses(deps, inbound_event_ids, "cancelled")
             raise
         except Exception as exc:
             logger.exception("[PIPE] vision provider raised unexpectedly")
             image_description = f"[Error: vision provider failed: {exc}]"
         input_metadata["image_description"] = image_description
+        if input_media_id:
+            await deps.store.update_media_description(
+                input_media_id,
+                image_description,
+                _short_image_description(image_description),
+            )
         lines = ["The user sent an image."]
         if caption:
             lines.append(f"Caption: {caption}")
         lines.append(f"Vision description: {image_description}")
-        if image_file:
-            lines.append(f"Image file reference: {image_file}")
-        if image_url:
-            lines.append(f"Image URL reference: {image_url}")
+        if input_media_id:
+            lines.append(f"Media ledger reference: {input_media_id}")
         message = "\n".join(lines)
 
     try:
         if inbound_msg_id is None:
             inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
+            inbound_event_ids = await _append_inbound_events(deps, message)
         else:
             await _update_saved_msg(
                 deps,
@@ -890,6 +1048,7 @@ async def pipeline(
         send_count = 0
         last_tool_name = ""
         consecutive_fails = 0
+        output_rewrites = 0
 
         for step in range(MAX_TOOL_STEPS):
             log_context(messages, deps)
@@ -930,6 +1089,26 @@ async def pipeline(
 
             if not result.tool_calls and result.content:
                 logger.info("[PIPE] branch=content_only chars=%d", len(result.content))
+                rich_features = _unsupported_markdown_features(result.content)
+                if rich_features and not deps.silent:
+                    output_rewrites += 1
+                    logger.warning(
+                        "[OUTPUT GATE] rejected Markdown features=%s rewrite=%d/%d",
+                        ",".join(rich_features), output_rewrites, MAX_OUTPUT_REWRITES,
+                    )
+                    if output_rewrites > MAX_OUTPUT_REWRITES:
+                        final_status = "error"
+                        break
+                    messages.append({"role": "assistant", "content": result.content})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[Output Gate] This content was not sent because ordinary QQ replies must be flat plain text. "
+                            "Rewrite it without Markdown, or call send with markdown_image for complex Markdown. "
+                            f"Detected: {', '.join(rich_features)}. Do not claim that the rejected content was sent."
+                        ),
+                    })
+                    continue
                 visible_parts = await _send_visible_content(deps, result.content)
                 if visible_parts:
                     responded = True
@@ -998,6 +1177,15 @@ async def pipeline(
                         artifact = _extract_send_artifact(str(tr))
                         responded = True
                         final_status = "responded"
+                        sent_media_ids = await _register_sent_media(deps, tool_args, artifact)
+                        await _append_event(
+                            deps,
+                            event_type=EventType.OUTBOUND.value,
+                            content=str(tool_args.get("text", "")) or "[special media segment]",
+                            visibility=_conversation_visibility(deps),
+                            audience=deps.conversation_id or deps.group_key,
+                            media_ids=sent_media_ids or None,
+                        )
                     log_send(deps, "tool", tool_args)
                 elif tool_name in WRITE_TOOLS and not deps.remember_input:
                     tr = "[OK] write tool suppressed by non-remembering pipeline]"
@@ -1024,6 +1212,18 @@ async def pipeline(
 
                 tr = str(tr)
                 tc_results[call_id] = tr
+                await _append_event(
+                    deps,
+                    event_type=EventType.TOOL_CALL.value,
+                    content=json.dumps({"tool": tool_name, "call_id": call_id, "arguments": _sanitize_action_arguments(tool_args)}, ensure_ascii=False),
+                    visibility="private",
+                )
+                await _append_event(
+                    deps,
+                    event_type=EventType.TOOL_RESULT.value,
+                    content=_sanitize_action_result(tool_name, tool_args, tr),
+                    visibility="private",
+                )
                 is_failure = tr.startswith("[Error:")
                 if tool_name != last_tool_name:
                     last_tool_name = tool_name
@@ -1081,17 +1281,19 @@ async def pipeline(
 
         if responded and deps.remember_input:
             deps.window.add(
-                user_id=str(deps.peer.peer_uid),
+                user_id=deps.actor_id or str(deps.peer.peer_uid),
                 message=message,
                 record_id=inbound_msg_id,
+                actor_name=deps.actor_name,
             )
             combined_bot_reply = "\n".join(bot_replies)
             if combined_bot_reply:
                 deps.window.add(
-                    user_id=str(deps.peer.peer_uid),
+                    user_id="bot:self",
                     message=combined_bot_reply,
                     is_bot=True,
                     record_id=inbound_msg_id,
+                    actor_name="Mutsumi",
                 )
             logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
         elif responded:
@@ -1109,6 +1311,9 @@ async def pipeline(
             status=final_status,
             input_metadata=input_metadata,
         )
+        if inbound_event_ids:
+            event_status = "error" if final_status == "error" else "finalized"
+            await _update_event_statuses(deps, inbound_event_ids, event_status)
 
         _report_state(deps, "DONE")
 
@@ -1126,6 +1331,7 @@ async def pipeline(
             status="cancelled",
             input_metadata=input_metadata,
         )
+        await _update_event_statuses(deps, inbound_event_ids, "cancelled")
         raise
     except Exception as e:
         logger.exception("[PIPE] error for %s", deps.peer.peer_uid)
@@ -1139,6 +1345,7 @@ async def pipeline(
             status="error",
             input_metadata=input_metadata,
         )
+        await _update_event_statuses(deps, inbound_event_ids, "error")
         if not responded:
             await deps.sender.send(deps.peer, f"模型暂时不可用: {e}")
     finally:
@@ -1153,6 +1360,12 @@ async def pipeline(
                 except Exception as exc:
                     logger.exception("Post-write failed for %s", tool_name)
                     result = f"[Error: {exc}]"
+                await _append_event(
+                    deps,
+                    event_type=EventType.TOOL_RESULT.value,
+                    content=_sanitize_action_result(tool_name, tool_args, result),
+                    visibility="global" if tool_name == "bot_state" and not result.startswith("[Error:") else "private",
+                )
                 await _record_action(
                     deps,
                     tool_name=tool_name,
