@@ -6,7 +6,45 @@ from typing import Any
 
 import yaml
 from dotenv import dotenv_values
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SYSTEM_PROMPTS_FILE = "system-prompts.yaml"
+
+
+class SystemPromptsConfig(BaseModel):
+    runtime: str
+    message_summary: str
+    summary_merge: str
+    episode_summary: str
+
+
+def load_system_prompts(path: Path) -> SystemPromptsConfig:
+    if not path.exists():
+        raise FileNotFoundError(f"System prompts file not found: {path}")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"System prompts file must contain a YAML mapping: {path}")
+    prompts = SystemPromptsConfig(**raw)
+    empty = [name for name, value in prompts.model_dump().items() if not str(value).strip()]
+    if empty:
+        raise ValueError(f"System prompts cannot be empty ({', '.join(empty)}): {path}")
+    return prompts
+
+
+def resolve_system_prompts_path(value: str, config_dir: Path | None = None) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    candidates = []
+    if config_dir is not None:
+        candidates.append(config_dir / path)
+    candidates.extend((Path.cwd() / path, PROJECT_ROOT / path))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return candidates[0].resolve()
 
 
 class NapcatConfig(BaseModel):
@@ -69,6 +107,11 @@ class HeartbeatConfig(BaseModel):
 
 class PromptsConfig(BaseModel):
     persona: str = ""
+    system_file: str = DEFAULT_SYSTEM_PROMPTS_FILE
+    system: SystemPromptsConfig = Field(
+        default_factory=lambda: load_system_prompts(PROJECT_ROOT / DEFAULT_SYSTEM_PROMPTS_FILE),
+        exclude=True,
+    )
 
 
 class ContextConfig(BaseModel):
@@ -134,6 +177,7 @@ class Config(BaseModel):
     prompts: PromptsConfig = PromptsConfig()
 
     _config_path: str | None = None
+    _system_prompts_path: str | None = None
     dirty: bool = False
 
     @classmethod
@@ -162,17 +206,29 @@ class Config(BaseModel):
                 return value
 
             raw = resolve_env(raw)
+            prompts_raw = raw.get("prompts")
+            if prompts_raw is None:
+                prompts_raw = {}
+                raw["prompts"] = prompts_raw
+            if isinstance(prompts_raw, dict):
+                system_file = str(prompts_raw.get("system_file") or DEFAULT_SYSTEM_PROMPTS_FILE)
+                prompts_path = resolve_system_prompts_path(system_file, path.parent)
+                prompts_raw["system"] = load_system_prompts(prompts_path).model_dump()
             instance = cls(**raw)
         else:
             instance = cls()
+            prompts_path = resolve_system_prompts_path(instance.prompts.system_file)
 
         instance._config_path = str(path)
+        instance._system_prompts_path = str(prompts_path)
         return instance
 
     def set(self, key: str, value: Any) -> str:
         parts = key.split(".")
         if not parts:
             return "[Error: empty key]"
+        if len(parts) >= 2 and parts[:2] == ["prompts", "system"]:
+            return "[Error: edit prompts.system_file directly, then reload config]"
         if not hasattr(self, parts[0]):
             return f"[Error: unknown config key: {parts[0]}]"
 
@@ -350,5 +406,6 @@ class Config(BaseModel):
             if key == "dirty":
                 continue
             setattr(self, key, getattr(loaded, key))
+        self._system_prompts_path = loaded._system_prompts_path
         self.dirty = True
         return "[OK] config reloaded"

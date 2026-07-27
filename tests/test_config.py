@@ -37,6 +37,8 @@ class TestConfig:
         assert c.logging.text_file.enabled is True
         assert c.logging.text_file.path == "data/logs/mutsumi.log"
         assert c.prompts.persona == ""
+        assert c.prompts.system_file == "system-prompts.yaml"
+        assert "普通 content 必须是扁平纯文本" in c.prompts.system.runtime
         assert c.dirty is False
 
     def test_load_missing_file(self):
@@ -83,6 +85,14 @@ class TestConfig:
         result = c.set("invalid.key", 1)
         assert result.startswith("[Error: unknown config key")
 
+    def test_system_prompt_body_cannot_be_mutated_in_main_config(self):
+        config = Config()
+
+        result = config.set("prompts.system.runtime", "temporary override")
+
+        assert result.startswith("[Error:")
+        assert config.prompts.system.runtime != "temporary override"
+
     def test_set_type_coercion_int(self):
         c = Config()
         c.set("context.window_max_tokens", "30000")
@@ -110,6 +120,48 @@ class TestConfig:
         c = Config.load(str(path))
 
         assert c.prompts.persona == "legacy persona"
+
+    def test_external_system_prompts_load_and_reload(self, tmp_path):
+        prompt_path = tmp_path / "custom-prompts.yaml"
+        prompt_path.write_text(
+            "runtime: runtime-v1\n"
+            "message_summary: message-v1\n"
+            "summary_merge: merge-v1\n"
+            "episode_summary: episode-v1\n",
+            encoding="utf-8",
+        )
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "prompts:\n  system_file: custom-prompts.yaml\n",
+            encoding="utf-8",
+        )
+
+        config = Config.load(str(config_path))
+        assert config.prompts.system.runtime == "runtime-v1"
+        assert config._system_prompts_path == str(prompt_path.resolve())
+        assert "system" not in config.model_dump()["prompts"]
+
+        prompt_path.write_text(
+            "runtime: runtime-v2\n"
+            "message_summary: message-v2\n"
+            "summary_merge: merge-v2\n"
+            "episode_summary: episode-v2\n",
+            encoding="utf-8",
+        )
+        assert config.reload().startswith("[OK]")
+        assert config.prompts.system.runtime == "runtime-v2"
+
+    def test_external_system_prompts_require_all_levels(self, tmp_path):
+        prompt_path = tmp_path / "incomplete.yaml"
+        prompt_path.write_text("runtime: only-runtime\n", encoding="utf-8")
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "prompts:\n  system_file: incomplete.yaml\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError):
+            Config.load(str(config_path))
 
     def test_get_value(self):
         c = Config()

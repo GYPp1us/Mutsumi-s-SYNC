@@ -257,9 +257,12 @@ Incoming and successfully outgoing media are automatically registered with a
 stable SHA-derived `media_id`. `sticker_search` without a query lists all
 available stickers; `sticker_manage` updates descriptions or lifecycle status.
 
-Prompt ownership is centralized in `src/mutsumi_sync/prompts.py`. The runtime,
-summary workers, and context experiment use the same protocol definitions so
-historical data is interpreted consistently at every LLM boundary.
+System prompt ownership is centralized in `system-prompts.yaml`. The runtime,
+summary workers, and context experiment load the same four prompt levels through
+`prompts.system_file`, so historical data is interpreted consistently at every
+LLM boundary. `config_manager reload` reloads both files. Production keeps the
+prompt file at `/opt/mutsumi-sync-v3/shared/system-prompts.yaml` so releases do
+not overwrite operator changes.
 
 ## Heartbeat And Vision
 

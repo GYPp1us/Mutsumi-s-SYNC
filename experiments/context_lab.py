@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from src.mutsumi_sync.prompts import DEFAULT_SYSTEM_PROMPT
+from src.mutsumi_sync.config import Config
 
 
 TOOLS = [
@@ -51,7 +51,7 @@ TOOLS = [
 ]
 
 
-SYSTEM = DEFAULT_SYSTEM_PROMPT
+SYSTEM = Config.load("config.example.yaml").prompts.system.runtime
 
 
 @dataclass(frozen=True)

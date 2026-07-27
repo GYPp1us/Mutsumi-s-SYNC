@@ -7,7 +7,6 @@ import httpx
 
 from .projection import format_documentary_event
 from .store import EpisodeRecord, MessageStore
-from ..prompts import EVENT_SUMMARY_SYSTEM_PROMPT
 
 logger = logging.getLogger("mutsumi.episodes")
 
@@ -60,7 +59,7 @@ async def summarize_pending_episode(
                 json={
                     "model": summarizer.model,
                     "messages": [
-                        {"role": "system", "content": EVENT_SUMMARY_SYSTEM_PROMPT},
+                        {"role": "system", "content": config.prompts.system.episode_summary},
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": summarizer.temperature,
