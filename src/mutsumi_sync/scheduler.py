@@ -4,8 +4,7 @@ import asyncio
 import json
 import logging
 import time
-import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 from .memory.window import MessageWindow
@@ -42,6 +41,7 @@ class PipelineDeps:
     actor_id: str = ""
     actor_name: str = ""
     pipeline_id: str = ""
+    inbound_events: list[dict[str, str]] = field(default_factory=list)
 
 
 class PipelineScheduler:
@@ -222,18 +222,34 @@ class PipelineScheduler:
         from .message.classifier import classify_message, MessageType
 
         texts: list[str] = []
+        text_events: list[tuple[MessageEvent, str]] = []
         final_type = MessageType.SHORT_TEXT
         final_image_file: str | None = None
         final_image_url: str | None = None
         for ev in events:
             c = classify_message(ev.message, ev.raw_message)
             if c.content:
-                texts.append(c.content)
+                text_events.append((ev, c.content))
             if c.msg_type == MessageType.IMAGE:
                 final_type = MessageType.IMAGE
                 final_image_file = c.image_file or final_image_file
                 final_image_url = c.image_url or final_image_url
 
+        actor_ids = {self._actor_id(ev) for ev, _ in text_events}
+        multiple_group_actors = key.startswith("group:") and len(actor_ids) > 1
+        inbound_events = [
+            {
+                "actor_id": self._actor_id(ev),
+                "actor_name": self._actor_name(ev),
+                "content": content,
+            }
+            for ev, content in text_events
+        ]
+        for ev, content in text_events:
+            if multiple_group_actors:
+                texts.append(f"Speaker {self._actor_name(ev)} ({self._actor_id(ev)}):\n{content}")
+            else:
+                texts.append(content)
         merged_message = "\n".join(texts)
         if len(merged_message) >= 50:
             final_type = MessageType.LONG_TEXT
@@ -247,6 +263,8 @@ class PipelineScheduler:
 
         from .pipeline import pipeline
 
+        actor_id = "qq:group:multiple" if multiple_group_actors else self._actor_id(events[0])
+        actor_name = "Multiple group members" if multiple_group_actors else self._actor_name(events[0])
         deps = PipelineDeps(
             config=self.config,
             registry=self.registry,
@@ -257,9 +275,10 @@ class PipelineScheduler:
             peer=PEER,
             group_key=self._storage_key(events[0]),
             conversation_id=key,
-            actor_id=self._actor_id(events[0]),
-            actor_name=self._actor_name(events[0]),
+            actor_id=actor_id,
+            actor_name=actor_name,
             pipeline_id=f"{key}:{time.time_ns()}",
+            inbound_events=inbound_events,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -381,6 +400,8 @@ class PipelineScheduler:
             boundary = await self.store.get_newest_compaction_summary(gk)
             after_id = boundary["covered_through_message_id"] if boundary else 0
             uncovered = await self.store.get_restorable_messages(gk, after_id=after_id, limit=201)
+            for row in uncovered:
+                row["storage_key"] = gk
             restored.setdefault(conversation_id, []).extend(uncovered)
 
         for conversation_id, rows in restored.items():
@@ -393,20 +414,24 @@ class PipelineScheduler:
                 parsed = json.loads(msg["content"])
                 user_text = parsed.get("user", "")
                 bot_text = parsed.get("bot", "")
+                storage_key = str(msg.get("storage_key") or msg.get("group_key") or conversation_id)
+                parts = storage_key.split(":")
+                actor_id = f"qq:user:{parts[2]}" if len(parts) >= 3 and parts[0] == "group" else storage_key
                 if user_text:
                     window.add(
-                        user_id=gk,
+                        user_id=actor_id,
                         message=str(user_text),
                         created_at=msg.get("created_at"),
                         record_id=msg["id"],
                     )
                 if bot_text:
                     window.add(
-                        user_id=gk,
+                        user_id="bot:self",
                         message=str(bot_text),
                         is_bot=True,
                         created_at=msg.get("created_at"),
                         record_id=msg["id"],
+                        actor_name="Mutsumi",
                     )
 
             self._windows[conversation_id] = window

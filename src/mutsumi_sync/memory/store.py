@@ -429,9 +429,12 @@ class MessageStore:
         self,
         *,
         conversation_id: str | None = None,
+        exclude_conversation_id: str | None = None,
+        visibility: str | None = None,
         after_sequence: int = 0,
         limit: int = 200,
         finalized_only: bool = True,
+        latest: bool = False,
     ) -> list[EventRecord]:
         self._ensure_initialized()
         query = "SELECT * FROM events WHERE sequence > ?"
@@ -439,19 +442,40 @@ class MessageStore:
         if conversation_id is not None:
             query += " AND conversation_id = ?"
             params.append(conversation_id)
+        if exclude_conversation_id is not None:
+            query += " AND conversation_id != ?"
+            params.append(exclude_conversation_id)
+        if visibility is not None:
+            query += " AND visibility = ?"
+            params.append(visibility)
         if finalized_only:
             query += " AND status = 'finalized'"
-        query += " ORDER BY sequence ASC LIMIT ?"
+        query += f" ORDER BY sequence {'DESC' if latest else 'ASC'} LIMIT ?"
         params.append(limit)
         cursor = await self._conn.execute(query, params)
-        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+        rows = list(await cursor.fetchall())
+        if latest:
+            rows.reverse()
+        return [EventRecord.from_row(row) for row in rows]
 
-    async def get_events_by_sequence(self, first_sequence: int, last_sequence: int) -> list[EventRecord]:
+    async def get_events_by_sequence(
+        self,
+        first_sequence: int,
+        last_sequence: int,
+        *,
+        conversation_id: str | None = None,
+        finalized_only: bool = False,
+    ) -> list[EventRecord]:
         self._ensure_initialized()
-        cursor = await self._conn.execute(
-            "SELECT * FROM events WHERE sequence BETWEEN ? AND ? ORDER BY sequence ASC",
-            (first_sequence, last_sequence),
-        )
+        query = "SELECT * FROM events WHERE sequence BETWEEN ? AND ?"
+        params: list[Any] = [first_sequence, last_sequence]
+        if conversation_id is not None:
+            query += " AND conversation_id = ?"
+            params.append(conversation_id)
+        if finalized_only:
+            query += " AND status = 'finalized'"
+        query += " ORDER BY sequence ASC"
+        cursor = await self._conn.execute(query, params)
         return [EventRecord.from_row(row) for row in await cursor.fetchall()]
 
     async def add_episode(self, episode: EpisodeRecord) -> str:

@@ -145,6 +145,13 @@ def _with_context_timestamp(content: str, created_at: Any | None) -> str:
     return f"[time: {format_context_timestamp(created_at)}]\n{content}"
 
 
+def _window_item_content(item: dict[str, Any]) -> str:
+    content = str(item.get("content", ""))
+    if item.get("role") == "user":
+        return _with_context_timestamp(content, item.get("created_at"))
+    return content
+
+
 async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any]]:
     config = deps.config
     store = deps.store
@@ -178,28 +185,13 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
             if _is_placeholder_summary(str(s["summary"])):
                 continue
             source_label = "user" if s["source"] == "user" else "assistant"
-            timestamp = format_context_timestamp(s.get("created_at"))
-            summary_texts.append(f"[{timestamp}][{source_label}]: {s['summary']}")
+            if source_label == "user":
+                timestamp = format_context_timestamp(s.get("created_at"))
+                summary_texts.append(f"[{timestamp}][user]: {s['summary']}")
+            else:
+                summary_texts.append(f"[assistant]: {s['summary']}")
         if summary_texts:
             messages.append({"role": "system", "content": "[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]"})
-
-    actions = await store.get_recent_actions(
-        deps.group_key,
-        limit=config.context.recent_actions_max_count,
-    )
-    if actions:
-        action_lines = []
-        for action in actions:
-            stamp = format_context_timestamp(action.get("created_at"))
-            outcome = "success" if action.get("success") else "failure"
-            result_text = str(action.get("result", "")).replace("\n", " ")[:240]
-            action_lines.append(
-                f"{stamp} | {action.get('tool_name', 'unknown')} | {outcome} | {result_text}"
-            )
-        bootstrap_sections.append(
-            "Recent verified actions (platform records, not assistant claims):\n"
-            + "\n".join(action_lines)
-        )
 
     extra_system_sections = [
         str(m.get("content", ""))
@@ -213,7 +205,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     priority_override = await _inject_priority_override(store, deps.group_key)
     bootstrap_body = "\n\n".join(section for section in bootstrap_sections if section.strip())
     if not bootstrap_body:
-        bootstrap_body = "No persistent context is currently available."
+        bootstrap_body = "当前没有可用的持久上下文。"
     persona = config.prompts.persona.strip()
     if persona:
         bootstrap_body += f"\n\n[Persona]\n{persona}\n[/Persona]"
@@ -226,7 +218,14 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     window_ctx = deps.window.get_context()
     for m in window_ctx:
         role = m["role"]
-        content = _with_context_timestamp(str(m["content"]), m.get("created_at"))
+        content = str(m["content"])
+        if role == "user":
+            content = _with_context_timestamp(content, m.get("created_at"))
+        if deps.peer.chat_type == 2 and role == "user":
+            actor_id = str(m.get("user_id") or "unknown")
+            actor_name = str(m.get("actor_name") or actor_id)
+            if actor_id != "qq:group:multiple":
+                content = f"Speaker {actor_name} ({actor_id}):\n{content}"
         messages.append({"role": role, "content": content})
 
     messages.append({
@@ -369,6 +368,41 @@ async def _append_event(
 
 def _conversation_visibility(deps: PipelineDeps) -> str:
     return "group" if (deps.peer.chat_type == 2) else "private"
+
+
+async def _append_inbound_events(
+    deps: PipelineDeps,
+    content: str,
+    *,
+    media_ids: list[str] | None = None,
+) -> list[str]:
+    inputs = deps.inbound_events or [{
+        "actor_id": deps.actor_id or "unknown",
+        "actor_name": deps.actor_name or deps.actor_id or "user",
+        "content": content,
+    }]
+    event_ids: list[str] = []
+    for item in inputs:
+        event_id = await _append_event(
+            deps,
+            event_type=EventType.INBOUND.value,
+            content=str(item.get("content") or content),
+            actor_id=str(item.get("actor_id") or "unknown"),
+            actor_kind="human",
+            actor_name=str(item.get("actor_name") or item.get("actor_id") or "user"),
+            visibility=_conversation_visibility(deps),
+            audience="bot:self",
+            status="received",
+            media_ids=media_ids,
+        )
+        if event_id:
+            event_ids.append(event_id)
+    return event_ids
+
+
+async def _update_event_statuses(deps: PipelineDeps, event_ids: list[str], status: str) -> None:
+    for event_id in event_ids:
+        await deps.store.update_event_status(event_id, status)
 
 
 def _short_image_description(description: str) -> str:
@@ -774,10 +808,7 @@ async def _compact_context_for_request(
     removed_tokens = 0
     for group in groups[:-1]:
         removed_groups.append(group)
-        removed_tokens += sum(
-            _estimate_tokens(_with_context_timestamp(str(item.get("content", "")), item.get("created_at")))
-            for item in group
-        )
+        removed_tokens += sum(_estimate_tokens(_window_item_content(item)) for item in group)
         if estimate - removed_tokens <= target:
             break
 
@@ -790,7 +821,7 @@ async def _compact_context_for_request(
         else None
     )
     combined = "\n".join(
-        f"{_with_context_timestamp(str(item.get('content', '')), item.get('created_at'))}\n"
+        f"{_window_item_content(item)}\n"
         f"role: {item.get('role', 'unknown')}"
         for item in to_archive
     )
@@ -908,7 +939,7 @@ async def pipeline(
     responded = False
     final_status = "received"
     inbound_msg_id: int | None = None
-    inbound_event_id: str | None = None
+    inbound_event_ids: list[str] = []
     input_metadata: dict | None = None
     input_media_id: str | None = None
     if msg_type == MessageType.IMAGE:
@@ -941,16 +972,9 @@ async def pipeline(
                 logger.info("[MEDIA] inbound registered media_id=%s", media.media_id)
             except Exception:
                 logger.exception("[MEDIA] failed to register inbound file")
-        inbound_event_id = await _append_event(
+        inbound_event_ids = await _append_inbound_events(
             deps,
-            event_type=EventType.INBOUND.value,
-            content=message,
-            actor_id=deps.actor_id or "unknown",
-            actor_kind="human",
-            actor_name=deps.actor_name or deps.actor_id or "user",
-            visibility=_conversation_visibility(deps),
-            audience="bot:self",
-            status="received",
+            message,
             media_ids=[input_media_id] if input_media_id else None,
         )
         try:
@@ -972,6 +996,7 @@ async def pipeline(
                 status="cancelled",
                 input_metadata=input_metadata,
             )
+            await _update_event_statuses(deps, inbound_event_ids, "cancelled")
             raise
         except Exception as exc:
             logger.exception("[PIPE] vision provider raised unexpectedly")
@@ -994,17 +1019,7 @@ async def pipeline(
     try:
         if inbound_msg_id is None:
             inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
-            inbound_event_id = await _append_event(
-                deps,
-                event_type=EventType.INBOUND.value,
-                content=message,
-                actor_id=deps.actor_id or "unknown",
-                actor_kind="human",
-                actor_name=deps.actor_name or deps.actor_id or "user",
-                visibility=_conversation_visibility(deps),
-                audience="bot:self",
-                status="received",
-            )
+            inbound_event_ids = await _append_inbound_events(deps, message)
         else:
             await _update_saved_msg(
                 deps,
@@ -1266,17 +1281,19 @@ async def pipeline(
 
         if responded and deps.remember_input:
             deps.window.add(
-                user_id=str(deps.peer.peer_uid),
+                user_id=deps.actor_id or str(deps.peer.peer_uid),
                 message=message,
                 record_id=inbound_msg_id,
+                actor_name=deps.actor_name,
             )
             combined_bot_reply = "\n".join(bot_replies)
             if combined_bot_reply:
                 deps.window.add(
-                    user_id=str(deps.peer.peer_uid),
+                    user_id="bot:self",
                     message=combined_bot_reply,
                     is_bot=True,
                     record_id=inbound_msg_id,
+                    actor_name="Mutsumi",
                 )
             logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
         elif responded:
@@ -1294,8 +1311,9 @@ async def pipeline(
             status=final_status,
             input_metadata=input_metadata,
         )
-        if inbound_event_id:
-            await deps.store.update_event_status(inbound_event_id, final_status)
+        if inbound_event_ids:
+            event_status = "error" if final_status == "error" else "finalized"
+            await _update_event_statuses(deps, inbound_event_ids, event_status)
 
         _report_state(deps, "DONE")
 
@@ -1313,8 +1331,7 @@ async def pipeline(
             status="cancelled",
             input_metadata=input_metadata,
         )
-        if inbound_event_id:
-            await deps.store.update_event_status(inbound_event_id, "cancelled")
+        await _update_event_statuses(deps, inbound_event_ids, "cancelled")
         raise
     except Exception as e:
         logger.exception("[PIPE] error for %s", deps.peer.peer_uid)
@@ -1328,8 +1345,7 @@ async def pipeline(
             status="error",
             input_metadata=input_metadata,
         )
-        if inbound_event_id:
-            await deps.store.update_event_status(inbound_event_id, "error")
+        await _update_event_statuses(deps, inbound_event_ids, "error")
         if not responded:
             await deps.sender.send(deps.peer, f"模型暂时不可用: {e}")
     finally:

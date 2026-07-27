@@ -24,12 +24,14 @@ output rules.
 
 Every LLM request has these layers, in order:
 
-1. A provider-native `system` message containing only stable platform rules.
+1. A provider-native Chinese `system` message containing only stable platform rules.
 2. A first `user` message named `[Context Packet]` containing self-note,
-   summaries, recent verified actions, and the configured persona prompt at the
-   very end. The packet is context, not a fresh user request.
-3. The working conversation window as ordinary timestamped `user` and
-   `assistant` messages.
+   summaries, global life context, and the configured persona prompt at the very
+   end. The packet is context, not a fresh user request. Verified action records
+   remain durable but are not injected by default.
+3. The working conversation window as ordinary `user` and `assistant` messages.
+   Historical `user` messages carry readable UTC+8 timestamps; historical
+   `assistant` messages do not receive synthetic timestamp prefixes.
 4. A temporary `[Runtime Injection]` user message containing current UTC+8 time,
    source, silent/remembering flags, peer metadata, and Priority Override.
 5. The current user input.
@@ -125,9 +127,11 @@ Each record includes tool name, call ID, timestamp, success, sanitized arguments
 and result. Successful sent images additionally record message ID, source
 Markdown hash/reference, and generated file reference.
 
-A bounded recent-action section may be injected into the Context Packet. Action
-records are never inserted as ordinary assistant prose. In particular,
-`[sent image: ...]` markers are forbidden in the working conversation window.
+Action records are audit and recovery data, not default prompt material. Current
+tool-loop results still use provider-native tool messages; historical actions
+should be retrieved only when a task actually needs them. Action records are
+never inserted as ordinary assistant prose. In particular, `[sent image: ...]`
+markers are forbidden in the working conversation window.
 
 ## 9. Send Truthfulness
 

@@ -149,6 +149,58 @@ async def test_group_key():
     os.unlink(store_path)
 
 
+async def test_group_debounce_preserves_each_actor_in_event_ledger():
+    config = Config.load("config.example.yaml")
+    config.context.debounce_timeout = 0.01
+    config.session.timeout = 999999
+    sender = FakeSender()
+    store, store_path = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(
+        config=config,
+        registry=ToolRegistry(),
+        sender=sender,
+        store=store,
+    )
+    first = MessageEvent(
+        post_type="message",
+        message_type="group",
+        user_id=111,
+        group_id=889,
+        message=[{"type": "text", "data": {"text": "Alice says hello"}}],
+        raw_message="Alice says hello",
+        message_id=11,
+        sender={"user_id": 111, "nickname": "Alice"},
+    )
+    second = MessageEvent(
+        post_type="message",
+        message_type="group",
+        user_id=222,
+        group_id=889,
+        message=[{"type": "text", "data": {"text": "Bob answers"}}],
+        raw_message="Bob answers",
+        message_id=12,
+        sender={"user_id": 222, "nickname": "Bob"},
+    )
+    try:
+        await scheduler.dispatch(first)
+        await scheduler.dispatch(second)
+        await asyncio.sleep(0.2)
+
+        inbound = [
+            event for event in await store.get_events(conversation_id="group:889")
+            if event.event_type == "inbound"
+        ]
+        assert [(event.actor_id, event.actor_name, event.content) for event in inbound] == [
+            ("qq:user:111", "Alice", "Alice says hello"),
+            ("qq:user:222", "Bob", "Bob answers"),
+        ]
+        assert all(event.status == "finalized" for event in inbound)
+    finally:
+        await scheduler.shutdown()
+        os.unlink(store_path)
+
+
 async def test_shutdown_does_not_write_placeholder_summaries():
     config = Config.load("config.example.yaml")
     registry = ToolRegistry()

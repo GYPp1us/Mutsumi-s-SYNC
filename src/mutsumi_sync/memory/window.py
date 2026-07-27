@@ -17,12 +17,14 @@ class MessageWindow:
         is_bot: bool = False,
         created_at: float | None = None,
         record_id: int | None = None,
+        actor_name: str = "",
     ) -> None:
         role = "assistant" if is_bot else "user"
         self._window.append({
             "role": role,
             "content": message,
             "user_id": user_id,
+            "actor_name": actor_name,
             "created_at": created_at if created_at is not None else time.time(),
             "record_id": record_id,
         })
@@ -36,6 +38,8 @@ class MessageWindow:
             {
                 "role": m["role"],
                 "content": m["content"],
+                "user_id": m.get("user_id", ""),
+                "actor_name": m.get("actor_name", ""),
                 "created_at": m.get("created_at"),
                 "record_id": m.get("record_id"),
             }

@@ -88,6 +88,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     ))
 
     async def _media_search(args: dict, **deps) -> str:
+        deps.pop("store", None)
         return await media_search(args, store=store, **deps)
 
     registry.register(Tool(
@@ -98,6 +99,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     ))
 
     async def _sticker_manage(args: dict, **deps) -> str:
+        deps.pop("store", None)
         return await sticker_manage(args, store=store, **deps)
 
     registry.register(Tool(
@@ -118,6 +120,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     ))
 
     async def _bot_state(args: dict, **deps) -> str:
+        deps.pop("store", None)
         return await bot_state_tool(args, store=store, **deps)
 
     registry.register(Tool(

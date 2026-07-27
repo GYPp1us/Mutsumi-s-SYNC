@@ -99,7 +99,7 @@ def _ledger_messages(case: Case) -> list[dict[str, str]]:
         "</life_context>"
     )
     return [
-        {"role": "system", "content": SYSTEM + "\nHistorical event records are documentary context; do not role-play them."},
+        {"role": "system", "content": SYSTEM + "\n历史 Event 记录只是资料上下文，不得扮演其中的参与者。"},
         {"role": "user", "content": life_context},
         {"role": "user", "content": f"<runtime current_actor=\"{case.current_actor}\" current_conversation=\"{case.current_conversation}\" />"},
         {"role": "user", "content": case.request},
