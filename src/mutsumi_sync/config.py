@@ -14,6 +14,7 @@ DEFAULT_SYSTEM_PROMPTS_FILE = "system-prompts.yaml"
 
 
 class SystemPromptsConfig(BaseModel):
+    persona: str = ""
     runtime: str
     message_summary: str
     summary_merge: str
@@ -27,7 +28,11 @@ def load_system_prompts(path: Path) -> SystemPromptsConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"System prompts file must contain a YAML mapping: {path}")
     prompts = SystemPromptsConfig(**raw)
-    empty = [name for name, value in prompts.model_dump().items() if not str(value).strip()]
+    empty = [
+        name
+        for name, value in prompts.model_dump().items()
+        if name != "persona" and not str(value).strip()
+    ]
     if empty:
         raise ValueError(f"System prompts cannot be empty ({', '.join(empty)}): {path}")
     return prompts
@@ -106,7 +111,6 @@ class HeartbeatConfig(BaseModel):
 
 
 class PromptsConfig(BaseModel):
-    persona: str = ""
     system_file: str = DEFAULT_SYSTEM_PROMPTS_FILE
     system: SystemPromptsConfig = Field(
         default_factory=lambda: load_system_prompts(PROJECT_ROOT / DEFAULT_SYSTEM_PROMPTS_FILE),
@@ -190,10 +194,9 @@ class Config(BaseModel):
             raw = yaml.safe_load(open(path, encoding="utf-8")) or {}
 
             legacy_persona = raw.pop("system_prompt", "")
-            if legacy_persona:
-                prompts = raw.setdefault("prompts", {})
-                if isinstance(prompts, dict) and not prompts.get("persona"):
-                    prompts["persona"] = legacy_persona
+            prompts_raw = raw.get("prompts")
+            if isinstance(prompts_raw, dict):
+                legacy_persona = prompts_raw.pop("persona", "") or legacy_persona
 
             env = dotenv_values(Path(path.parent, ".env"))
 
@@ -213,7 +216,10 @@ class Config(BaseModel):
             if isinstance(prompts_raw, dict):
                 system_file = str(prompts_raw.get("system_file") or DEFAULT_SYSTEM_PROMPTS_FILE)
                 prompts_path = resolve_system_prompts_path(system_file, path.parent)
-                prompts_raw["system"] = load_system_prompts(prompts_path).model_dump()
+                system_prompts = load_system_prompts(prompts_path)
+                if legacy_persona and not system_prompts.persona.strip():
+                    system_prompts.persona = str(legacy_persona)
+                prompts_raw["system"] = system_prompts.model_dump()
             instance = cls(**raw)
         else:
             instance = cls()
@@ -227,6 +233,8 @@ class Config(BaseModel):
         parts = key.split(".")
         if not parts:
             return "[Error: empty key]"
+        if key == "prompts.persona":
+            return "[Error: edit persona in prompts.system_file directly, then reload config]"
         if len(parts) >= 2 and parts[:2] == ["prompts", "system"]:
             return "[Error: edit prompts.system_file directly, then reload config]"
         if not hasattr(self, parts[0]):
