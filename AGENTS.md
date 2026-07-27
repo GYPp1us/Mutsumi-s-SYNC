@@ -13,8 +13,8 @@
 - Ordinary assistant content must pass the flat-text output gate. Complex Markdown goes through `send.markdown_image`.
 
 - LLM requests use a provider-native non-empty Chinese `system` message for durable platform rules.
-- All runtime, message-summary, summary-merge, and Episode-summary system prompts live in `system-prompts.yaml`, selected by `prompts.system_file`. Do not duplicate prompt bodies in Python. Production uses `/opt/mutsumi-sync-v3/shared/system-prompts.yaml`.
-- The first `user` message is a `[Context Packet]` containing self-note, typed summaries, global life context, and `prompts.persona` at the end. It is context, not a fresh user request. The action ledger is not injected by default.
+- The `persona` prompt and all runtime, message-summary, summary-merge, and Episode-summary prompts live in `system-prompts.yaml`, selected by `prompts.system_file`. Do not duplicate prompt bodies in Python. Production uses `/opt/mutsumi-sync-v3/shared/system-prompts.yaml`.
+- The first `user` message is a `[Context Packet]` containing self-note, typed summaries, global life context, and the external `persona` prompt at the end. It is context, not a fresh user request. The action ledger is not injected by default.
 - Working conversation messages after the Context Packet are only the current working context window.
 - A temporary `[Runtime Injection]` user message is inserted immediately before the current user request. It carries current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override. It is not user-authored chat and must not be written to durable history.
 - Summaries, self-note entries, and historical `user` turns must use readable UTC+8 timestamps. Historical `assistant` turns must not receive synthetic timestamp prefixes. Existing self-note lines without timestamps are injected with `很久之前`.

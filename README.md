@@ -237,7 +237,7 @@ Use `no_reply` when the turn should intentionally produce no visible message. Th
 
 ## Context And Memory Protocol
 
-The LLM request uses one provider-native Chinese `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, global life context, and the configured `prompts.persona` at the very end; it is not a fresh user request. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
+The LLM request uses one provider-native Chinese `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, global life context, and the `persona` field loaded from `system-prompts.yaml` at the very end; it is not a fresh user request. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
 
 Summaries, self notes, and historical user turns are annotated with readable UTC+8 timestamps. Historical assistant turns are passed through without synthetic timestamp prefixes. Older self-note lines without timestamps are injected as `很久之前`.
 
@@ -271,8 +271,8 @@ stable SHA-derived `media_id`. `sticker_search` without a query lists all
 available stickers; `sticker_manage` updates descriptions or lifecycle status.
 
 System prompt ownership is centralized in `system-prompts.yaml`. The runtime,
-summary workers, and context experiment load the same four prompt levels through
-`prompts.system_file`, so historical data is interpreted consistently at every
+summary workers, and context experiment load the `persona` field plus the same
+four operational prompt levels through `prompts.system_file`, so historical data is interpreted consistently at every
 LLM boundary. `config_manager reload` reloads both files. Production keeps the
 prompt file at `/opt/mutsumi-sync-v3/shared/system-prompts.yaml` so releases do
 not overwrite operator changes.

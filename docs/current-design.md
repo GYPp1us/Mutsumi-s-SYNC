@@ -17,10 +17,11 @@ or `README.md`, this document and the tests take precedence.
 
 ## 2. Provider Request Layout
 
-The four canonical system prompts live in the standalone `system-prompts.yaml`
-file and are selected through `prompts.system_file`. Runtime, experiment,
-message-summary, summary-merge, and Episode-summary requests load that same
-validated file; missing or empty levels fail startup. `config_manager reload`
+The persona prompt and four operational prompts live in the standalone
+`system-prompts.yaml` file and are selected through `prompts.system_file`.
+Runtime, message-summary, summary-merge, and Episode-summary requests load that
+same validated file; missing or empty operational levels fail startup.
+`config_manager reload`
 reloads the external prompt file. Production stores it under the shared deploy
 root so a release does not overwrite operator changes.
 
@@ -40,9 +41,9 @@ Every LLM request has these layers, in order:
 
 Runtime Injection is not persisted. Priority Override appears exactly once per
 request. Platform timestamps are supplied values, not text the model should
-invent. The separate `persona_prompt` configuration value belongs at the end of
-the first Context Packet so it shapes interpretation without competing with the
-stable tool and safety protocol in `system`.
+invent. The external `persona` prompt belongs at the end of the first Context
+Packet so it shapes interpretation without competing with the stable tool and
+safety protocol in `system`. It is not stored in `config.yaml`.
 
 DeepSeek `reasoning_content` is retained on the assistant message only during
 the current native tool loop. It is never sent to QQ and never persisted into a
@@ -225,7 +226,8 @@ send, and compaction behavior.
 7. Implement request-level token-aware compaction.
 8. Replace assistant artifact markers with a verified action ledger.
 9. Disable pipe-based reply splitting.
-10. Split `persona_prompt` configuration and inject it at Context Packet tail.
+10. Keep the external `persona` prompt separate from `config.yaml` and inject it
+    at the Context Packet tail.
 11. Fix arbitrary-depth local YAML editing and strict boolean conversion.
 12. Count actual consecutive tool failures and stop at three.
 13. Synchronize the canonical system prompt in defaults, docs, and production.

@@ -302,7 +302,7 @@ class TestPipelineE2EMultiRound:
     async def test_context_has_correct_structure(self):
         """Verify _build_context produces correctly structured messages array."""
         config = make_config()
-        config.prompts.persona = "Speak as a calm long-term companion."
+        config.prompts.system.persona = "Speak as a calm long-term companion."
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
         await store.initialize()

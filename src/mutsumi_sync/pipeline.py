@@ -201,7 +201,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     bootstrap_body = "\n\n".join(section for section in bootstrap_sections if section.strip())
     if not bootstrap_body:
         bootstrap_body = "当前没有可用的持久上下文。"
-    persona = config.prompts.persona.strip()
+    persona = config.prompts.system.persona.strip()
     if persona:
         bootstrap_body += f"\n\n[Persona]\n{persona}\n[/Persona]"
     bootstrap = "[Context Packet]\n" + bootstrap_body + "\n[/Context Packet]"

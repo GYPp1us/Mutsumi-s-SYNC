@@ -18,7 +18,6 @@ model:
   temperature: 0.5
   reasoning_effort: max
 prompts:
-  persona: ''
   system_file: system-prompts.yaml
 vision:
   enabled: false
