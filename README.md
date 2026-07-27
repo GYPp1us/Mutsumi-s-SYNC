@@ -14,8 +14,9 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Global Event Ledger with provenance-preserving cross-conversation projections and idle Episode summaries.
 - Pipeline-native Media Ledger with SHA deduplication, stable media IDs, and global sticker search/maintenance tools.
 - Explicit `bot_state` canonical projection for facts about the bot itself, separate from private relationship memory.
-- Five-layer context assembly: stable provider-native Chinese `system`, a persistent `Context Packet`, a working window with timestamps only on historical user turns, temporary `Runtime Injection`, and current input.
-- A separate persona prompt injected at the end of the first `Context Packet` user message.
+- Layered context assembly: stable provider-native Chinese `system`, global `Self Context`, conversation-scoped `Conversation Context`, working window, temporary `Runtime Injection`, and current input.
+- A separate persona prompt is loaded from `system-prompts.yaml` and injected into `Self Context`; it is never edited through `config.yaml`.
+- Global inner journal for subjective bot-state continuity, with source conversation/actor provenance and bounded token/entry retention.
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
@@ -26,7 +27,9 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Interactive tester with `/inject` and `/break`.
 - Structured action ledger for verified tool/send outcomes; generated-image markers never enter assistant history.
 - Dashboard TUI and tester as local debugging surfaces; production behavior is defined by `main.py` and may have a different registry.
-- Assistant `content` is the normal user-visible reply channel and is currently sent as one QQ message; `|` is literal text.
+- Final assistant output uses a strict `[TO_SELF]...[/TO_SELF]` plus `[TO_USER]...[/TO_USER]` envelope. Only `TO_USER` is visible; `TO_SELF` goes to the global inner journal.
+- Assistant `TO_USER` is sent as one QQ message; `|` is literal text.
+- `status_update` can send one short progress message before a long tool; automatic fallback progress never enters assistant history.
 - `no_reply` tool for deliberate silent turns.
 - `send` tool support for special message segments, legacy text sends, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
 - `scheduler` tool for durable one-shot scheduled pipeline triggers.
@@ -122,7 +125,12 @@ context:
   episode_max_events: 160
 
 prompts:
-  persona: ""
+  system_file: system-prompts.yaml
+
+inner_journal:
+  max_entry_chars: 1000
+  max_context_tokens: 16000
+  max_context_entries: 200
 
 heartbeat:
   enabled: true
@@ -227,17 +235,36 @@ Use `--yes` only when the data reset has been explicitly confirmed.
 
 ## LLM Output Protocol
 
-Assistant `content` is user-visible. The pipeline sends only the final LLM round that has no `tool_calls`.
+Only the final LLM round without `tool_calls` is parsed. It must contain exactly:
+
+```text
+[TO_SELF]
+简短的主观状态、意图或未完成事项；不是原始 CoT。
+[/TO_SELF]
+[TO_USER]
+发给用户的扁平纯文本。
+[/TO_USER]
+```
+
+`TO_USER` is the only ordinary visible channel. It is subject to the flat-text
+gate; complex Markdown, LaTeX, code, or Mermaid must use
+`send(markdown_image=...)`. `TO_SELF` is stored globally only after a complete,
+successful, non-cancelled pipeline turn. Protocol tags are not written into the
+conversation window or durable assistant reply.
 
 Pipe-based multi-message framing is disabled while a replacement protocol is being designed. `a | b` and `a \| b` are both sent unchanged in one QQ message.
 
-Reasoning content is logged for debugging but is never sent to users. Tools are for memory, config, queries, external APIs, special message segments, or silent control. For ordinary text replies, write assistant `content`; do not call `send`.
+Reasoning content is retained only in the current DeepSeek tool loop and is never sent or persisted. Tool-loop assistant content is never sent. Tools are for memory, config, queries, external APIs, special message segments, or silent control. For ordinary text replies, use `TO_USER`; do not call `send`.
 
 Use `no_reply` when the turn should intentionally produce no visible message. The `send` tool remains available for special segments such as `markdown_image`, image, face, mention, reply, and forward.
 
+Use `status_update` before a tool that is expected to take a noticeable amount of time. It sends a short user-visible progress message, does not end the pipeline, and is recorded as an event/action rather than an assistant history turn. The pipeline sends one generic fallback when a registered long tool is called without an explicit status update. Heartbeat pipelines suppress both final text and progress messages.
+
 ## Context And Memory Protocol
 
-The LLM request uses one provider-native Chinese `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, global life context, and the `persona` field loaded from `system-prompts.yaml` at the very end; it is not a fresh user request. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
+The LLM request uses one provider-native Chinese `system` message for durable platform rules. The next user message is `[Self Context]`, containing persona, canonical bot state, and the global inner journal. The following user message is `[Conversation Context]`, containing conversation-scoped self notes, summaries, and projected life context. These are documentary context, not fresh user requests. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
+
+Inner journal entries are subjective bot-state deltas, not verified facts or instructions. They include source conversation/actor provenance for the model, but are never represented as fake user/assistant turns. A successful final turn may append one bounded `TO_SELF` entry; cancellation, failed visible output, and malformed output do not.
 
 Summaries, self notes, and historical user turns are annotated with readable UTC+8 timestamps. Historical assistant turns are passed through without synthetic timestamp prefixes. Older self-note lines without timestamps are injected as `很久之前`.
 

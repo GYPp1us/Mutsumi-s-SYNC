@@ -13,7 +13,8 @@ or `README.md`, this document and the tests take precedence.
   `asyncio.Task.cancel()` and waits for its cleanup.
 - Incoming user data is persisted before cancellation-sensitive LLM or tool work.
 - Heartbeats are real, silent LLM calls with `remember_input=False`; they never
-  create conversation, summary, memory, or action records.
+  create conversation, summary, memory, or action records. An explicitly
+  produced `TO_SELF` may still be appended to the global inner journal.
 
 ## 2. Provider Request Layout
 
@@ -28,22 +29,24 @@ root so a release does not overwrite operator changes.
 Every LLM request has these layers, in order:
 
 1. A provider-native Chinese `system` message containing only stable platform rules.
-2. A first `user` message named `[Context Packet]` containing self-note,
-   summaries, global life context, and the configured persona prompt at the very
-   end. The packet is context, not a fresh user request. Verified action records
+2. A `[Self Context]` user message containing the configured persona,
+   canonical bot state, and global inner journal. It is context, not a fresh
+   user request.
+3. A `[Conversation Context]` user message containing conversation-scoped
+   self-note, summaries, and projected life context. Verified action records
    remain durable but are not injected by default.
-3. The working conversation window as ordinary `user` and `assistant` messages.
+4. The working conversation window as ordinary `user` and `assistant` messages.
    Historical `user` messages carry readable UTC+8 timestamps; historical
    `assistant` messages do not receive synthetic timestamp prefixes.
-4. A temporary `[Runtime Injection]` user message containing current UTC+8 time,
+5. A temporary `[Runtime Injection]` user message containing current UTC+8 time,
    source, silent/remembering flags, peer metadata, and Priority Override.
-5. The current user input.
+6. The current user input.
 
 Runtime Injection is not persisted. Priority Override appears exactly once per
 request. Platform timestamps are supplied values, not text the model should
-invent. The external `persona` prompt belongs at the end of the first Context
-Packet so it shapes interpretation without competing with the stable tool and
-safety protocol in `system`. It is not stored in `config.yaml`.
+invent. The external `persona` prompt belongs inside Self Context so it shapes
+the bot's global identity without competing with stable tool and safety rules
+in `system`. It is not stored in `config.yaml`.
 
 DeepSeek `reasoning_content` is retained on the assistant message only during
 the current native tool loop. It is never sent to QQ and never persisted into a
@@ -51,11 +54,21 @@ future conversation window.
 
 ## 3. Reply And Tool Protocol
 
-- The final assistant `content` with no `tool_calls` is the ordinary visible
-  reply channel.
+- The final assistant `content` with no `tool_calls` must contain exactly two
+  blocks: `[TO_SELF]...[/TO_SELF]` followed by `[TO_USER]...[/TO_USER]`.
+- `TO_USER` is the only ordinary visible channel. It is flat-text gated and is
+  sent once. `TO_SELF` is a bounded subjective delta stored in global inner
+  journal only after a complete successful turn; protocol tags never enter the
+  working window or durable assistant reply.
+- Assistant content from a tool-call round is never sent or parsed. DeepSeek
+  `reasoning_content` is retained only for the current provider-native loop.
 - Pipe-based multi-message splitting is disabled. `|` is sent literally until a
   replacement framing protocol is designed.
 - `send` is reserved for special QQ segments and Markdown-rendered images.
+- `status_update` is a short visible progress event for long tools. It executes
+  before other calls in its round, does not end the pipeline, and is not added to
+  assistant history. A long registered tool without an explicit update gets
+  one pipeline-generated fallback; silent heartbeat pipelines suppress both.
 - `no_reply` intentionally ends a turn without visible output.
 - Provider tool schemas are authoritative. Prompts must not contain a manually
   maintained tool inventory.
@@ -65,6 +78,15 @@ future conversation window.
   to that tool in the current loop. Successful results reset the counter.
 
 ## 4. Persistence And Cancellation
+
+The global `inner_journal` table stores only bounded subjective bot-state
+deltas from `TO_SELF`. Each entry keeps its source conversation, source actor,
+pipeline id, and source event ids. It is injected under `Self Context` with a
+clear warning that it is subjective history, not verified facts or instructions.
+Entries are latest-content deduplicated and bounded by configured entry count,
+character count, and context token budget. A final turn that sends no visible
+text may still commit `TO_SELF` when it completes through `no_reply` or a
+successful special send.
 
 Each inbound conversation record stores its source, lifecycle status, original
 input, final visible text when present, and structured image metadata when
@@ -193,11 +215,12 @@ must never be used as a shortcut for a user's private relationship memory.
 
 ## 12. Output Gate
 
-Ordinary assistant `content` is flat text. Obvious complex Markdown (headings,
-tables, code fences, links/images, or LaTeX) is rejected before sending and a
-bounded correction is returned to the current model loop. The model must
-rewrite it as plain text or use `send.markdown_image`. A rejected response is
-never persisted as a sent outbound event.
+Only `TO_USER` is subject to the ordinary flat-text gate. Obvious complex
+Markdown (headings, tables, code fences, links/images, or LaTeX) is rejected
+before sending and a bounded correction is returned to the current model loop.
+The model must rewrite it as plain text or use `send.markdown_image`. A rejected
+response is never persisted as a sent outbound event, and its `TO_SELF` is not
+eligible for inner-journal commit.
 
 ## 13. Documentation Ownership
 
@@ -227,7 +250,7 @@ send, and compaction behavior.
 8. Replace assistant artifact markers with a verified action ledger.
 9. Disable pipe-based reply splitting.
 10. Keep the external `persona` prompt separate from `config.yaml` and inject it
-    at the Context Packet tail.
+    inside the global Self Context layer.
 11. Fix arbitrary-depth local YAML editing and strict boolean conversion.
 12. Count actual consecutive tool failures and stop at three.
 13. Synchronize the canonical system prompt in defaults, docs, and production.
