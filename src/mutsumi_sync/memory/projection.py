@@ -42,8 +42,14 @@ async def build_global_life_context(
     canonical-state projection can add globally shareable bot facts without
     weakening this visibility gate.
     """
-    events = await store.get_events(limit=max(limit * 4, limit), finalized_only=True)
-    visible = [event for event in events if event_is_visible(event, conversation_id)][-limit:]
+    events = await store.get_events(
+        exclude_conversation_id=conversation_id,
+        visibility="global",
+        limit=limit,
+        finalized_only=True,
+        latest=True,
+    )
+    visible = [event for event in events if event_is_visible(event, conversation_id)]
     if not visible:
         return ""
     projected: list[str] = []
@@ -63,7 +69,12 @@ async def build_global_life_context(
         if episode is None:
             projected.append(format_documentary_event(event))
             continue
-        covered = await store.get_events_by_sequence(episode.first_sequence, episode.last_sequence)
+        covered = await store.get_events_by_sequence(
+            episode.first_sequence,
+            episode.last_sequence,
+            conversation_id=episode.conversation_id,
+            finalized_only=True,
+        )
         if not covered or not all(event_is_visible(item, conversation_id) for item in covered):
             projected.append(format_documentary_event(event))
             continue

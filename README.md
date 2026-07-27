@@ -14,7 +14,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Global Event Ledger with provenance-preserving cross-conversation projections and idle Episode summaries.
 - Pipeline-native Media Ledger with SHA deduplication, stable media IDs, and global sticker search/maintenance tools.
 - Explicit `bot_state` canonical projection for facts about the bot itself, separate from private relationship memory.
-- Five-layer context assembly: stable provider-native `system`, a persistent `Context Packet`, a timestamped working window, temporary `Runtime Injection`, and current input.
+- Five-layer context assembly: stable provider-native Chinese `system`, a persistent `Context Packet`, a working window with timestamps only on historical user turns, temporary `Runtime Injection`, and current input.
 - A separate persona prompt injected at the end of the first `Context Packet` user message.
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
@@ -224,9 +224,9 @@ Use `no_reply` when the turn should intentionally produce no visible message. Th
 
 ## Context And Memory Protocol
 
-The LLM request uses one provider-native `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, recent verified actions, and the configured `prompts.persona` at the very end; it is not a fresh user request. Later user/assistant messages are the working conversation window.
+The LLM request uses one provider-native Chinese `system` message for durable platform rules. The first `user` message is a `[Context Packet]` containing self notes, typed summaries, global life context, and the configured `prompts.persona` at the very end; it is not a fresh user request. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
 
-Summaries, self notes, and window messages are annotated with readable UTC+8 timestamps. Older self-note lines without timestamps are injected as `很久之前`.
+Summaries, self notes, and historical user turns are annotated with readable UTC+8 timestamps. Historical assistant turns are passed through without synthetic timestamp prefixes. Older self-note lines without timestamps are injected as `很久之前`.
 
 Before the current user request, the pipeline injects a temporary `[Runtime Injection]` user message with current UTC+8 time, source, silent/remembering flags, peer metadata, and the active Priority Override. Runtime Injection is platform state, not user-authored chat, and is not written to durable history.
 

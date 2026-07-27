@@ -8,7 +8,7 @@ import os
 from datetime import date
 
 from src.mutsumi_sync.config import Config
-from src.mutsumi_sync.memory.store import MessageStore, StoredMessage
+from src.mutsumi_sync.memory.store import EventType, MessageStore, StoredMessage
 from src.mutsumi_sync.memory.window import MessageWindow
 from src.mutsumi_sync.memory.session import SessionState
 from src.mutsumi_sync.message.sender import Peer
@@ -340,7 +340,7 @@ class TestPipelineE2EMultiRound:
         assert bootstrap["content"].rstrip().endswith(
             "[Persona]\nSpeak as a calm long-term companion.\n[/Persona]\n[/Context Packet]"
         )
-        assert "provider tool schema is authoritative" in ctx[0]["content"].lower()
+        assert "工具 schema 是工具能力的唯一事实源" in ctx[0]["content"]
         assert "用未转义的 |" not in ctx[0]["content"]
 
         assert ctx[-2]["role"] == "user"
@@ -349,6 +349,38 @@ class TestPipelineE2EMultiRound:
         assert ctx[-1]["content"] == "current user message"
 
         await store.close()
+
+    async def test_group_context_preserves_actor_identity(self):
+        config = make_config()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        try:
+            window = MessageWindow()
+            window.add("qq:user:101", "first message", actor_name="Alice")
+            window.add("bot:self", "first reply", is_bot=True, actor_name="Mutsumi")
+            window.add("qq:user:202", "second message", actor_name="Bob")
+            deps = PipelineDeps(
+                config=config,
+                registry=build_registry(config, store),
+                sender=CaptureSender(),
+                store=store,
+                window=window,
+                session=SessionState(),
+                peer=Peer(chat_type=2, peer_uid="888"),
+                group_key="group:888:202",
+                conversation_id="group:888",
+                actor_id="qq:user:202",
+                actor_name="Bob",
+            )
+
+            context = await _build_context("current group message", deps)
+            rendered = "\n".join(str(item.get("content", "")) for item in context)
+
+            assert "Speaker Alice (qq:user:101):" in rendered
+            assert "Speaker Bob (qq:user:202):" in rendered
+            assert "Speaker Mutsumi" not in rendered
+        finally:
+            await store.close()
 
     async def test_visible_content_keeps_pipe_literal(self, monkeypatch):
         config = make_config()
@@ -407,7 +439,8 @@ class TestPipelineE2EMultiRound:
         assert "Always preserve exact equations." in ctx[-2]["content"]
         assert "Priority Override" not in ctx[-1]["content"]
         assert ctx[-1]["content"] == "current user message"
-        assert "+08:00" in ctx[2]["content"], "Window messages should include readable +8 timestamps"
+        assert "+08:00" in ctx[2]["content"], "Historical user messages should include readable +8 timestamps"
+        assert ctx[3]["content"] == "previous bot reply"
 
         await store.close()
 
@@ -645,6 +678,12 @@ class TestPipelineE2EDebounce:
         await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
 
         assert [item["message"] for item in sender.sent] == ["hello from content"]
+        inbound_events = [
+            event for event in await store.get_events(conversation_id=group_key)
+            if event.event_type == EventType.INBOUND.value
+        ]
+        assert len(inbound_events) == 1
+        assert inbound_events[0].status == "finalized"
 
         await store.close()
 
@@ -913,7 +952,7 @@ class TestPipelineE2EDebounce:
         assert "three consecutive failures" in fourth_result["content"]
         await store.close()
 
-    async def test_recent_verified_actions_are_in_context_packet(self):
+    async def test_recent_verified_actions_stay_out_of_context_packet(self):
         config = make_config()
         store = MessageStore(db_path=":memory:")
         await store.initialize()
@@ -934,9 +973,12 @@ class TestPipelineE2EDebounce:
 
         context = await _build_context("hello", deps)
 
-        assert "Recent verified actions" in context[1]["content"]
-        assert "scheduler" in context[1]["content"]
-        assert "task #7 registered" in context[1]["content"]
+        rendered = "\n".join(str(item.get("content", "")) for item in context)
+        assert "Recent verified actions" not in rendered
+        assert "task #7 registered" not in rendered
+        actions = await store.get_recent_actions("private:action_context")
+        assert actions[0]["tool_name"] == "scheduler"
+        assert actions[0]["result"] == "task #7 registered"
         await store.close()
 
     async def test_action_ledger_redacts_sensitive_config_result(self, monkeypatch):

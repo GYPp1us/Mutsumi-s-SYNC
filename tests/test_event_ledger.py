@@ -113,6 +113,74 @@ async def test_projection_replaces_covered_global_events_with_episode(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_projection_episode_coverage_ignores_interleaved_conversations(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        first = await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self",
+            actor_kind="bot", event_type=EventType.OUTBOUND.value,
+            content="global one", visibility="global",
+        ))
+        await store.append_event(EventRecord(
+            conversation_id="private:charlie", actor_id="qq:user:charlie",
+            actor_kind="human", event_type=EventType.INBOUND.value,
+            content="private interleaved event", visibility="private",
+        ))
+        last = await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self",
+            actor_kind="bot", event_type=EventType.OUTBOUND.value,
+            content="global two", visibility="global",
+        ))
+        await store.add_episode(EpisodeRecord(
+            conversation_id="private:alice",
+            first_sequence=first.sequence or 0,
+            last_sequence=last.sequence or 0,
+            narrative="Two global events from Alice's conversation.",
+        ))
+
+        context = await build_global_life_context(store, "private:bob")
+
+        assert "Two global events from Alice" in context
+        assert "private interleaved event" not in context
+        assert "global one" not in context
+        assert "global two" not in context
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_projection_selects_latest_global_events_without_private_noise(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self",
+            actor_kind="bot", event_type=EventType.STATE_CHANGE.value,
+            content="old global state", visibility="global",
+        ))
+        for index in range(120):
+            await store.append_event(EventRecord(
+                conversation_id=f"private:noise-{index}", actor_id=f"qq:user:{index}",
+                actor_kind="human", event_type=EventType.INBOUND.value,
+                content=f"private noise {index}", visibility="private",
+            ))
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self",
+            actor_kind="bot", event_type=EventType.STATE_CHANGE.value,
+            content="new global state", visibility="global",
+        ))
+
+        context = await build_global_life_context(store, "private:bob", limit=1)
+
+        assert "new global state" in context
+        assert "old global state" not in context
+        assert "private noise" not in context
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_media_ledger_deduplicates_binary_and_keeps_description(tmp_path):
     store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
     await store.initialize()
