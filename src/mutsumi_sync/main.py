@@ -18,6 +18,7 @@ from .tools.self_note import self_note_tool, SELF_NOTE_SCHEMA
 from .tools.priority_override import priority_override_tool, PRIORITY_OVERRIDE_SCHEMA
 from .tools.send import send_tool, SEND_TOOL_SCHEMA
 from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
+from .tools.status_update import status_update_tool, STATUS_UPDATE_SCHEMA
 from .tools.scheduler import scheduler_tool, SCHEDULER_SCHEMA
 from .tools.media import media_search, MEDIA_SEARCH_SCHEMA, sticker_manage, STICKER_MANAGE_SCHEMA
 from .tools.bot_state import bot_state_tool, BOT_STATE_SCHEMA
@@ -55,6 +56,8 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
         description="发送 HTTP 请求到任意 URL",
         parameters=HTTP_API_SCHEMA,
         handler=http_api_call,
+        latency_class="long",
+        status_hint="我先请求一下外部接口，可能需要一点时间。",
     ))
 
     async def _config_manager(args: dict) -> str:
@@ -149,11 +152,29 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     registry.register(Tool(
         name="send",
         description=(
-            "特殊发送工具。普通文字回复请直接写 assistant content；仅在需要发送图片、"
+            "特殊发送工具。普通文字回复请写入最终 assistant content 的 TO_USER 区块；仅在需要发送图片、"
             "markdown_image、QQ 表情、@、reply 或 forward 等特殊消息段时使用。"
         ),
         parameters=SEND_TOOL_SCHEMA,
         handler=_send,
+    ))
+
+    async def _status_update(args: dict, **deps) -> str:
+        return await status_update_tool(
+            args,
+            sender=deps.get("sender"),
+            peer=deps.get("peer"),
+        )
+
+    registry.register(Tool(
+        name="status_update",
+        description=(
+            "在预计需要等待的工具调用前，向用户发送一条简短的进度通知。"
+            "只说明准备做什么，不要写详细思考过程；它不会结束 pipeline，也不是最终回复。"
+        ),
+        parameters=STATUS_UPDATE_SCHEMA,
+        handler=_status_update,
+        latency_class="fast",
     ))
 
     registry.register(Tool(

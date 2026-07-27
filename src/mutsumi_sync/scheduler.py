@@ -37,6 +37,7 @@ class PipelineDeps:
     source: str = "user"
     silent: bool = False
     remember_input: bool = True
+    remember_inner: bool = True
     conversation_id: str = ""
     actor_id: str = ""
     actor_name: str = ""
@@ -490,6 +491,7 @@ class PipelineScheduler:
             source="heartbeat",
             silent=True,
             remember_input=False,
+            remember_inner=True,
         )
         logger.info("[HEARTBEAT] triggering pipeline key=%s", key)
         await pipeline(

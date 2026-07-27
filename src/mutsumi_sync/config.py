@@ -140,6 +140,12 @@ class MemoryConfig(BaseModel):
     self_note_max_multiplier: float = 2.0
 
 
+class InnerJournalConfig(BaseModel):
+    max_entry_chars: int = 1000
+    max_context_tokens: int = 16000
+    max_context_entries: int = 200
+
+
 class SummarizerConfig(BaseModel):
     provider: str = "deepseek"
     model: str = "deepseek-chat"
@@ -173,6 +179,7 @@ class Config(BaseModel):
     context: ContextConfig = ContextConfig()
     session: SessionConfig = SessionConfig()
     memory: MemoryConfig = MemoryConfig()
+    inner_journal: InnerJournalConfig = InnerJournalConfig()
     summarizer: SummarizerConfig = SummarizerConfig()
     render: RenderConfig = RenderConfig()
     vision: VisionConfig = VisionConfig()

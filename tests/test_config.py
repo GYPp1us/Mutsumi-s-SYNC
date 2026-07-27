@@ -38,7 +38,8 @@ class TestConfig:
         assert c.logging.text_file.path == "data/logs/mutsumi.log"
         assert c.prompts.system.persona == ""
         assert c.prompts.system_file == "system-prompts.yaml"
-        assert "普通 content 必须是扁平纯文本" in c.prompts.system.runtime
+        assert "TO_USER" in c.prompts.system.runtime
+        assert c.inner_journal.max_entry_chars == 1000
         assert c.dirty is False
 
     def test_load_missing_file(self):

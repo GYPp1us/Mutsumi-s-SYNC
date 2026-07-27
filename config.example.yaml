@@ -60,6 +60,10 @@ memory:
   archive_threshold_tokens: 100
   self_note_target_tokens: 1000
   self_note_max_multiplier: 2.0
+inner_journal:
+  max_entry_chars: 1000
+  max_context_tokens: 16000
+  max_context_entries: 200
 summarizer:
   provider: deepseek
   model: deepseek-chat

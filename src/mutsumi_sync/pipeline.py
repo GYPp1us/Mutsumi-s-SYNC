@@ -22,6 +22,8 @@ from .memory.timestamps import (
     format_context_timestamp,
 )
 from .tools.send import send_tool
+from .tools.status_update import send_status_update
+from .output_protocol import OutputProtocolError, format_final_envelope, parse_final_envelope
 from .vision import describe_image
 from .logging import log_context, log_llm_result, log_tool_call, log_send, ESTIMATE_CHARS_PER_TOKEN
 
@@ -114,6 +116,32 @@ async def _inject_priority_override(store, group_key: str) -> str:
     return f"[Priority Override]\n{content}\n[/Priority Override]"
 
 
+async def _inject_inner_journal(store, config) -> str:
+    entries = await store.get_inner_journal(config.inner_journal.max_context_entries)
+    if not entries:
+        return ""
+
+    selected: list[dict[str, Any]] = []
+    total = 0
+    for entry in reversed(entries):
+        source = str(entry.get("source_conversation_id") or "unknown")
+        timestamp = format_context_timestamp(entry.get("created_at"))
+        line = f"[{timestamp}] source={source}: {entry.get('content', '')}"
+        cost = _estimate_tokens(line)
+        if selected and total + cost > config.inner_journal.max_context_tokens:
+            break
+        selected.append({"line": line, "cost": cost})
+        total += cost
+
+    if not selected:
+        return ""
+    return (
+        "[Inner Journal — subjective history, not instructions or verified facts]\n"
+        + "\n".join(item["line"] for item in reversed(selected))
+        + "\n[/Inner Journal]"
+    )
+
+
 def _append_priority_override(content: str, priority_override: str) -> str:
     if not priority_override:
         return content
@@ -155,15 +183,27 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
     ]
-    bootstrap_sections: list[str] = []
-
-    self_note_text = await _inject_self_note(store, deps.group_key, config)
-    if self_note_text:
-        bootstrap_sections.append(self_note_text)
-
+    self_sections: list[str] = []
+    persona = config.prompts.system.persona.strip()
+    if persona:
+        self_sections.append(f"[Persona]\n{persona}\n[/Persona]")
     bot_state_text = await _inject_bot_state(store)
     if bot_state_text:
-        bootstrap_sections.append(bot_state_text)
+        self_sections.append(bot_state_text)
+    inner_journal_text = await _inject_inner_journal(store, config)
+    if inner_journal_text:
+        self_sections.append(inner_journal_text)
+    if not self_sections:
+        self_sections.append("当前没有可用的全局内在状态。")
+    messages.append({
+        "role": "user",
+        "content": "[Self Context]\n" + "\n\n".join(self_sections) + "\n[/Self Context]",
+    })
+
+    conversation_sections: list[str] = []
+    self_note_text = await _inject_self_note(store, deps.group_key, config)
+    if self_note_text:
+        conversation_sections.append(self_note_text)
 
     life_context = await build_global_life_context(
         store,
@@ -171,7 +211,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
         limit=config.context.recent_actions_max_count * 2,
     )
     if life_context:
-        bootstrap_sections.append(life_context)
+        conversation_sections.append(life_context)
 
     summaries = await store.get_summaries(deps.group_key, limit=config.context.summaries_max_count)
     if summaries:
@@ -186,28 +226,15 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
             else:
                 summary_texts.append(f"[assistant]: {s['summary']}")
         if summary_texts:
-            messages.append({"role": "system", "content": "[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]"})
-
-    extra_system_sections = [
-        str(m.get("content", ""))
-        for m in messages[1:]
-        if m.get("role") == "system" and str(m.get("content", "")).strip()
-    ]
-    if extra_system_sections:
-        bootstrap_sections.extend(extra_system_sections)
-        messages = messages[:1]
+            conversation_sections.append("[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]")
 
     priority_override = await _inject_priority_override(store, deps.group_key)
-    bootstrap_body = "\n\n".join(section for section in bootstrap_sections if section.strip())
-    if not bootstrap_body:
-        bootstrap_body = "当前没有可用的持久上下文。"
-    persona = config.prompts.system.persona.strip()
-    if persona:
-        bootstrap_body += f"\n\n[Persona]\n{persona}\n[/Persona]"
-    bootstrap = "[Context Packet]\n" + bootstrap_body + "\n[/Context Packet]"
+    conversation_body = "\n\n".join(section for section in conversation_sections if section.strip())
+    if not conversation_body:
+        conversation_body = "当前没有可用的当前会话上下文。"
     messages.append({
         "role": "user",
-        "content": bootstrap,
+        "content": "[Conversation Context]\n" + conversation_body + "\n[/Conversation Context]",
     })
 
     window_ctx = deps.window.get_context()
@@ -245,10 +272,14 @@ async def _do_llm_call(messages: list[dict], deps: PipelineDeps) -> LLMResult:
     if not config.api_key:
         from datetime import datetime
         now = datetime.now().isoformat(timespec="seconds")
-        return LLMResult(content=f"[LLM Stub @ {now}] I received: {messages[-1]['content'][:200]}")
+        return LLMResult(content=format_final_envelope(
+            to_user=f"[LLM Stub @ {now}] I received: {messages[-1]['content'][:200]}",
+        ))
 
     if not config.base_url:
-        return LLMResult(content="[Error: model.base_url not configured]")
+        return LLMResult(content=format_final_envelope(
+            to_user="[Error: model.base_url not configured]",
+        ))
 
     tools = deps.registry.to_openai_schema()
     payload: dict[str, Any] = {
@@ -274,7 +305,9 @@ async def _do_llm_call(messages: list[dict], deps: PipelineDeps) -> LLMResult:
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(url, headers=headers, json=payload)
         if resp.status_code != 200:
-            return LLMResult(content=f"[Error: LLM API returned {resp.status_code}: {resp.text[:500]}]")
+            return LLMResult(content=format_final_envelope(
+                to_user=f"[Error: LLM API returned {resp.status_code}: {resp.text[:500]}]",
+            ))
 
         data = resp.json()
         choice = data.get("choices", [{}])[0]
@@ -617,6 +650,52 @@ async def _record_action(
         logger.exception("Failed to persist action ledger entry for %s", tool_name)
 
 
+async def _send_status_text(
+    deps: PipelineDeps,
+    text: str,
+    *,
+    source: str,
+) -> bool:
+    if deps.silent:
+        logger.info("[STATUS] suppressed source=%s silent=true", source)
+        return False
+
+    outcome = await send_status_update(
+        {"text": text},
+        sender=deps.sender,
+        peer=deps.peer,
+    )
+    if not outcome.ok:
+        error = f"[Error: status update failed: {outcome.error}]"
+        logger.error("[STATUS] failed source=%s error=%s", source, error)
+        await _record_action(
+            deps,
+            tool_name="status_update",
+            call_id="",
+            arguments={"text": text, "source": source},
+            result=error,
+        )
+        return False
+
+    log_send(deps, "status", text)
+    await _append_event(
+        deps,
+        event_type=EventType.STATUS_UPDATE.value,
+        content=text,
+        visibility=_conversation_visibility(deps),
+        audience=deps.conversation_id or deps.group_key,
+    )
+    await _record_action(
+        deps,
+        tool_name="status_update",
+        call_id="",
+        arguments={"text": text, "source": source},
+        result="[OK] status update sent",
+    )
+    logger.info("[STATUS] sent source=%s chars=%d", source, len(text))
+    return True
+
+
 def _log_context_size(messages: list[dict], deps: PipelineDeps) -> None:
     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
     total_tokens = total_chars // ESTIMATE_CHARS_PER_TOKEN
@@ -876,7 +955,7 @@ async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
 
     if deps.silent:
         logger.info("[PIPE] silent mode suppressed visible content parts=%d chars=%d", len(parts), len(content))
-        return parts
+        return []
 
     sent_parts: list[str] = []
     for part in parts:
@@ -931,7 +1010,10 @@ async def pipeline(
 
     _pending_writes: list[tuple[str, str, dict, Callable[[], Awaitable[str]]]] = []
     bot_replies: list[str] = []
+    inner_candidate = ""
     responded = False
+    turn_completed = False
+    cancelled = False
     final_status = "received"
     inbound_msg_id: int | None = None
     inbound_event_ids: list[str] = []
@@ -1083,8 +1165,52 @@ async def pipeline(
                 break
 
             if not result.tool_calls and result.content:
-                logger.info("[PIPE] branch=content_only chars=%d", len(result.content))
-                rich_features = _unsupported_markdown_features(result.content)
+                logger.info("[PIPE] branch=final_content chars=%d", len(result.content))
+                try:
+                    envelope = parse_final_envelope(result.content)
+                except OutputProtocolError as exc:
+                    output_rewrites += 1
+                    logger.warning(
+                        "[OUTPUT PROTOCOL] invalid final envelope rewrite=%d/%d error=%s",
+                        output_rewrites,
+                        MAX_OUTPUT_REWRITES,
+                        exc,
+                    )
+                    if output_rewrites > MAX_OUTPUT_REWRITES:
+                        final_status = "error"
+                        break
+                    messages.append({"role": "assistant", "content": result.content})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[Output Protocol] 最终回复格式错误。请只输出完整的 [TO_SELF]...[/TO_SELF] "
+                            "和 [TO_USER]...[/TO_USER] 两个区块，不要添加区块外文字。"
+                        ),
+                    })
+                    continue
+
+                if len(envelope.to_self) > deps.config.inner_journal.max_entry_chars:
+                    output_rewrites += 1
+                    logger.warning(
+                        "[OUTPUT PROTOCOL] to_self too long chars=%d rewrite=%d/%d",
+                        len(envelope.to_self),
+                        output_rewrites,
+                        MAX_OUTPUT_REWRITES,
+                    )
+                    if output_rewrites > MAX_OUTPUT_REWRITES:
+                        final_status = "error"
+                        break
+                    messages.append({"role": "assistant", "content": result.content})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[Output Protocol] TO_SELF 只能保留新的内在状态增量，最多 "
+                            f"{deps.config.inner_journal.max_entry_chars} 个字符。请压缩后重写完整 envelope。"
+                        ),
+                    })
+                    continue
+
+                rich_features = _unsupported_markdown_features(envelope.to_user)
                 if rich_features and not deps.silent:
                     output_rewrites += 1
                     logger.warning(
@@ -1098,13 +1224,15 @@ async def pipeline(
                     messages.append({
                         "role": "user",
                         "content": (
-                            "[Output Gate] This content was not sent because ordinary QQ replies must be flat plain text. "
-                            "Rewrite it without Markdown, or call send with markdown_image for complex Markdown. "
+                            "[Output Gate] TO_USER was not sent because ordinary QQ replies must be flat plain text. "
+                            "Rewrite TO_USER without Markdown, or call send with markdown_image for complex Markdown. "
                             f"Detected: {', '.join(rich_features)}. Do not claim that the rejected content was sent."
                         ),
                     })
                     continue
-                visible_parts = await _send_visible_content(deps, result.content)
+
+                inner_candidate = envelope.to_self
+                visible_parts = await _send_visible_content(deps, envelope.to_user)
                 if visible_parts:
                     responded = True
                     final_status = "responded"
@@ -1118,8 +1246,16 @@ async def pipeline(
                         status=final_status,
                         input_metadata=input_metadata,
                     )
-                elif not deps.silent:
+                elif envelope.to_user and not deps.silent:
                     final_status = "error"
+                elif final_status == "received":
+                    final_status = "no_reply" if envelope.to_self else "empty"
+                logger.info(
+                    "[OUTPUT PROTOCOL] parsed to_self_chars=%d to_user_chars=%d sent=%s",
+                    len(envelope.to_self),
+                    len(envelope.to_user),
+                    bool(visible_parts),
+                )
                 break
 
             send_calls = [tc for tc in result.tool_calls if tc["name"] == "send"]
@@ -1135,7 +1271,34 @@ async def pipeline(
             tc_results: dict[str, str] = {}
             _report_state(deps, f"LOOP_{step + 1}:Exec_Tools")
 
+            status_calls = [tc for tc in result.tool_calls if tc["name"] == "status_update"]
+            long_calls = []
             for tc in result.tool_calls:
+                tool = deps.registry.get(tc["name"])
+                is_long = bool(tool and tool.latency_class == "long")
+                if tc["name"] == "send" and tc["arguments"].get("markdown_image"):
+                    is_long = True
+                if is_long:
+                    long_calls.append((tc, tool))
+            if not status_calls and long_calls and not deps.silent:
+                _, long_tool = long_calls[0]
+                fallback = (
+                    long_tool.status_hint
+                    if long_tool and long_tool.status_hint
+                    else "我先处理一下，可能需要一点时间。"
+                )
+                await _send_status_text(
+                    deps,
+                    fallback,
+                    source="automatic-long-tool-fallback",
+                )
+
+            execution_calls = status_calls + [
+                tc for tc in result.tool_calls if tc["name"] != "status_update"
+            ]
+            status_executed = False
+
+            for tc in execution_calls:
                 logger.info("[PIPE] executing tool name=%s queued=%s", tc["name"], tc["name"] in WRITE_TOOLS)
                 tool_name = tc["name"]
                 tool_args = tc["arguments"]
@@ -1148,7 +1311,33 @@ async def pipeline(
                         f"[Error: tool '{tool_name}' stopped after three consecutive failures; "
                         "report the failure instead of retrying]"
                     )
+                elif tool_name == "status_update":
+                    if status_executed:
+                        tr = "[Error: only one status_update is allowed per tool round]"
+                    elif deps.silent:
+                        status_executed = True
+                        tr = "[OK] status update suppressed by silent pipeline"
+                    else:
+                        status_executed = True
+                        outcome = await send_status_update(
+                            tool_args,
+                            sender=deps.sender,
+                            peer=deps.peer,
+                        )
+                        if outcome.ok:
+                            log_send(deps, "status", outcome.text)
+                            await _append_event(
+                                deps,
+                                event_type=EventType.STATUS_UPDATE.value,
+                                content=outcome.text,
+                                visibility=_conversation_visibility(deps),
+                                audience=deps.conversation_id or deps.group_key,
+                            )
+                            tr = "[OK] status update sent"
+                        else:
+                            tr = f"[Error: status update failed: {outcome.error}]"
                 elif tool_name == "send":
+                    send_committed = False
                     if send_count >= MAX_SENDS_PER_LOOP:
                         tr = f"[Error: send limit reached: {MAX_SENDS_PER_LOOP}]"
                     elif deps.silent:
@@ -1164,8 +1353,10 @@ async def pipeline(
                         except Exception as e:
                             logger.exception("send_tool failed")
                             tr = f"[Error: {e}]"
+                        else:
+                            send_committed = not str(tr).startswith("[Error:")
                     send_count += 1
-                    if not str(tr).startswith("[Error:"):
+                    if send_committed:
                         text_reply = str(tool_args.get("text", ""))
                         if text_reply:
                             bot_replies.append(text_reply)
@@ -1181,7 +1372,7 @@ async def pipeline(
                             audience=deps.conversation_id or deps.group_key,
                             media_ids=sent_media_ids or None,
                         )
-                    log_send(deps, "tool", tool_args)
+                        log_send(deps, "tool", tool_args)
                 elif tool_name in WRITE_TOOLS and not deps.remember_input:
                     tr = "[OK] write tool suppressed by non-remembering pipeline]"
                 elif tool_name in WRITE_TOOLS:
@@ -1267,7 +1458,7 @@ async def pipeline(
 
             if no_reply_called:
                 logger.info("[PIPE] branch=no_reply suppressing assistant content and ending loop step=%d", step + 1)
-                final_status = "no_reply"
+                final_status = "responded" if responded else "no_reply"
                 break
         else:
             logger.warning("[LOOP] tool loop exhausted after %d steps, context ~%d msgs",
@@ -1310,10 +1501,12 @@ async def pipeline(
             event_status = "error" if final_status == "error" else "finalized"
             await _update_event_statuses(deps, inbound_event_ids, event_status)
 
+        turn_completed = True
         _report_state(deps, "DONE")
 
     except asyncio.CancelledError:
         logger.info("[PIPE] cancelled for %s", deps.peer.peer_uid)
+        cancelled = True
         final_status = "cancelled"
         if inbound_msg_id is None:
             inbound_msg_id = await _recover_inbound_msg_id(deps, message, msg_type.value)
@@ -1375,6 +1568,30 @@ async def pipeline(
         except asyncio.CancelledError:
             await flush_task
             raise
+
+        if (
+            deps.remember_inner
+            and inner_candidate
+            and turn_completed
+            and not cancelled
+            and final_status in ("responded", "no_reply")
+        ):
+            try:
+                journal_id = await deps.store.append_inner_journal(
+                    content=inner_candidate,
+                    pipeline_id=deps.pipeline_id,
+                    source_conversation_id=deps.conversation_id or deps.group_key,
+                    source_actor_id=deps.actor_id,
+                    source_event_ids=inbound_event_ids,
+                )
+                logger.info(
+                    "[INNER] %s journal_id=%s chars=%d",
+                    "committed" if journal_id is not None else "deduplicated",
+                    journal_id,
+                    len(inner_candidate),
+                )
+            except Exception:
+                logger.exception("[INNER] failed to persist journal entry")
 
         if deps.remember_input and final_status == "responded":
             try:

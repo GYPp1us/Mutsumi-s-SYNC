@@ -24,6 +24,7 @@ from src.mutsumi_sync.pipeline import (
     _generate_and_save_summary,
 )
 import src.mutsumi_sync.pipeline as pipeline_module
+from src.mutsumi_sync.output_protocol import format_final_envelope
 
 
 class CaptureSender:
@@ -53,6 +54,10 @@ def make_config():
     c.memory.self_note_target_tokens = 1000
     c.memory.self_note_max_multiplier = 2.0
     return c
+
+
+def final_output(text: str = "", *, self_text: str = "") -> str:
+    return format_final_envelope(to_self=self_text, to_user=text)
 
 
 class TestPipelineE2EMultiRound:
@@ -331,15 +336,17 @@ class TestPipelineE2EMultiRound:
         assert ctx[0]["content"]
         assert roles.count("system") == 1
 
-        bootstrap = ctx[1]
-        assert bootstrap["role"] == "user"
-        assert "Context Packet" in bootstrap["content"]
-        assert "structure test note" in bootstrap["content"]
-        assert "past conversation about weather" in bootstrap["content"]
-        assert "+08:00" in bootstrap["content"]
-        assert bootstrap["content"].rstrip().endswith(
-            "[Persona]\nSpeak as a calm long-term companion.\n[/Persona]\n[/Context Packet]"
+        self_context = ctx[1]
+        assert self_context["role"] == "user"
+        assert self_context["content"].rstrip().endswith(
+            "[Persona]\nSpeak as a calm long-term companion.\n[/Persona]\n[/Self Context]"
         )
+
+        conversation_context = ctx[2]
+        assert conversation_context["role"] == "user"
+        assert "structure test note" in conversation_context["content"]
+        assert "past conversation about weather" in conversation_context["content"]
+        assert "+08:00" in conversation_context["content"]
         assert "工具 schema 是工具能力的唯一事实源" in ctx[0]["content"]
         assert "用未转义的 |" not in ctx[0]["content"]
 
@@ -390,7 +397,7 @@ class TestPipelineE2EMultiRound:
         registry = build_registry(config, store)
 
         async def fake_llm_call(messages, deps):
-            return LLMResult(content="a | b | c", input_tokens=3, output_tokens=3)
+            return LLMResult(content=final_output("a | b | c"), input_tokens=3, output_tokens=3)
 
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
         deps = PipelineDeps(
@@ -431,7 +438,7 @@ class TestPipelineE2EMultiRound:
         ctx = await _build_context("current user message", deps)
         user_messages = [m for m in ctx if m["role"] == "user"]
 
-        assert len(user_messages) == 4
+        assert len(user_messages) == 5
         joined = "\n".join(str(m["content"]) for m in user_messages)
         assert joined.count("[Priority Override]") == 1
         assert joined.count("Always preserve exact equations.") == 1
@@ -439,8 +446,8 @@ class TestPipelineE2EMultiRound:
         assert "Always preserve exact equations." in ctx[-2]["content"]
         assert "Priority Override" not in ctx[-1]["content"]
         assert ctx[-1]["content"] == "current user message"
-        assert "+08:00" in ctx[2]["content"], "Historical user messages should include readable +8 timestamps"
-        assert ctx[3]["content"] == "previous bot reply"
+        assert "+08:00" in ctx[3]["content"], "Historical user messages should include readable +8 timestamps"
+        assert ctx[4]["content"] == "previous bot reply"
 
         await store.close()
 
@@ -555,7 +562,7 @@ class TestPipelineE2EMultiRound:
 
         async def fake_llm_call(messages, deps):
             captured.append(messages)
-            return LLMResult(content="I can help with that diagram.", input_tokens=20, output_tokens=5)
+            return LLMResult(content=final_output("I can help with that diagram."), input_tokens=20, output_tokens=5)
 
         monkeypatch.setattr(pipeline_module, "describe_image", fake_describe_image)
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
@@ -660,7 +667,7 @@ class TestPipelineE2EDebounce:
         registry = build_registry(config, store)
 
         async def fake_llm_call(messages, deps):
-            return LLMResult(content="hello from content", input_tokens=3, output_tokens=2)
+            return LLMResult(content=final_output("hello from content"), input_tokens=3, output_tokens=2)
 
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
 
@@ -687,6 +694,121 @@ class TestPipelineE2EDebounce:
 
         await store.close()
 
+    async def test_to_self_is_global_journal_and_not_working_window(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content=final_output("visible reply", self_text="我会继续留意这个未完成事项。"))
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="inner_journal_test"),
+            group_key="private:inner_journal_test",
+            conversation_id="private:inner_journal_test",
+            actor_id="qq:user:1",
+        )
+
+        await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        entries = await store.get_inner_journal()
+        assert [entry["content"] for entry in entries] == ["我会继续留意这个未完成事项。"]
+        assert all("TO_SELF" not in str(item["content"]) for item in deps.window.get_context())
+        assert [item["content"] for item in deps.window.get_context() if item.get("role") == "assistant"] == ["visible reply"]
+        await store.close()
+
+    async def test_status_update_precedes_long_tool_and_stays_out_of_window(self, monkeypatch):
+        from src.mutsumi_sync.tools.registry import Tool
+
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        execution_order: list[str] = []
+
+        async def long_tool(args, **deps):
+            execution_order.append("long")
+            return "long tool result"
+
+        registry.register(Tool(
+            name="long_test",
+            description="test long tool",
+            parameters={"type": "object", "properties": {}},
+            handler=long_tool,
+            latency_class="long",
+            status_hint="我正在处理测试任务。",
+        ))
+        calls = iter([
+            LLMResult(tool_calls=[
+                {"id": "status-1", "name": "status_update", "arguments": {"text": "我先处理一下。"}},
+                {"id": "long-1", "name": "long_test", "arguments": {}},
+            ]),
+            LLMResult(content=final_output("完成了。")),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            result = next(calls)
+            if result.tool_calls:
+                execution_order.append("round")
+            return result
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="status_order"),
+            group_key="private:status_order",
+        )
+
+        await pipeline("do the long thing", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert execution_order == ["round", "long"]
+        assert [item["message"] for item in sender.sent] == ["我先处理一下。", "完成了。"]
+        assert all(item["content"] != "我先处理一下。" for item in deps.window.get_context())
+        await store.close()
+
+    async def test_inner_journal_is_not_committed_after_final_send_is_cancelled(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        original_update = pipeline_module._update_saved_msg
+        started = asyncio.Event()
+
+        async def delayed_update(*args, **kwargs):
+            if kwargs.get("response"):
+                started.set()
+                await asyncio.sleep(60)
+            return await original_update(*args, **kwargs)
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content=final_output("visible", self_text="不要在取消后保存。"))
+
+        monkeypatch.setattr(pipeline_module, "_update_saved_msg", delayed_update)
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="inner_cancel"),
+            group_key="private:inner_cancel",
+        )
+
+        task = asyncio.create_task(pipeline("cancel after send", MessageType.SHORT_TEXT, None, None, deps=deps))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert await store.get_inner_journal() == []
+        await store.close()
+
     async def test_content_pipe_is_sent_as_one_literal_message(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()
@@ -695,7 +817,7 @@ class TestPipelineE2EDebounce:
         registry = build_registry(config, store)
 
         async def fake_llm_call(messages, deps):
-            return LLMResult(content="first | second|third ", input_tokens=3, output_tokens=2)
+            return LLMResult(content=final_output("first | second|third "), input_tokens=3, output_tokens=2)
 
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
 
@@ -708,7 +830,7 @@ class TestPipelineE2EDebounce:
 
         await pipeline("hello", MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        assert [item["message"] for item in sender.sent] == ["first | second|third "]
+        assert [item["message"] for item in sender.sent] == ["first | second|third"]
 
         await store.close()
 
@@ -720,7 +842,7 @@ class TestPipelineE2EDebounce:
         registry = build_registry(config, store)
 
         async def fake_llm_call(messages, deps):
-            return LLMResult(content=r"a \| b|c", input_tokens=3, output_tokens=2)
+            return LLMResult(content=final_output(r"a \| b|c"), input_tokens=3, output_tokens=2)
 
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
 
@@ -746,7 +868,7 @@ class TestPipelineE2EDebounce:
 
         async def fake_llm_call(messages, deps):
             return LLMResult(
-                content="visible reply",
+                content=final_output("visible reply"),
                 reasoning_content="private chain of thought",
                 input_tokens=3,
                 output_tokens=2,
@@ -786,7 +908,7 @@ class TestPipelineE2EDebounce:
                 input_tokens=3,
                 output_tokens=2,
             ),
-            LLMResult(content="final content", input_tokens=3, output_tokens=2),
+            LLMResult(content=final_output("final content"), input_tokens=3, output_tokens=2),
         ])
 
         async def fake_llm_call(messages, deps):
@@ -827,7 +949,7 @@ class TestPipelineE2EDebounce:
                 input_tokens=3,
                 output_tokens=2,
             ),
-            LLMResult(content="final content", input_tokens=3, output_tokens=2),
+            LLMResult(content=final_output("final content"), input_tokens=3, output_tokens=2),
         ])
 
         async def fake_llm_call(messages, deps):
@@ -935,7 +1057,7 @@ class TestPipelineE2EDebounce:
                     "name": "always_fail",
                     "arguments": {},
                 }])
-            return LLMResult(content="reported")
+            return LLMResult(content=final_output("reported"))
 
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
         deps = PipelineDeps(
@@ -992,7 +1114,7 @@ class TestPipelineE2EDebounce:
                 "name": "config_manager",
                 "arguments": {"action": "get", "key": "model.api_key"},
             }]),
-            LLMResult(content="done"),
+            LLMResult(content=final_output("done")),
         ])
 
         async def fake_llm_call(messages, deps):
@@ -1071,7 +1193,11 @@ class TestPipelineE2EDebounce:
         await pipeline("show model config as markdown image", MessageType.SHORT_TEXT, None, None, deps=deps)
 
         assert llm_call_count == 3
-        assert [item["message"][0]["type"] for item in sender.sent] == ["text", "image"]
+        segments = [item["message"] for item in sender.sent if isinstance(item["message"], list)]
+        status_updates = [item["message"] for item in sender.sent if isinstance(item["message"], str)]
+        assert [segment[0]["type"] for segment in segments] == ["text", "image"]
+        assert len(status_updates) == 1
+        assert all(item["content"] not in status_updates for item in deps.window.get_context())
 
         await store.close()
 
@@ -1136,7 +1262,7 @@ class TestPipelineE2EDebounce:
         registry = build_registry(config, store)
 
         async def fake_llm_call(messages, deps):
-            return LLMResult(content="logged content-only reply", input_tokens=3, output_tokens=2)
+            return LLMResult(content=final_output("logged content-only reply"), input_tokens=3, output_tokens=2)
 
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
 
@@ -1152,7 +1278,7 @@ class TestPipelineE2EDebounce:
 
         messages = "\n".join(record.message for record in caplog.records)
         assert "[PIPE] LLM result" in messages
-        assert "[PIPE] branch=content_only" in messages
+        assert "[PIPE] branch=final_content" in messages
         assert "[PIPE] saved message category=short_text response=yes" in messages
         assert "[PIPE] window updated" in messages
         assert "[PIPE] cleanup complete" in messages
