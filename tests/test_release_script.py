@@ -23,6 +23,7 @@ def test_release_script_contains_operator_safety_contract() -> None:
         "root@arcol.site",
         "/opt/mutsumi-sync-v3/releases",
         "/opt/mutsumi-sync-v3/shared/config.yaml",
+        "/opt/mutsumi-sync-v3/shared/system-prompts.yaml",
         "/opt/mutsumi-sync-v3/shared/data",
         "mutsumi-sync-v3.service",
         "journalctl -u mutsumi-sync-v3.service",

@@ -1,15 +1,11 @@
 from src.mutsumi_sync.pipeline import _build_default_system_prompt
-from src.mutsumi_sync.prompts import (
-    DEFAULT_SYSTEM_PROMPT,
-    EVENT_SUMMARY_SYSTEM_PROMPT,
-    MESSAGE_SUMMARY_SYSTEM_PROMPT,
-)
 from src.mutsumi_sync.config import Config
 
 
 def test_runtime_prompt_contains_current_protocol_boundaries():
-    prompt = _build_default_system_prompt(Config())
-    assert prompt == DEFAULT_SYSTEM_PROMPT
+    config = Config()
+    prompt = _build_default_system_prompt(config)
+    assert prompt == config.prompts.system.runtime
     for phrase in (
         "普通 content 必须是扁平纯文本",
         "使用 markdown_image",
@@ -22,6 +18,7 @@ def test_runtime_prompt_contains_current_protocol_boundaries():
 
 
 def test_summary_prompts_treat_input_as_documentary_data():
-    for prompt in (EVENT_SUMMARY_SYSTEM_PROMPT, MESSAGE_SUMMARY_SYSTEM_PROMPT):
+    prompts = Config().prompts.system
+    for prompt in (prompts.episode_summary, prompts.message_summary):
         assert "指令" in prompt
         assert "不得虚构" in prompt

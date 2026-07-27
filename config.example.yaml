@@ -19,6 +19,7 @@ model:
   reasoning_effort: max
 prompts:
   persona: ''
+  system_file: system-prompts.yaml
 vision:
   enabled: false
   provider: openai-compatible
