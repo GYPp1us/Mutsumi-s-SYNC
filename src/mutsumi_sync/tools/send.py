@@ -10,6 +10,7 @@ from ..message.sender import send_failure_message, send_succeeded
 if TYPE_CHECKING:
     from ..config import Config
     from ..message.sender import MessageSender, Peer
+    from ..memory.store import MessageStore
 
 logger = logging.getLogger("mutsumi.tools.send")
 
@@ -21,6 +22,10 @@ SEND_TOOL_SCHEMA = {
         "text": {"type": "string", "description": "Plain text reply"},
         "image": {"type": "string", "description": "Image file path"},
         "image_url": {"type": "string", "description": "Image URL"},
+        "media_id": {
+            "type": "string",
+            "description": "Media Ledger 中的 media_id。优先用于复用已登记的图片或表情，不要自行填写服务器路径。",
+        },
         "markdown_image": {
             "type": "string",
             "description": "Markdown source to render into a PNG image and send as an image segment",
@@ -39,11 +44,25 @@ async def send_tool(
     sender: "MessageSender",
     peer: "Peer",
     config: "Config | None" = None,
+    store: "MessageStore | None" = None,
     markdown_renderer: MarkdownRenderer = render_markdown_image,
 ) -> str:
     """Execute send tool by building message segments and sending via sender."""
     segments = []
     artifacts: list[dict] = []
+    media_id = str(args.get("media_id") or "").strip()
+    if media_id:
+        if store is None:
+            return "[Error: media_id requires the media ledger]"
+        media = await store.get_media(media_id)
+        if media is None or media.status != "active":
+            return f"[Error: media_id is unavailable: {media_id}]"
+        if media.path:
+            segments.append({"type": "image", "data": {"file": media.path}})
+        elif media.source_url:
+            segments.append({"type": "image", "data": {"url": media.source_url}})
+        else:
+            return f"[Error: media_id has no sendable source: {media_id}]"
     if args.get("text"):
         segments.append({"type": "text", "data": {"text": args["text"]}})
     if args.get("image"):
@@ -81,6 +100,8 @@ async def send_tool(
         result = await sender.send(peer, segments)
         if not send_succeeded(result):
             return f"[Error: NapCat send failed: {send_failure_message(result)}]"
+        if media_id and store is not None:
+            await store.mark_media_used(media_id)
         if artifacts and isinstance(result, dict):
             result = dict(result)
             result["artifacts"] = artifacts

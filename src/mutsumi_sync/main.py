@@ -96,7 +96,19 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="sticker_search",
-        description="Search the global media ledger for stickers. With no query, list all available stickers.",
+        description=(
+            "搜索全局 Media Ledger。query 省略时列出所有可复用媒体；需要复用结果时，"
+            "将返回的 media_id 传给 send(media_id=...)，不要猜测文件路径。"
+        ),
+        parameters=MEDIA_SEARCH_SCHEMA,
+        handler=_media_search,
+    ))
+    registry.register(Tool(
+        name="media_search",
+        description=(
+            "搜索全局 Media Ledger。query 省略时列出所有可复用媒体；需要复用结果时，"
+            "将返回的 media_id 传给 send(media_id=...)，不要猜测文件路径。"
+        ),
         parameters=MEDIA_SEARCH_SCHEMA,
         handler=_media_search,
     ))
@@ -147,13 +159,19 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     ))
 
     async def _send(args: dict, **deps) -> str:
-        return await send_tool(args, sender=deps.get("sender"), peer=deps.get("peer"), config=config)
+        return await send_tool(
+            args,
+            sender=deps.get("sender"),
+            peer=deps.get("peer"),
+            config=config,
+            store=store,
+        )
 
     registry.register(Tool(
         name="send",
         description=(
             "特殊发送工具。普通文字回复请写入最终 assistant content 的 TO_USER 区块；仅在需要发送图片、"
-            "markdown_image、QQ 表情、@、reply 或 forward 等特殊消息段时使用。"
+            "media_id、markdown_image、QQ 表情、@、reply 或 forward 等特殊消息段时使用。"
         ),
         parameters=SEND_TOOL_SCHEMA,
         handler=_send,

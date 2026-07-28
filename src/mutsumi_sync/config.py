@@ -19,6 +19,10 @@ class SystemPromptsConfig(BaseModel):
     message_summary: str
     summary_merge: str
     episode_summary: str
+    heartbeat: str = (
+        "这是一次平台发起的自主性检查，不是用户的新消息。"
+        "只有存在具体且自然的话题时才填写 TO_USER，否则保持 TO_USER 为空。"
+    )
 
 
 def load_system_prompts(path: Path) -> SystemPromptsConfig:
@@ -106,8 +110,9 @@ class LoggingConfig(BaseModel):
 
 class HeartbeatConfig(BaseModel):
     enabled: bool = True
-    interval_seconds: int = 2700
-    aggressive_provider_cache_retention: bool = False
+    private_interval_seconds: int = 900
+    group_interval_seconds: int = 10800
+    active_window_seconds: int = 86400
 
 
 class PromptsConfig(BaseModel):

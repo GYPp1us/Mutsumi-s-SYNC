@@ -285,6 +285,8 @@ class MessageStore:
             ON events(actor_id, sequence);
         CREATE INDEX IF NOT EXISTS idx_events_status
             ON events(status, sequence);
+        CREATE INDEX IF NOT EXISTS idx_events_activity
+            ON events(event_type, created_at, conversation_id);
 
         CREATE TABLE IF NOT EXISTS episodes (
             episode_id       TEXT PRIMARY KEY,
@@ -505,6 +507,51 @@ class MessageStore:
         cursor = await self._conn.execute(query, params)
         return [EventRecord.from_row(row) for row in await cursor.fetchall()]
 
+    async def get_recent_active_conversations(
+        self,
+        *,
+        since: float,
+        chat_type: str,
+    ) -> list[dict[str, Any]]:
+        """Return conversations with real recent inbound activity."""
+        self._ensure_initialized()
+        prefix = "private:" if chat_type == "private" else "group:"
+        cursor = await self._conn.execute(
+            "SELECT conversation_id, actor_id, actor_name, MAX(created_at) AS last_active "
+            "FROM events WHERE event_type = 'inbound' AND status != 'cancelled' "
+            "AND created_at >= ? AND conversation_id LIKE ? "
+            "GROUP BY conversation_id ORDER BY last_active ASC",
+            (since, f"{prefix}%"),
+        )
+        return [
+            {
+                "conversation_id": row["conversation_id"],
+                "actor_id": row["actor_id"],
+                "actor_name": row["actor_name"],
+                "last_active": row["last_active"],
+            }
+            for row in await cursor.fetchall()
+        ]
+
+    async def has_unanswered_proactive(self, conversation_id: str) -> bool:
+        """Return whether the latest proactive output predates no inbound reply."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT MAX(created_at) FROM messages WHERE group_key = ? AND category = 'proactive'",
+            (conversation_id,),
+        )
+        proactive_row = await cursor.fetchone()
+        proactive_at = float(proactive_row[0] or 0)
+        if not proactive_at:
+            return False
+        cursor = await self._conn.execute(
+            "SELECT MAX(created_at) FROM events WHERE conversation_id = ? "
+            "AND event_type = 'inbound' AND status != 'cancelled'",
+            (conversation_id,),
+        )
+        inbound_row = await cursor.fetchone()
+        return proactive_at > float(inbound_row[0] or 0)
+
     async def add_episode(self, episode: EpisodeRecord) -> str:
         self._ensure_initialized()
         episode_id = episode.episode_id or f"ep_{uuid.uuid4().hex}"
@@ -666,6 +713,14 @@ class MessageStore:
         self._ensure_initialized()
         await self._conn.execute(
             "UPDATE media_ledger SET status = ? WHERE media_id = ?", (status, media_id)
+        )
+        await self._conn.commit()
+
+    async def mark_media_used(self, media_id: str) -> None:
+        self._ensure_initialized()
+        await self._conn.execute(
+            "UPDATE media_ledger SET last_used_at = strftime('%s', 'now') WHERE media_id = ?",
+            (media_id,),
         )
         await self._conn.commit()
 
@@ -1032,7 +1087,7 @@ class MessageStore:
         cursor = await self._conn.execute(
             "SELECT id, date, group_key, category, content, created_at FROM messages "
             "WHERE group_key = ? AND id > ? "
-            "AND category IN ('short_text', 'long_text', 'image', 'text', 'mixed') "
+            "AND category IN ('short_text', 'long_text', 'image', 'text', 'mixed', 'proactive') "
             "ORDER BY id DESC",
             (group_key, after_id),
         )
@@ -1045,7 +1100,7 @@ class MessageStore:
                 continue
             if not isinstance(parsed, dict) or parsed.get("status") != "responded":
                 continue
-            if not str(parsed.get("user", "")).strip():
+            if not str(parsed.get("user", "")).strip() and not str(parsed.get("bot", "")).strip():
                 continue
             selected.append({
                 "id": row["id"],

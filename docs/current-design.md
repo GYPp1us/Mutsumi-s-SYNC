@@ -12,9 +12,11 @@ or `README.md`, this document and the tests take precedence.
 - A newer input for the same conversation cancels the previous task with
   `asyncio.Task.cancel()` and waits for its cleanup.
 - Incoming user data is persisted before cancellation-sensitive LLM or tool work.
-- Heartbeats are real, silent LLM calls with `remember_input=False`; they never
-  create conversation, summary, memory, or action records. An explicitly
-  produced `TO_SELF` may still be appended to the global inner journal.
+- Heartbeats are real LLM calls over conversations with inbound activity in the
+  previous 24 hours. Private conversations are scanned every 15 minutes and
+  groups every 3 hours. Synthetic heartbeat input uses `remember_input=False`,
+  while verified proactive assistant output may be persisted to the target
+  conversation and global event ledger.
 
 ## 2. Provider Request Layout
 
@@ -56,6 +58,9 @@ future conversation window.
 
 - The final assistant `content` with no `tool_calls` must contain exactly two
   blocks: `[TO_SELF]...[/TO_SELF]` followed by `[TO_USER]...[/TO_USER]`.
+- For model compatibility, final content with no protocol markers is recovered
+  as empty `TO_SELF` plus `TO_USER`; marker-bearing malformed replies still use
+  the bounded rewrite loop. Strict parsing remains available for validation.
 - `TO_USER` is the only ordinary visible channel. It is flat-text gated and is
   sent once. `TO_SELF` is a bounded subjective delta stored in global inner
   journal only after a complete successful turn; protocol tags never enter the
@@ -68,7 +73,7 @@ future conversation window.
 - `status_update` is a short visible progress event for long tools. It executes
   before other calls in its round, does not end the pipeline, and is not added to
   assistant history. A long registered tool without an explicit update gets
-  one pipeline-generated fallback; silent heartbeat pipelines suppress both.
+  one pipeline-generated fallback; heartbeat pipelines suppress progress events.
 - `no_reply` intentionally ends a turn without visible output.
 - Provider tool schemas are authoritative. Prompts must not contain a manually
   maintained tool inventory.
@@ -138,9 +143,12 @@ Current native tool-loop messages are never compacted mid-loop.
 ## 7. Image Input
 
 The classifier preserves both image metadata and all accompanying text. A
-configured vision provider produces a textual description. The pipeline then
-constructs one synthetic user input containing the caption, description, and a
-stable artifact reference, and proceeds through the normal LLM/tool/reply path.
+configured vision provider produces a textual description. The pipeline first
+downloads an image URL into the Media Ledger when possible, falling back to an
+external reference if the URL cannot be fetched. It then constructs one
+synthetic user input containing only the caption, description, and stable media
+reference; CQ metadata, temporary URLs, and local source paths are not placed
+in model context. The pipeline proceeds through the normal LLM/tool/reply path.
 Vision failure is represented in that input rather than replaced by a canned
 bot response. The original image metadata and description are persisted
 structurally.
@@ -178,8 +186,9 @@ unknown strings instead of silently converting them to false.
 `events` is the append-first fact ledger. It records inbound/outbound
 messages, tool calls/results, media, and state changes with a monotonic global
 sequence plus `conversation_id`, `actor_id`, `actor_kind`, `visibility`,
-`audience`, and pipeline id. Heartbeat input and Runtime Injection are
-platform state and are excluded from the lived interaction stream.
+`audience`, and pipeline id. Heartbeat input and Runtime Injection are platform
+state and are excluded from the lived interaction stream; successful proactive
+assistant output is a real outbound event in its target conversation.
 
 The ledger is global storage, not a global prompt. The context projector applies
 visibility first: private events stay in their conversation, group events stay

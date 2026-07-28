@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 
 _SELF_OPEN = "[TO_SELF]"
@@ -24,8 +25,13 @@ def format_final_envelope(*, to_self: str = "", to_user: str = "") -> str:
     return f"{_SELF_OPEN}\n{to_self.strip()}\n{_SELF_CLOSE}\n{_USER_OPEN}\n{to_user.strip()}\n{_USER_CLOSE}"
 
 
-def parse_final_envelope(content: str) -> FinalEnvelope:
-    """Parse the complete final assistant content without accepting extra prose."""
+def parse_final_envelope(content: str, *, strict: bool = True) -> FinalEnvelope:
+    """Parse the final assistant content, optionally recovering common omissions."""
+    if not strict:
+        recovered = recover_final_envelope(content)
+        if recovered is not None:
+            return recovered
+
     text = str(content).strip()
     if not text.startswith(_SELF_OPEN):
         raise OutputProtocolError("content must start with [TO_SELF]")
@@ -51,4 +57,27 @@ def parse_final_envelope(content: str) -> FinalEnvelope:
     return FinalEnvelope(
         to_self=self_content,
         to_user=text[user_content_start:user_end].strip(),
+    )
+
+
+def recover_final_envelope(content: str) -> FinalEnvelope | None:
+    """Recover common model omissions without weakening strict parsing."""
+    text = str(content).strip()
+    if not text:
+        return None
+
+    markers = (_SELF_OPEN, _SELF_CLOSE, _USER_OPEN, _USER_CLOSE)
+    if not any(marker in text for marker in markers):
+        return FinalEnvelope(to_self="", to_user=text)
+
+    self_match = re.fullmatch(r"\s*\[TO_SELF\](.*?)\[/TO_SELF\]\s*", text, re.DOTALL)
+    user_match = re.search(r"\[TO_USER\](.*?)\[/TO_USER\]", text, re.DOTALL)
+    if user_match is None:
+        return None
+    remainder = text[:user_match.start()] + text[user_match.end():]
+    if remainder.strip() and self_match is None:
+        return None
+    return FinalEnvelope(
+        to_self=self_match.group(1).strip() if self_match else "",
+        to_user=user_match.group(1).strip(),
     )

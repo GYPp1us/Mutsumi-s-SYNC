@@ -21,13 +21,14 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
 - Priority Override memory, injected once per request in `Runtime Injection` for unusually important instructions.
-- Silent heartbeat pipeline every 45 minutes, using a real LLM call without remembering heartbeat inputs.
+- Proactive heartbeat checks every 15 minutes for private chats and every 3 hours for groups active within the last 24 hours.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
 - Interactive tester with `/inject` and `/break`.
 - Structured action ledger for verified tool/send outcomes; generated-image markers never enter assistant history.
 - Dashboard TUI and tester as local debugging surfaces; production behavior is defined by `main.py` and may have a different registry.
 - Final assistant output uses a strict `[TO_SELF]...[/TO_SELF]` plus `[TO_USER]...[/TO_USER]` envelope. Only `TO_USER` is visible; `TO_SELF` goes to the global inner journal.
+- If a model omits all envelope markers, the pipeline recovers its plain final content as `TO_USER` with an empty `TO_SELF`; malformed marker-bearing output still receives a bounded protocol rewrite.
 - Assistant `TO_USER` is sent as one QQ message; `|` is literal text.
 - `status_update` can send one short progress message before a long tool; automatic fallback progress never enters assistant history.
 - `no_reply` tool for deliberate silent turns.
@@ -134,8 +135,9 @@ inner_journal:
 
 heartbeat:
   enabled: true
-  interval_seconds: 2700
-  aggressive_provider_cache_retention: false
+  private_interval_seconds: 900
+  group_interval_seconds: 10800
+  active_window_seconds: 86400
 
 logging:
   stream_store:
@@ -258,7 +260,7 @@ Reasoning content is retained only in the current DeepSeek tool loop and is neve
 
 Use `no_reply` when the turn should intentionally produce no visible message. The `send` tool remains available for special segments such as `markdown_image`, image, face, mention, reply, and forward.
 
-Use `status_update` before a tool that is expected to take a noticeable amount of time. It sends a short user-visible progress message, does not end the pipeline, and is recorded as an event/action rather than an assistant history turn. The pipeline sends one generic fallback when a registered long tool is called without an explicit status update. Heartbeat pipelines suppress both final text and progress messages.
+Use `status_update` before a tool that is expected to take a noticeable amount of time. It sends a short user-visible progress message, does not end the pipeline, and is recorded as an event/action rather than an assistant history turn. The pipeline sends one generic fallback when a registered long tool is called without an explicit status update. Heartbeat pipelines suppress progress messages but may send a verified proactive final message.
 
 ## Context And Memory Protocol
 
@@ -272,7 +274,7 @@ Before the current user request, the pipeline injects a temporary `[Runtime Inje
 
 `priority_override` is a write tool with `add`, `replace`, and `clear`. Its active content is injected only in Runtime Injection. Use it only for high-priority rules that are worth paying attention to every turn.
 
-Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false`, so they do not write message records, update windows, or create summaries.
+Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false` and `remember_output=true`: synthetic heartbeat input is not written, while verified proactive assistant output is written to the target window and event ledger.
 
 Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete record-ID turns and stores a trusted `covered_through_message_id`. Legacy `last_message_id` values are ignored during restart restoration. Only successful conversation records are restored; memory, action artifacts, cancelled/error/no-reply records are excluded.
 
@@ -294,8 +296,11 @@ never deleted; context projection chooses either the Episode or its covered raw
 events, keeping requests near the 100K-token attention budget.
 
 Incoming and successfully outgoing media are automatically registered with a
-stable SHA-derived `media_id`. `sticker_search` without a query lists all
-available stickers; `sticker_manage` updates descriptions or lifecycle status.
+stable SHA-derived `media_id`; inbound image URLs are downloaded into the
+ledger when possible and otherwise retained as external references. Image
+context contains only the description and `media_id`, not CQ metadata or
+temporary URLs. `sticker_search` without a query lists all available stickers;
+`sticker_manage` updates descriptions or lifecycle status.
 
 System prompt ownership is centralized in `system-prompts.yaml`. The runtime,
 summary workers, and context experiment load the `persona` field plus the same
@@ -306,7 +311,7 @@ not overwrite operator changes.
 
 ## Heartbeat And Vision
 
-The scheduler can run a silent heartbeat pipeline every 45 minutes. It performs a real LLM call and reports LLM health, but suppresses visible QQ output, suppresses cold-session pokes, and does not remember the heartbeat input. When `heartbeat.aggressive_provider_cache_retention` is enabled, the heartbeat uses the most relevant active conversation key to keep provider-side prompt caches warm more aggressively.
+The scheduler runs a real proactive heartbeat scan every 15 minutes for private conversations and every 3 hours for groups. Only conversations with a real inbound event in the previous 24 hours are checked. Heartbeats yield to user pipelines, suppress cold-session pokes and progress notifications, and do not expose configuration, memory-write, or scheduler tools.
 
 Incoming image messages can use a separate vision provider when `vision.enabled` is true. `provider: openai-compatible` uses `vision.model`, `vision.base_url`, and `vision.api_key`. `provider: volcengine-ocr` uses Volcengine Visual OCR `OCRNormal` with `vision.access_key_id` and `vision.secret_access_key`; `vision.session_token` is optional for temporary credentials. Captions and image metadata are preserved, the vision description or error is assembled into a synthetic user input, and that input runs through the normal LLM/tool/reply pipeline.
 
@@ -391,7 +396,7 @@ Tool registry changes are tracked by a monotonic `registry.version`. Pipelines c
 
 The canonical semantic design is [docs/current-design.md](docs/current-design.md). Files under `bottle/docs/` are historical design sources rather than current behavior contracts.
 
-Heartbeat pipelines use `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`. Ordinary user pipelines keep `remember_input=True` and persist the inbound message before any cancellation-sensitive LLM or tool work.
+Heartbeat pipelines use `remember_input=False` and `remember_output=True`. Ordinary user pipelines keep `remember_input=True` and persist the inbound message before any cancellation-sensitive LLM or tool work.
 
 ## Git Hygiene
 

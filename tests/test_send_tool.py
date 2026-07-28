@@ -2,6 +2,7 @@ import pytest
 from src.mutsumi_sync.tools.send import send_tool, SEND_TOOL_SCHEMA
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.config import Config
+from src.mutsumi_sync.memory.store import MessageStore
 
 
 class FakeSender:
@@ -66,6 +67,25 @@ class TestSendTool:
         )
         assert "ok" in result.lower()
         assert len(sender.last_segments) == 2
+
+    async def test_send_with_media_id_resolves_ledger_source(self, tmp_path):
+        sender = FakeSender()
+        peer = Peer(chat_type=1, peer_uid="12345")
+        store = MessageStore(str(tmp_path / "media.db"), str(tmp_path / "media"))
+        await store.initialize()
+        try:
+            record = await store.register_media(b"ledger image", kind="sticker", ext="png")
+            result = await send_tool(
+                {"media_id": record.media_id},
+                sender=sender,
+                peer=peer,
+                store=store,
+            )
+            assert '"status": "ok"' in result
+            assert sender.last_segments[0]["type"] == "image"
+            assert sender.last_segments[0]["data"]["file"] == record.path
+        finally:
+            await store.close()
 
     async def test_send_with_face(self):
         sender = FakeSender()

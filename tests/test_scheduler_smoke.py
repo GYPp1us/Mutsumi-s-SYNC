@@ -4,7 +4,7 @@ import tempfile
 import os
 import time
 from src.mutsumi_sync.config import Config
-from src.mutsumi_sync.memory.store import MessageStore, ScheduledTaskRecord, StoredMessage
+from src.mutsumi_sync.memory.store import EventRecord, EventType, MessageStore, ScheduledTaskRecord, StoredMessage
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.receiver import MessageEvent
 from src.mutsumi_sync.scheduler import PipelineScheduler
@@ -48,7 +48,6 @@ async def test_scheduler():
     store, store_path = make_store()
     await store.initialize()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
-
     event = MessageEvent(
         post_type="message",
         message_type="private",
@@ -320,6 +319,14 @@ async def test_heartbeat_runs_silent_pipeline_without_remembering_input(monkeypa
     store, store_path = make_store()
     await store.initialize()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+    await store.append_event(EventRecord(
+        conversation_id="private:heartbeat",
+        actor_id="qq:user:heartbeat",
+        actor_kind="human",
+        actor_name="Heartbeat User",
+        event_type=EventType.INBOUND.value,
+        content="recent user message",
+    ))
 
     calls = []
 
@@ -334,8 +341,10 @@ async def test_heartbeat_runs_silent_pipeline_without_remembering_input(monkeypa
 
         assert len(calls) == 1
         assert calls[0][1].source == "heartbeat"
-        assert calls[0][1].silent is True
+        assert calls[0][1].silent is False
         assert calls[0][1].remember_input is False
+        assert calls[0][1].remember_output is True
+        assert calls[0][1].allow_cold_poke is False
         assert sender.sent == []
         assert await store.count() == 0
         journal = await store.get_inner_journal()
@@ -355,6 +364,14 @@ async def test_heartbeat_does_not_send_poke_when_session_is_cold(monkeypatch):
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
     scheduler._ensure_user_state("private:heartbeat")
     scheduler._sessions["private:heartbeat"].last_active = 0
+    await store.append_event(EventRecord(
+        conversation_id="private:heartbeat",
+        actor_id="qq:user:heartbeat",
+        actor_kind="human",
+        actor_name="Heartbeat User",
+        event_type=EventType.INBOUND.value,
+        content="recent user message",
+    ))
 
     async def fake_llm_call(messages, deps):
         return LLMResult(content=format_final_envelope(to_self="heartbeat checked"), input_tokens=5, output_tokens=2)

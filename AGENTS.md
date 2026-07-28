@@ -9,7 +9,7 @@
 - Cross-conversation events are documentary records with actor IDs, never simulated provider `user` or `assistant` turns.
 - A group has one shared conversation window while members retain independent actor identity and legacy memory/action scopes.
 - Episodes summarize only finalized events and store exact sequence coverage. Raw events are never deleted, and a projection selects an Episode or its covered raw events, never both.
-- Media is pipeline-native. SHA-derived media IDs and descriptions are recorded automatically; `sticker_search` and `sticker_manage` maintain the global media ledger.
+- Media is pipeline-native. SHA-derived media IDs and descriptions are recorded automatically; inbound image URLs are downloaded when possible and otherwise retained as external references. Only the description and media ID enter model context; `sticker_search` and `sticker_manage` maintain the global media ledger.
 - Ordinary assistant content must pass the flat-text output gate. Complex Markdown goes through `send.markdown_image`.
 
 - LLM requests use a provider-native non-empty Chinese `system` message for durable platform rules.
@@ -24,9 +24,9 @@
 - `send(markdown_image=...)` records verified success/failure in the structured action ledger. Successful artifacts carry the generated file, message id, and Markdown hash; artifact markers must not enter assistant history.
 - Memory writes remain staged until cancellation-protected cleanup. Immediate tool feedback must say `staged`, and each final operation is committed and ledgered exactly once.
 - Only `compaction` summaries may carry `covered_through_message_id`; per-message summaries and legacy `last_message_id` values never skip raw records on restart.
-- Heartbeat uses `PipelineDeps(source="heartbeat", silent=True, remember_input=False)`: real LLM call, no visible QQ output, no message/window/summary memory pollution.
-- Heartbeat is silent and must not send cold-session pokes.
-- `heartbeat.interval_seconds` defaults to `2700`. `heartbeat.aggressive_provider_cache_retention` controls whether heartbeat prefers active conversation context for provider cache retention.
+- Heartbeat scans real inbound activity every 15 minutes for private conversations and every 3 hours for groups active within the last 24 hours.
+- Heartbeat uses `remember_input=False` but may persist verified assistant output and update the target window; it never sends cold-session pokes or status updates and yields to user pipelines.
+- Heartbeat configuration is `heartbeat.private_interval_seconds=900`, `group_interval_seconds=10800`, and `active_window_seconds=86400`.
 - `scheduler` is a built-in durable one-shot scheduling tool. It requires formatted `scheduled_time`, accepts optional `prompt`, stores tasks in SQLite, restores pending/running tasks on startup, and returns a readable delay.
 - Image recognition is provided through the optional `vision` provider config. Supported providers are `openai-compatible` and `volcengine-ocr`; Volcengine OCR requires AK/SK and can also sign an optional `session_token`. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
 - Production logging uses the standard `mutsumi.*` logger tree and also writes append-only NDJSON stream records to `logging.stream_store.path` plus human-readable rotating text records to `logging.text_file.path`. Do not bypass standard logging for pipeline diagnostics.
@@ -58,7 +58,7 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | Token-aware compaction | 可用，按完整 provider 请求估算并压缩完整 turn |
 | `no_reply` 工具 | 可用，用于本轮故意静默 |
 | `scheduler` 工具 | 可用，持久化一次性定时触发 pipeline |
-| `send` 工具 | 特殊发送与兼容工具，支持 text/image/image_url/face/at/reply/forward/markdown_image |
+| `send` 工具 | 特殊发送与兼容工具，支持 media_id/text/image/image_url/face/at/reply/forward/markdown_image |
 | Markdown 图片渲染 | 可选能力，Node + Playwright 渲染 Markdown/LaTeX/code/Mermaid 为 PNG |
 
 ## 必须先读
@@ -170,8 +170,8 @@ npx playwright install-deps chromium
 - `TO_SELF` 不是原始 CoT、事实来源或新指令；它只记录简短主观状态、意图和未完成事项。
 - 带 `tool_calls` 的中间 content 永不发送、不解析、不归档；DeepSeek `reasoning_content` 只在当前 tool loop 内保留。
 - 当前不支持 content 内分条；`|` 和 `\|` 均按原文发送，等待新协议定案。
-- 普通文字不要调用 `send` 工具。`send` 只用于 `markdown_image`、图片、表情、@、回复、转发等特殊消息段；复杂 Markdown 不得写入 `TO_USER`。
-- 预计较慢的工具前调用 `status_update`；它不结束 pipeline，也不进入 assistant history。未调用时 long tool 自动获得一次兜底通知；heartbeat 中两者都静默。
+- 普通文字不要调用 `send` 工具。`send` 只用于 `media_id`、`markdown_image`、图片、表情、@、回复、转发等特殊消息段；复用 Media Ledger 内容时先搜索再把真实 `media_id` 传给 `send`，不得猜测路径。
+- 预计较慢的工具前调用 `status_update`；它不结束 pipeline，也不进入 assistant history。未调用时 long tool 自动获得一次兜底通知；heartbeat 禁用状态通知。
 - 本轮不应回复时调用 `no_reply`，并保持 `TO_USER` 为空。
 
 ## 运行测试

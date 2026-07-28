@@ -35,8 +35,9 @@ vision:
   version: '2020-08-26'
 heartbeat:
   enabled: true
-  interval_seconds: 2700
-  aggressive_provider_cache_retention: false
+  private_interval_seconds: 900
+  group_interval_seconds: 10800
+  active_window_seconds: 86400
 logging:
   stream_store:
     enabled: true
