@@ -18,12 +18,14 @@ class ClassifiedMessage(BaseModel):
     content: str | None = None
     image_file: str | None = None
     image_url: str | None = None
+    media_kind: str = "image"
 
 
 def classify_message(message: list[dict], raw_message: str) -> ClassifiedMessage:
     text_parts: list[str] = []
     image_file: str | None = None
     image_url: str | None = None
+    media_kind = "image"
     has_image = False
     has_media = False
 
@@ -38,6 +40,9 @@ def classify_message(message: list[dict], raw_message: str) -> ClassifiedMessage
             has_image = True
             image_file = image_file or data.get("file")
             image_url = image_url or data.get("url")
+            summary = str(data.get("summary") or data.get("sub_type") or "").lower()
+            if "sticker" in summary or "face" in summary or "表情" in summary:
+                media_kind = "sticker"
 
         elif seg_type in ("record", "video", "forward"):
             has_media = True
@@ -52,6 +57,7 @@ def classify_message(message: list[dict], raw_message: str) -> ClassifiedMessage
             content=combined,
             image_file=image_file,
             image_url=image_url,
+            media_kind=media_kind,
         )
     if len(combined) < 50:
         return ClassifiedMessage(

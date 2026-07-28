@@ -37,6 +37,12 @@ class PipelineDeps:
     source: str = "user"
     silent: bool = False
     remember_input: bool = True
+    remember_output: bool = True
+    allow_visible_output: bool = True
+    allow_cold_poke: bool = True
+    allow_status_update: bool = True
+    allow_write_tools: bool = True
+    allowed_tools: set[str] | None = None
     remember_inner: bool = True
     conversation_id: str = ""
     actor_id: str = ""
@@ -70,6 +76,7 @@ class PipelineScheduler:
         self.token_usage: dict = {"input": 0, "output": 0, "cache_hit": 0, "cache_miss": 0}
         self.on_state_change: Callable[[], None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._heartbeat_batches: dict[str, asyncio.Task[None]] = {}
         self._scheduled_tasks: dict[int, asyncio.Task[None]] = {}
         self._episode_timers: dict[str, asyncio.Task[None]] = {}
 
@@ -294,6 +301,7 @@ class PipelineScheduler:
                     msg_type=final_type,
                     image_file=final_image_file,
                     image_url=final_image_url,
+                    media_kind="image",
                     deps=deps,
                 )
             except asyncio.CancelledError:
@@ -340,10 +348,14 @@ class PipelineScheduler:
         async def _run():
             try:
                 await pipeline(
-                    message=classified.content or event.raw_message,
+                    message=(
+                        classified.content
+                        or ("[Image received]" if classified.msg_type.value == "image" else event.raw_message)
+                    ),
                     msg_type=classified.msg_type,
                     image_file=classified.image_file,
                     image_url=classified.image_url,
+                    media_kind=classified.media_kind,
                     deps=deps,
                 )
             except asyncio.CancelledError:
@@ -360,6 +372,12 @@ class PipelineScheduler:
 
     async def cancel_user(self, key: str) -> None:
         self._cleanup_debounce(key)
+        heartbeat_tasks = list(self._heartbeat_batches.values())
+        for heartbeat_task in heartbeat_tasks:
+            if not heartbeat_task.done():
+                heartbeat_task.cancel()
+        if heartbeat_tasks:
+            await asyncio.gather(*heartbeat_tasks, return_exceptions=True)
         task = self._tasks.pop(key, None)
         if task is None:
             return
@@ -458,24 +476,72 @@ class PipelineScheduler:
             logger.info("[SCHEDULE] restored %d pending tasks", len(pending_scheduled_tasks))
 
     async def _heartbeat_loop(self) -> None:
-        interval = max(60, int(self.config.heartbeat.interval_seconds))
-        logger.info("[HEARTBEAT] enabled interval=%ss aggressive_cache=%s",
-                    interval, self.config.heartbeat.aggressive_provider_cache_retention)
+        private_interval = max(60, int(self.config.heartbeat.private_interval_seconds))
+        group_interval = max(60, int(self.config.heartbeat.group_interval_seconds))
+        next_private = time.monotonic() + private_interval
+        next_group = time.monotonic() + group_interval
+        logger.info(
+            "[HEARTBEAT] enabled private_interval=%ss group_interval=%ss active_window=%ss",
+            private_interval,
+            group_interval,
+            self.config.heartbeat.active_window_seconds,
+        )
         try:
             while True:
-                await asyncio.sleep(interval)
-                await self.run_heartbeat_once()
+                delay = max(0.1, min(next_private, next_group) - time.monotonic())
+                await asyncio.sleep(delay)
+                now = time.monotonic()
+                if now >= next_private:
+                    await self._start_heartbeat_batch("private")
+                    next_private = time.monotonic() + private_interval
+                if now >= next_group:
+                    await self._start_heartbeat_batch("group")
+                    next_group = time.monotonic() + group_interval
         except asyncio.CancelledError:
             logger.info("[HEARTBEAT] stopped")
             raise
 
-    async def run_heartbeat_once(self) -> None:
+    async def run_heartbeat_once(self, *, scope: str = "private") -> None:
         from .message.classifier import MessageType
         from .pipeline import pipeline
+        if any(task and not task.done() for task in self._tasks.values()):
+            logger.info("[HEARTBEAT] skipped scope=%s because a user pipeline is active", scope)
+            return
+        since = time.time() - max(60, int(self.config.heartbeat.active_window_seconds))
+        candidates = await self.store.get_recent_active_conversations(since=since, chat_type=scope)
+        logger.info("[HEARTBEAT] scope=%s candidates=%d", scope, len(candidates))
+        for candidate in candidates:
+            key = str(candidate["conversation_id"])
+            if any(task and not task.done() for task in self._tasks.values()):
+                logger.info("[HEARTBEAT] yielding scope=%s at key=%s", scope, key)
+                break
+            await self._run_heartbeat_for_conversation(key, candidate, pipeline, MessageType)
 
-        key = self._select_heartbeat_key()
+    async def _start_heartbeat_batch(self, scope: str) -> None:
+        task = asyncio.create_task(self.run_heartbeat_once(scope=scope))
+        self._heartbeat_batches[scope] = task
+        try:
+            await task
+        except asyncio.CancelledError:
+            logger.info("[HEARTBEAT] batch cancelled scope=%s", scope)
+        finally:
+            if self._heartbeat_batches.get(scope) is task:
+                self._heartbeat_batches.pop(scope, None)
+
+    async def _run_heartbeat_for_conversation(
+        self,
+        key: str,
+        candidate: dict,
+        pipeline,
+        message_type,
+    ) -> None:
         self._ensure_user_state(key)
         peer = self._peer_from_key(key)
+        storage_key = key
+        if key.startswith("group:") and str(candidate.get("actor_id", "")).startswith("qq:user:"):
+            storage_key = f"{key}:{str(candidate['actor_id']).rsplit(':', 1)[-1]}"
+        waiting_for_reply = await self.store.has_unanswered_proactive(key)
+        allowed_tools = {"sticker_search", "media_search", "send"}
         deps = PipelineDeps(
             config=self.config,
             registry=self.registry,
@@ -484,19 +550,29 @@ class PipelineScheduler:
             window=self._windows[key],
             session=self._sessions[key],
             peer=peer,
-            group_key=key,
+            group_key=storage_key,
+            conversation_id=key,
+            actor_id=str(candidate.get("actor_id") or ""),
+            actor_name=str(candidate.get("actor_name") or ""),
+            pipeline_id=f"heartbeat:{key}:{time.time_ns()}",
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
             source="heartbeat",
-            silent=True,
+            silent=False,
             remember_input=False,
-            remember_inner=True,
+            remember_output=True,
+            allow_visible_output=not waiting_for_reply,
+            allow_cold_poke=False,
+            allow_status_update=False,
+            allow_write_tools=False,
+            allowed_tools=allowed_tools,
         )
-        logger.info("[HEARTBEAT] triggering pipeline key=%s", key)
+        prompt = self.config.prompts.system.heartbeat
+        logger.info("[HEARTBEAT] triggering scope=%s key=%s actor=%s", key.split(":", 1)[0], key, deps.actor_id)
         await pipeline(
-            message="[HEARTBEAT] Run a real health check. Do not send a visible reply; call no_reply if available.",
-            msg_type=MessageType.SHORT_TEXT,
+            message=prompt,
+            msg_type=message_type.SHORT_TEXT,
             image_file=None,
             image_url=None,
             deps=deps,

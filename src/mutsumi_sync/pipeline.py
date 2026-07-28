@@ -4,12 +4,14 @@ import asyncio
 import hashlib
 import json
 import logging
+import mimetypes
 import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -23,7 +25,11 @@ from .memory.timestamps import (
 )
 from .tools.send import send_tool
 from .tools.status_update import send_status_update
-from .output_protocol import OutputProtocolError, format_final_envelope, parse_final_envelope
+from .output_protocol import (
+    OutputProtocolError,
+    format_final_envelope,
+    parse_final_envelope,
+)
 from .vision import describe_image
 from .logging import log_context, log_llm_result, log_tool_call, log_send, ESTIMATE_CHARS_PER_TOKEN
 
@@ -35,6 +41,7 @@ logger = logging.getLogger("mutsumi.pipeline")
 MAX_TOOL_STEPS = 10
 MAX_SENDS_PER_LOOP = 5
 MAX_OUTPUT_REWRITES = 2
+MAX_INBOUND_MEDIA_BYTES = 20 * 1024 * 1024
 WRITE_TOOLS = {"self_note", "memory_save", "priority_override", "bot_state"}
 NO_REPLY_TOOL = "no_reply"
 
@@ -77,8 +84,11 @@ def _is_placeholder_summary(summary: str) -> bool:
     )
 
 
-def _build_default_system_prompt(config) -> str:
-    return config.prompts.system.runtime
+def _build_default_system_prompt(config, deps: PipelineDeps | None = None) -> str:
+    prompt = config.prompts.system.runtime
+    if deps is not None and deps.source == "heartbeat":
+        prompt += "\n\n[Heartbeat Mode Override]\n" + config.prompts.system.heartbeat
+    return prompt
 
 
 async def _inject_self_note(store, group_key: str, config) -> str:
@@ -158,6 +168,10 @@ def _build_runtime_injection(deps: PipelineDeps, priority_override: str) -> str:
         f"Peer: chat_type={deps.peer.chat_type}, peer_uid={deps.peer.peer_uid}",
         f"Group key: {deps.group_key}",
     ]
+    if deps.source == "heartbeat":
+        sections.append("This is a platform attention check, not a user message.")
+        sections.append(f"Heartbeat target actor: {deps.actor_id or 'unknown'}")
+        sections.append(f"Proactive visible output allowed: {'true' if deps.allow_visible_output else 'false'}")
     if priority_override:
         sections.append(priority_override)
     sections.append("[/Runtime Injection]")
@@ -179,7 +193,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     config = deps.config
     store = deps.store
 
-    system_prompt = _build_default_system_prompt(config)
+    system_prompt = _build_default_system_prompt(config, deps)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
     ]
@@ -281,7 +295,7 @@ async def _do_llm_call(messages: list[dict], deps: PipelineDeps) -> LLMResult:
             to_user="[Error: model.base_url not configured]",
         ))
 
-    tools = deps.registry.to_openai_schema()
+    tools = deps.registry.to_openai_schema(deps.allowed_tools)
     payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
@@ -372,7 +386,9 @@ async def _append_event(
     status: str = "finalized",
     media_ids: list[str] | None = None,
 ) -> str | None:
-    if not deps.remember_input:
+    if actor_kind == "human" and not deps.remember_input:
+        return None
+    if actor_kind != "human" and not deps.remember_output:
         return None
     try:
         event = await deps.store.append_event(EventRecord(
@@ -586,6 +602,70 @@ async def _register_sent_media(deps: PipelineDeps, tool_args: dict, artifact: di
     return media_ids
 
 
+async def _register_inbound_media(
+    deps: PipelineDeps,
+    image_file: str | None,
+    image_url: str | None,
+    kind: str = "image",
+) -> str | None:
+    """Persist an inbound image locally, retaining a URL only as a fallback."""
+    file_path = Path(image_file) if image_file else None
+    if file_path and file_path.is_file():
+        media = await deps.store.register_media(
+            file_path.read_bytes(),
+            kind=kind,
+            ext=file_path.suffix,
+            source_url=image_url or "",
+        )
+        logger.info("[MEDIA] inbound registered local media_id=%s", media.media_id)
+        return media.media_id
+
+    if not image_url:
+        return None
+
+    try:
+        parsed_url = urlparse(image_url)
+        if parsed_url.scheme not in {"http", "https"}:
+            raise ValueError("image URL must use HTTP or HTTPS")
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            async with client.stream("GET", image_url) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if not content_type.startswith("image/"):
+                    raise ValueError(f"unexpected image content type: {content_type or 'missing'}")
+                declared_size = int(response.headers.get("content-length") or 0)
+                if declared_size > MAX_INBOUND_MEDIA_BYTES:
+                    raise ValueError("image exceeds the maximum allowed size")
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_INBOUND_MEDIA_BYTES:
+                        raise ValueError("image exceeds the maximum allowed size")
+                    chunks.append(chunk)
+        ext = Path(parsed_url.path).suffix
+        if not ext:
+            ext = mimetypes.guess_extension(content_type) or ""
+        media = await deps.store.register_media(
+            b"".join(chunks),
+            kind=kind,
+            ext=ext,
+            source_url=image_url,
+        )
+        logger.info("[MEDIA] inbound downloaded media_id=%s bytes=%d", media.media_id, size)
+        return media.media_id
+    except Exception:
+        logger.warning("[MEDIA] inbound download failed; retaining external reference", exc_info=True)
+
+    try:
+        media = await deps.store.register_external_media(image_url, kind=kind)
+        logger.info("[MEDIA] inbound registered external media_id=%s", media.media_id)
+        return media.media_id
+    except Exception:
+        logger.exception("[MEDIA] failed to register inbound media reference")
+        return None
+
+
 def _sanitize_action_arguments(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
@@ -634,7 +714,7 @@ async def _record_action(
     result: str,
     artifact: dict | None = None,
 ) -> None:
-    if not deps.remember_input:
+    if not deps.remember_output:
         return
     try:
         await deps.store.save_action(
@@ -656,7 +736,7 @@ async def _send_status_text(
     *,
     source: str,
 ) -> bool:
-    if deps.silent:
+    if deps.silent or not deps.allow_status_update:
         logger.info("[STATUS] suppressed source=%s silent=true", source)
         return False
 
@@ -855,7 +935,7 @@ async def _compact_context_for_request(
     messages: list[dict],
 ) -> bool:
     config = deps.config.context
-    tools = deps.registry.to_openai_schema()
+    tools = deps.registry.to_openai_schema(deps.allowed_tools)
     estimate = _estimate_request_tokens(messages, tools)
     trigger = max(1, int(config.model_context_tokens * config.compression_trigger_ratio) - config.reserved_output_tokens)
     target = max(1, int(config.model_context_tokens * config.compression_target_ratio) - config.reserved_output_tokens)
@@ -953,7 +1033,7 @@ async def _send_visible_content(deps: PipelineDeps, content: str) -> list[str]:
         logger.info("[PIPE] visible content empty after split")
         return []
 
-    if deps.silent:
+    if deps.silent or not deps.allow_visible_output:
         logger.info("[PIPE] silent mode suppressed visible content parts=%d chars=%d", len(parts), len(content))
         return []
 
@@ -997,6 +1077,7 @@ async def pipeline(
     image_file: str | None,
     image_url: str | None,
     *,
+    media_kind: str = "image",
     deps: PipelineDeps,
 ) -> None:
     _report_state(deps, "INIT")
@@ -1023,8 +1104,10 @@ async def pipeline(
         _report_state(deps, "IMAGE_DESCRIBE")
         logger.info("[PIPE] branch=image describe image_file=%s image_url=%s", bool(image_file), bool(image_url))
         caption = message.strip()
+        if caption.startswith("[CQ:image"):
+            caption = ""
         input_metadata = {
-            "kind": "image",
+            "kind": media_kind,
             "caption": caption,
             "image_file": image_file,
             "image_url": image_url,
@@ -1037,18 +1120,12 @@ async def pipeline(
             msg_type.value,
             input_metadata,
         )
-        if image_file:
-            try:
-                media = await deps.store.register_media(
-                    Path(image_file).read_bytes(),
-                    kind="image",
-                    ext=Path(image_file).suffix,
-                )
-                input_media_id = media.media_id
-                input_metadata["media_id"] = media.media_id
-                logger.info("[MEDIA] inbound registered media_id=%s", media.media_id)
-            except Exception:
-                logger.exception("[MEDIA] failed to register inbound file")
+        try:
+            input_media_id = await _register_inbound_media(deps, image_file, image_url, media_kind)
+            if input_media_id:
+                input_metadata["media_id"] = input_media_id
+        except Exception:
+            logger.exception("[MEDIA] failed to register inbound media")
         inbound_event_ids = await _append_inbound_events(
             deps,
             message,
@@ -1110,7 +1187,7 @@ async def pipeline(
         deps.session.mark_pending()
 
         is_cold = deps.session.is_cold(deps.config.session.timeout)
-        if is_cold and not deps.silent:
+        if is_cold and not deps.silent and deps.allow_cold_poke:
             _report_state(deps, "POKE")
             logger.info("[PIPE] cold session; sending poke")
             await deps.sender.send_poke(deps.peer)
@@ -1147,7 +1224,7 @@ async def pipeline(
                 logger.info(
                     "[CONTEXT BUDGET] provider_prompt_tokens=%d estimated_request_tokens=%d",
                     result.input_tokens,
-                    _estimate_request_tokens(messages, deps.registry.to_openai_schema()),
+                    _estimate_request_tokens(messages, deps.registry.to_openai_schema(deps.allowed_tools)),
                 )
 
             if deps.token_counter is not None:
@@ -1167,7 +1244,7 @@ async def pipeline(
             if not result.tool_calls and result.content:
                 logger.info("[PIPE] branch=final_content chars=%d", len(result.content))
                 try:
-                    envelope = parse_final_envelope(result.content)
+                    envelope = parse_final_envelope(result.content, strict=False)
                 except OutputProtocolError as exc:
                     output_rewrites += 1
                     logger.warning(
@@ -1211,7 +1288,7 @@ async def pipeline(
                     continue
 
                 rich_features = _unsupported_markdown_features(envelope.to_user)
-                if rich_features and not deps.silent:
+                if rich_features and not deps.silent and deps.allow_visible_output:
                     output_rewrites += 1
                     logger.warning(
                         "[OUTPUT GATE] rejected Markdown features=%s rewrite=%d/%d",
@@ -1246,8 +1323,10 @@ async def pipeline(
                         status=final_status,
                         input_metadata=input_metadata,
                     )
-                elif envelope.to_user and not deps.silent:
+                elif envelope.to_user and not deps.silent and deps.allow_visible_output:
                     final_status = "error"
+                elif envelope.to_user and not deps.allow_visible_output:
+                    logger.info("[OUTPUT] proactive visible output suppressed by policy")
                 elif final_status == "received":
                     final_status = "no_reply" if envelope.to_self else "empty"
                 logger.info(
@@ -1311,10 +1390,12 @@ async def pipeline(
                         f"[Error: tool '{tool_name}' stopped after three consecutive failures; "
                         "report the failure instead of retrying]"
                     )
+                elif deps.allowed_tools is not None and tool_name not in deps.allowed_tools:
+                    tr = f"[Error: tool '{tool_name}' is not enabled for this pipeline]"
                 elif tool_name == "status_update":
                     if status_executed:
                         tr = "[Error: only one status_update is allowed per tool round]"
-                    elif deps.silent:
+                    elif deps.silent or not deps.allow_status_update:
                         status_executed = True
                         tr = "[OK] status update suppressed by silent pipeline"
                     else:
@@ -1340,7 +1421,7 @@ async def pipeline(
                     send_committed = False
                     if send_count >= MAX_SENDS_PER_LOOP:
                         tr = f"[Error: send limit reached: {MAX_SENDS_PER_LOOP}]"
-                    elif deps.silent:
+                    elif deps.silent or not deps.allow_visible_output:
                         tr = "[OK] send suppressed by silent pipeline"
                     else:
                         try:
@@ -1373,6 +1454,8 @@ async def pipeline(
                             media_ids=sent_media_ids or None,
                         )
                         log_send(deps, "tool", tool_args)
+                elif tool_name in WRITE_TOOLS and not deps.allow_write_tools:
+                    tr = "[Error: write tools are disabled for this pipeline]"
                 elif tool_name in WRITE_TOOLS and not deps.remember_input:
                     tr = "[OK] write tool suppressed by non-remembering pipeline]"
                 elif tool_name in WRITE_TOOLS:
@@ -1465,15 +1548,16 @@ async def pipeline(
                            MAX_TOOL_STEPS, len(messages))
             _log_context_size(messages, deps)
 
-        if responded and deps.remember_input:
-            deps.window.add(
-                user_id=deps.actor_id or str(deps.peer.peer_uid),
-                message=message,
-                record_id=inbound_msg_id,
-                actor_name=deps.actor_name,
-            )
+        if responded and (deps.remember_input or deps.remember_output):
+            if deps.remember_input:
+                deps.window.add(
+                    user_id=deps.actor_id or str(deps.peer.peer_uid),
+                    message=message,
+                    record_id=inbound_msg_id,
+                    actor_name=deps.actor_name,
+                )
             combined_bot_reply = "\n".join(bot_replies)
-            if combined_bot_reply:
+            if combined_bot_reply and deps.remember_output:
                 deps.window.add(
                     user_id="bot:self",
                     message=combined_bot_reply,
@@ -1481,6 +1565,21 @@ async def pipeline(
                     record_id=inbound_msg_id,
                     actor_name="Mutsumi",
                 )
+            if combined_bot_reply and not deps.remember_input:
+                try:
+                    await deps.store.save(StoredMessage(
+                        date=date.today().isoformat(),
+                        group_key=deps.group_key,
+                        category="proactive",
+                        content=_message_record_content(
+                            "",
+                            response=combined_bot_reply,
+                            status="responded",
+                            source=deps.source,
+                        ),
+                    ))
+                except Exception:
+                    logger.exception("Failed to persist proactive output")
             logger.info("[PIPE] window updated replies=%d window_items=%d", len(bot_replies), len(deps.window))
         elif responded:
             logger.info("[PIPE] response produced; window unchanged for source=%s", deps.source)

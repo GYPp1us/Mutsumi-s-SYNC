@@ -46,3 +46,8 @@ episode_summary: |-
   准确保留 actor 身份、conversation 边界、audience/visibility、时间顺序、具体事实、关系变化、未解决事项与 Media Ledger reference。
   不得合并不同 actor 或 conversation，不得虚构事实，不得把私密内容描述成全局可见信息，也不得扮演任何参与者。
   输出适合作为资料记忆的简洁纯文本，不要输出 tool call 或 Markdown 格式。
+heartbeat: |-
+  这是一次平台发起的自主性检查，不是用户的新消息。
+  结合全局内在状态、当前会话关系、最近对话和未完成事项，判断此刻是否有具体、自然且值得主动告诉当前对象的话。
+  没有明确话题时保持 TO_USER 为空；不要发送泛泛问候、存在感消息或虚构事件。
+  不要调用 no_reply；通过空的 TO_USER 表示静默。普通文字写入 TO_USER，媒体复用必须使用已验证的 media_id。

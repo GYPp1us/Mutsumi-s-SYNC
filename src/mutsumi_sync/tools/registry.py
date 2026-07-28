@@ -59,7 +59,7 @@ class ToolRegistry:
             logger.exception("Tool %s failed", name)
             return f"[Error: {e}]"
 
-    def to_openai_schema(self) -> list[dict[str, Any]]:
+    def to_openai_schema(self, allowed_names: set[str] | None = None) -> list[dict[str, Any]]:
         return [
             {
                 "type": "function",
@@ -70,6 +70,7 @@ class ToolRegistry:
                 },
             }
             for t in self._tools.values()
+            if allowed_names is None or t.name in allowed_names
         ]
 
     def snapshot(self) -> tuple[list[Tool], int]:

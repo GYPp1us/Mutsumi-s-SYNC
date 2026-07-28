@@ -29,8 +29,9 @@ class TestConfig:
         assert c.render.markdown_image.enabled is False
         assert c.render.markdown_image.node_path == "node"
         assert c.render.markdown_image.output_dir == "data/generated/markdown"
-        assert c.heartbeat.interval_seconds == 2700
-        assert c.heartbeat.aggressive_provider_cache_retention is False
+        assert c.heartbeat.private_interval_seconds == 900
+        assert c.heartbeat.group_interval_seconds == 10800
+        assert c.heartbeat.active_window_seconds == 86400
         assert c.vision.enabled is False
         assert c.logging.stream_store.enabled is True
         assert c.logging.stream_store.path == "data/logs/mutsumi.ndjson"
@@ -230,8 +231,9 @@ class TestModelDefaults:
     def test_heartbeat_defaults(self):
         h = HeartbeatConfig()
         assert h.enabled is True
-        assert h.interval_seconds == 2700
-        assert h.aggressive_provider_cache_retention is False
+        assert h.private_interval_seconds == 900
+        assert h.group_interval_seconds == 10800
+        assert h.active_window_seconds == 86400
 
     def test_vision_defaults(self):
         v = VisionConfig()

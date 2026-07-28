@@ -7,7 +7,7 @@ from ..memory.store import MessageStore
 MEDIA_SEARCH_SCHEMA = {
     "type": "object",
     "properties": {
-        "query": {"type": "string", "description": "Optional search text for description or media id"},
+        "query": {"type": "string", "description": "可选关键词；省略时列出全部可复用媒体"},
         "kind": {"type": "string", "enum": ["image", "audio", "video", "sticker"]},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100},
     },
@@ -31,20 +31,21 @@ async def media_search(args: dict, *, store: MessageStore, **deps) -> str:
         limit=max(1, min(int(args.get("limit", 100)), 100)),
     )
     query = str(args.get("query", "")).strip().lower()
+    terms = [term for term in query.split() if term]
     if query:
-        records = [
-            record for record in records
-            if query in record.media_id.lower()
-            or query in record.description.lower()
-            or query in record.short_description.lower()
-        ]
+        scored: list[tuple[int, object]] = []
+        for record in records:
+            haystack = " ".join((record.media_id, record.description, record.short_description)).lower()
+            score = sum(1 for term in terms if term in haystack)
+            if score:
+                scored.append((score, record))
+        records = [record for _, record in sorted(scored, key=lambda item: item[0], reverse=True)]
     return json.dumps([
         {
             "media_id": record.media_id,
             "kind": record.kind,
             "short_description": record.short_description,
-            "description": record.description,
-            "path": record.path,
+            "reusable": record.status == "active" and bool(record.path or record.source_url),
         }
         for record in records
     ], ensure_ascii=False)

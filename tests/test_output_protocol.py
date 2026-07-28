@@ -2,6 +2,7 @@ from src.mutsumi_sync.output_protocol import (
     OutputProtocolError,
     format_final_envelope,
     parse_final_envelope,
+    recover_final_envelope,
 )
 
 
@@ -34,3 +35,30 @@ def test_final_envelope_rejects_prose_outside_channels():
             pass
         else:
             raise AssertionError("prose outside the final envelope must be rejected")
+
+
+def test_recover_final_envelope_accepts_plain_model_reply():
+    recovered = recover_final_envelope("普通回复")
+
+    assert recovered is not None
+    assert recovered.to_self == ""
+    assert recovered.to_user == "普通回复"
+
+
+def test_recover_final_envelope_accepts_user_only_block():
+    recovered = recover_final_envelope("[TO_USER]回复[/TO_USER]")
+
+    assert recovered is not None
+    assert recovered.to_self == ""
+    assert recovered.to_user == "回复"
+
+
+def test_recover_final_envelope_rejects_unrelated_prose_around_marker():
+    assert recover_final_envelope("说明\n[TO_USER]回复[/TO_USER]") is None
+
+
+def test_non_strict_parse_recovers_plain_model_reply():
+    parsed = parse_final_envelope("普通回复", strict=False)
+
+    assert parsed.to_self == ""
+    assert parsed.to_user == "普通回复"
