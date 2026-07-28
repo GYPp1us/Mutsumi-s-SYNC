@@ -311,7 +311,7 @@ async def test_startup_marks_truncated_restore_coverage_untrusted():
         os.unlink(store_path)
 
 
-async def test_heartbeat_runs_silent_pipeline_without_remembering_input(monkeypatch):
+async def test_heartbeat_runs_proactive_pipeline_without_remembering_input(monkeypatch):
     config = Config.load("config.example.yaml")
     config.session.timeout = 999999
     registry = ToolRegistry()
@@ -320,8 +320,8 @@ async def test_heartbeat_runs_silent_pipeline_without_remembering_input(monkeypa
     await store.initialize()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
     await store.append_event(EventRecord(
-        conversation_id="private:heartbeat",
-        actor_id="qq:user:heartbeat",
+        conversation_id="private:active-user",
+        actor_id="qq:user:active-user",
         actor_kind="human",
         actor_name="Heartbeat User",
         event_type=EventType.INBOUND.value,
@@ -354,19 +354,16 @@ async def test_heartbeat_runs_silent_pipeline_without_remembering_input(monkeypa
         os.unlink(store_path)
 
 
-async def test_heartbeat_does_not_send_poke_when_session_is_cold(monkeypatch):
+async def test_heartbeat_disables_cold_session_poke(monkeypatch):
     config = Config.load("config.example.yaml")
-    config.session.timeout = 0
     registry = ToolRegistry()
     sender = FakeSender()
     store, store_path = make_store()
     await store.initialize()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
-    scheduler._ensure_user_state("private:heartbeat")
-    scheduler._sessions["private:heartbeat"].last_active = 0
     await store.append_event(EventRecord(
-        conversation_id="private:heartbeat",
-        actor_id="qq:user:heartbeat",
+        conversation_id="private:active-user",
+        actor_id="qq:user:active-user",
         actor_kind="human",
         actor_name="Heartbeat User",
         event_type=EventType.INBOUND.value,
