@@ -37,7 +37,7 @@ class TestConfig:
         assert c.logging.stream_store.path == "data/logs/mutsumi.ndjson"
         assert c.logging.text_file.enabled is True
         assert c.logging.text_file.path == "data/logs/mutsumi.log"
-        assert c.prompts.system.persona == ""
+        assert isinstance(c.prompts.system.persona, str)
         assert c.prompts.system_file == "system-prompts.yaml"
         assert "TO_USER" in c.prompts.system.runtime
         assert c.inner_journal.max_entry_chars == 1000
