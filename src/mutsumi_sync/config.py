@@ -229,7 +229,7 @@ class Config(BaseModel):
                 system_file = str(prompts_raw.get("system_file") or DEFAULT_SYSTEM_PROMPTS_FILE)
                 prompts_path = resolve_system_prompts_path(system_file, path.parent)
                 system_prompts = load_system_prompts(prompts_path)
-                if legacy_persona and not system_prompts.persona.strip():
+                if legacy_persona:
                     system_prompts.persona = str(legacy_persona)
                 prompts_raw["system"] = system_prompts.model_dump()
             instance = cls(**raw)
