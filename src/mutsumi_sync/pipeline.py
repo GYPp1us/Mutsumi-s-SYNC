@@ -17,8 +17,9 @@ import httpx
 
 from .message.classifier import MessageType
 from .message.sender import send_failure_message, send_succeeded
-from .memory.store import EventRecord, EventType, StoredMessage
-from .memory.projection import build_global_life_context
+from .memory.store import ActorRecord, EventRecord, EventType, StoredMessage
+from .memory.actors import format_actor_source, format_outbound_source
+from .memory.projection import build_life_stream
 from .memory.timestamps import (
     ensure_timestamped_lines,
     format_context_timestamp,
@@ -42,7 +43,7 @@ MAX_TOOL_STEPS = 10
 MAX_SENDS_PER_LOOP = 5
 MAX_OUTPUT_REWRITES = 2
 MAX_INBOUND_MEDIA_BYTES = 20 * 1024 * 1024
-WRITE_TOOLS = {"self_note", "memory_save", "priority_override", "bot_state"}
+WRITE_TOOLS = {"self_note", "memory_save"}
 NO_REPLY_TOOL = "no_reply"
 
 
@@ -50,6 +51,25 @@ def _report_state(deps: PipelineDeps, state: str) -> None:
     logger.info("[PIPE] state=%s peer=%s group=%s", state, deps.peer.peer_uid, deps.group_key)
     if deps.report_state:
         deps.report_state(state)
+
+
+def _set_active_work(deps: PipelineDeps, summary: str, *, phase: str = "working") -> None:
+    if not summary.strip() or deps.active_work is None:
+        return
+    deps.active_work[deps.pipeline_id] = {
+        "summary": summary.strip()[:300],
+        "conversation_id": deps.conversation_id or deps.group_key,
+        "actor_id": deps.actor_id,
+        "phase": phase,
+    }
+    logger.info("[ACTIVITY] active pipeline=%s phase=%s summary=%s", deps.pipeline_id, phase, summary[:120])
+
+
+def _clear_active_work(deps: PipelineDeps) -> None:
+    if deps.active_work is None:
+        return
+    if deps.active_work.pop(deps.pipeline_id, None) is not None:
+        logger.info("[ACTIVITY] cleared pipeline=%s", deps.pipeline_id)
 
 
 @dataclass
@@ -86,6 +106,9 @@ def _is_placeholder_summary(summary: str) -> bool:
 
 def _build_default_system_prompt(config, deps: PipelineDeps | None = None) -> str:
     prompt = config.prompts.system.runtime
+    persona = config.prompts.system.persona.strip()
+    if persona:
+        prompt = f"{prompt.rstrip()}\n\n人格设定：\n{persona}"
     if deps is not None and deps.source == "heartbeat":
         prompt += "\n\n[Heartbeat Mode Override]\n" + config.prompts.system.heartbeat
     return prompt
@@ -106,24 +129,6 @@ async def _inject_self_note(store, group_key: str, config) -> str:
         content = content[:chars] + "\n[truncated]"
 
     return f"[私人印象 — current: {current} / target: {target} tokens]\n{content}\n[/私人印象]"
-
-
-async def _inject_bot_state(store) -> str:
-    state = await store.get_canonical_state()
-    if not state or not str(state.get("content", "")).strip():
-        return ""
-    content = ensure_timestamped_lines(str(state["content"]))
-    return f"[Canonical Bot State]\n{content}\n[/Canonical Bot State]"
-
-
-async def _inject_priority_override(store, group_key: str) -> str:
-    item = await store.get_current_priority_override(group_key)
-    if not item:
-        return ""
-    content = ensure_timestamped_lines(str(item.get("content", "")))
-    if not content.strip():
-        return ""
-    return f"[Priority Override]\n{content}\n[/Priority Override]"
 
 
 async def _inject_inner_journal(store, config) -> str:
@@ -152,128 +157,81 @@ async def _inject_inner_journal(store, config) -> str:
     )
 
 
-def _append_priority_override(content: str, priority_override: str) -> str:
-    if not priority_override:
-        return content
-    return f"{content.rstrip()}\n\n{priority_override}"
-
-
-def _build_runtime_injection(deps: PipelineDeps, priority_override: str) -> str:
-    sections = [
-        "[Runtime Injection]",
-        f"Current time: {format_context_timestamp(time.time())}",
-        f"Source: {deps.source}",
-        f"Silent mode: {'true' if deps.silent else 'false'}",
-        f"Remember input: {'true' if deps.remember_input else 'false'}",
-        f"Peer: chat_type={deps.peer.chat_type}, peer_uid={deps.peer.peer_uid}",
-        f"Group key: {deps.group_key}",
-    ]
-    if deps.source == "heartbeat":
-        sections.append("This is a platform attention check, not a user message.")
-        sections.append(f"Heartbeat target actor: {deps.actor_id or 'unknown'}")
-        sections.append(f"Proactive visible output allowed: {'true' if deps.allow_visible_output else 'false'}")
-    if priority_override:
-        sections.append(priority_override)
-    sections.append("[/Runtime Injection]")
-    return "\n".join(sections)
-
-
-def _with_context_timestamp(content: str, created_at: Any | None) -> str:
-    return f"[time: {format_context_timestamp(created_at)}]\n{content}"
-
-
-def _window_item_content(item: dict[str, Any]) -> str:
-    content = str(item.get("content", ""))
-    if item.get("role") == "user":
-        return _with_context_timestamp(content, item.get("created_at"))
-    return content
-
-
 async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any]]:
     config = deps.config
     store = deps.store
+    messages: list[dict[str, Any]] = [{
+        "role": "system",
+        "content": _build_default_system_prompt(config, deps),
+    }]
 
-    system_prompt = _build_default_system_prompt(config, deps)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
+    stream = await build_life_stream(
+        store,
+        limit=max(100, config.context.recent_actions_max_count * 32),
+        exclude_event_ids=set(deps.current_event_ids),
+    )
+    if stream:
+        messages.extend(stream)
+    else:
+        # Keep the in-memory window as a compatibility fallback for tests and
+        # old databases that have not yet produced Event Ledger rows.
+        messages.extend({
+            "role": str(item.get("role", "user")),
+            "content": str(item.get("content", "")),
+        } for item in deps.window.get_context())
+
+    state_parts = [
+        "平台状态（不是用户消息，也不是需要复述的内容）：",
+        f"当前时间：{format_context_timestamp(time.time())}",
+        f"当前来源：{deps.source}",
+        f"当前聊天：{deps.conversation_id or deps.group_key}",
+        f"当前发言者：{deps.actor_name or deps.actor_id or 'unknown'}（{deps.actor_id or 'unknown'}）",
     ]
-    self_sections: list[str] = []
-    persona = config.prompts.system.persona.strip()
-    if persona:
-        self_sections.append(f"[Persona]\n{persona}\n[/Persona]")
-    bot_state_text = await _inject_bot_state(store)
-    if bot_state_text:
-        self_sections.append(bot_state_text)
+    if deps.source == "heartbeat":
+        state_parts.append("这是平台发起的心跳检查，不是用户新消息。")
+    if deps.active_work:
+        state_parts.append("当前正在进行的工作：")
+        for item in deps.active_work.values():
+            state_parts.append(
+                f"- {item.get('summary', '处理中')}（来源 {item.get('conversation_id', 'unknown')}，"
+                f"阶段 {item.get('phase', 'working')}）"
+            )
     inner_journal_text = await _inject_inner_journal(store, config)
     if inner_journal_text:
-        self_sections.append(inner_journal_text)
-    if not self_sections:
-        self_sections.append("当前没有可用的全局内在状态。")
-    messages.append({
-        "role": "user",
-        "content": "[Self Context]\n" + "\n\n".join(self_sections) + "\n[/Self Context]",
-    })
-
-    conversation_sections: list[str] = []
+        state_parts.append(inner_journal_text)
     self_note_text = await _inject_self_note(store, deps.group_key, config)
     if self_note_text:
-        conversation_sections.append(self_note_text)
+        state_parts.append("与当前发言者有关的长期记录：\n" + self_note_text)
+    messages.append({"role": "user", "content": "\n".join(state_parts)})
 
-    life_context = await build_global_life_context(
-        store,
-        deps.conversation_id or deps.group_key,
-        limit=config.context.recent_actions_max_count * 2,
-    )
-    if life_context:
-        conversation_sections.append(life_context)
-
-    summaries = await store.get_summaries(deps.group_key, limit=config.context.summaries_max_count)
-    if summaries:
-        summary_texts = []
-        for s in summaries:
-            if _is_placeholder_summary(str(s["summary"])):
-                continue
-            source_label = "user" if s["source"] == "user" else "assistant"
-            if source_label == "user":
-                timestamp = format_context_timestamp(s.get("created_at"))
-                summary_texts.append(f"[{timestamp}][user]: {s['summary']}")
-            else:
-                summary_texts.append(f"[assistant]: {s['summary']}")
-        if summary_texts:
-            conversation_sections.append("[摘要]\n" + "\n".join(summary_texts) + "\n[/摘要]")
-
-    priority_override = await _inject_priority_override(store, deps.group_key)
-    conversation_body = "\n\n".join(section for section in conversation_sections if section.strip())
-    if not conversation_body:
-        conversation_body = "当前没有可用的当前会话上下文。"
-    messages.append({
-        "role": "user",
-        "content": "[Conversation Context]\n" + conversation_body + "\n[/Conversation Context]",
-    })
-
-    window_ctx = deps.window.get_context()
-    for m in window_ctx:
-        role = m["role"]
-        content = str(m["content"])
-        if role == "user":
-            content = _with_context_timestamp(content, m.get("created_at"))
-        if deps.peer.chat_type == 2 and role == "user":
-            actor_id = str(m.get("user_id") or "unknown")
-            actor_name = str(m.get("actor_name") or actor_id)
-            if actor_id != "qq:group:multiple":
-                content = f"Speaker {actor_name} ({actor_id}):\n{content}"
-        messages.append({"role": role, "content": content})
-
-    messages.append({
-        "role": "user",
-        "content": _build_runtime_injection(deps, priority_override),
-    })
-    messages.append({
-        "role": "user",
-        "content": message,
-    })
-
+    if deps.source == "heartbeat":
+        current_content = f"平台心跳｜目标聊天：{deps.conversation_id or deps.group_key}\n{message}"
+    elif len(deps.inbound_events) > 1:
+        current_lines = [
+            format_actor_source(
+                conversation_id=deps.conversation_id or deps.group_key,
+                actor_id=str(item.get("actor_id") or "unknown"),
+                actor_name=str(item.get("actor_name") or item.get("actor_id") or "user"),
+                actor_kind="human",
+                content=str(item.get("content") or ""),
+            )
+            for item in deps.inbound_events
+        ]
+        current_content = "\n".join(current_lines)
+    else:
+        current_content = format_actor_source(
+            conversation_id=deps.conversation_id or deps.group_key,
+            actor_id=deps.actor_id or str(deps.peer.peer_uid),
+            actor_name=deps.actor_name or str(deps.peer.peer_uid),
+            actor_kind="human",
+            content=message,
+        )
+    messages.append({"role": "user", "content": current_content})
     return messages
+
+
+def _window_item_content(item: dict[str, Any]) -> str:
+    return str(item.get("content", ""))
 
 
 def _estimate_tokens(text: str) -> int:
@@ -385,17 +343,28 @@ async def _append_event(
     audience: str = "bot:self",
     status: str = "finalized",
     media_ids: list[str] | None = None,
+    payload: dict[str, Any] | None = None,
+    turn_id: str = "",
 ) -> str | None:
     if actor_kind == "human" and not deps.remember_input:
         return None
     if actor_kind != "human" and not deps.remember_output:
         return None
     try:
+        resolved_actor_id = actor_id or (deps.actor_id if actor_kind == "human" else "bot:self")
+        resolved_actor_name = actor_name or (deps.actor_name if actor_kind == "human" else "Mutsumi")
+        await deps.store.ensure_actor(ActorRecord(
+            actor_id=resolved_actor_id,
+            kind=actor_kind,
+            platform="qq" if resolved_actor_id.startswith("qq:") else "",
+            platform_subject_id=resolved_actor_id.rsplit(":", 1)[-1],
+            display_name=resolved_actor_name,
+        ))
         event = await deps.store.append_event(EventRecord(
             conversation_id=deps.conversation_id or deps.group_key,
-            actor_id=actor_id or (deps.actor_id if actor_kind == "human" else "bot:self"),
+            actor_id=resolved_actor_id,
             actor_kind=actor_kind,
-            actor_name=actor_name or (deps.actor_name if actor_kind == "human" else "Mutsumi"),
+            actor_name=resolved_actor_name,
             event_type=event_type,
             content=content,
             pipeline_id=deps.pipeline_id,
@@ -403,6 +372,8 @@ async def _append_event(
             audience=audience,
             status=status,
             media_ids=media_ids,
+            payload=payload,
+            turn_id=turn_id,
         ))
         return event.event_id
     except Exception:
@@ -447,6 +418,17 @@ async def _append_inbound_events(
 async def _update_event_statuses(deps: PipelineDeps, event_ids: list[str], status: str) -> None:
     for event_id in event_ids:
         await deps.store.update_event_status(event_id, status)
+
+
+async def _update_event_contents(
+    deps: PipelineDeps,
+    event_ids: list[str],
+    content: str,
+    *,
+    status: str = "received",
+) -> None:
+    for event_id in event_ids:
+        await deps.store.update_event_status(event_id, status, content)
 
 
 def _short_image_description(description: str) -> str:
@@ -1138,6 +1120,7 @@ async def pipeline(
             message,
             media_ids=[input_media_id] if input_media_id else None,
         )
+        deps.current_event_ids = list(inbound_event_ids)
         try:
             if deps.config.vision.enabled:
                 image_description = await describe_image(
@@ -1176,11 +1159,13 @@ async def pipeline(
         if input_media_id:
             lines.append(f"Media ledger reference: {input_media_id}")
         message = "\n".join(lines)
+        await _update_event_contents(deps, inbound_event_ids, message)
 
     try:
         if inbound_msg_id is None:
             inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
             inbound_event_ids = await _append_inbound_events(deps, message)
+            deps.current_event_ids = list(inbound_event_ids)
         else:
             await _update_saved_msg(
                 deps,
@@ -1356,6 +1341,7 @@ async def pipeline(
 
             tc_results: dict[str, str] = {}
             _report_state(deps, f"LOOP_{step + 1}:Exec_Tools")
+            tool_turn_id = f"{deps.pipeline_id}:step:{step + 1}"
 
             status_calls = [tc for tc in result.tool_calls if tc["name"] == "status_update"]
             long_calls = []
@@ -1373,6 +1359,7 @@ async def pipeline(
                     if long_tool and long_tool.status_hint
                     else "我先处理一下，可能需要一点时间。"
                 )
+                _set_active_work(deps, fallback, phase="preparing")
                 await _send_status_text(
                     deps,
                     fallback,
@@ -1413,6 +1400,7 @@ async def pipeline(
                             peer=deps.peer,
                         )
                         if outcome.ok:
+                            _set_active_work(deps, str(tool_args.get("text", "")), phase="preparing")
                             log_send(deps, "status", outcome.text)
                             await _append_event(
                                 deps,
@@ -1478,6 +1466,13 @@ async def pipeline(
                     staged = True
                 else:
                     try:
+                        tool = deps.registry.get(tool_name)
+                        if tool and tool.latency_class == "long":
+                            _set_active_work(
+                                deps,
+                                tool.status_hint or f"正在调用 {tool_name}",
+                                phase="executing",
+                            )
                         tr = await deps.registry.execute(
                             tool_name, tool_args,
                             store=deps.store, group_key=deps.group_key,
@@ -1494,12 +1489,26 @@ async def pipeline(
                     event_type=EventType.TOOL_CALL.value,
                     content=json.dumps({"tool": tool_name, "call_id": call_id, "arguments": _sanitize_action_arguments(tool_args)}, ensure_ascii=False),
                     visibility="private",
+                    payload={
+                        "tool": tool_name,
+                        "call_id": call_id,
+                        "arguments": _sanitize_action_arguments(tool_args),
+                        "assistant_content": result.content or "",
+                    },
+                    turn_id=tool_turn_id,
                 )
                 await _append_event(
                     deps,
                     event_type=EventType.TOOL_RESULT.value,
                     content=_sanitize_action_result(tool_name, tool_args, tr),
                     visibility="private",
+                    payload={
+                        "tool": tool_name,
+                        "call_id": call_id,
+                        "result": _sanitize_action_result(tool_name, tool_args, tr),
+                        "staged": staged,
+                    },
+                    turn_id=tool_turn_id,
                 )
                 is_failure = tr.startswith("[Error:")
                 if tool_name != last_tool_name:
@@ -1644,6 +1653,7 @@ async def pipeline(
         if not responded:
             await deps.sender.send(deps.peer, f"模型暂时不可用: {e}")
     finally:
+        _clear_active_work(deps)
         deps.session.clear_pending()
         logger.info("[PIPE] cleanup start pending_writes=%d", len(_pending_writes))
 
@@ -1659,7 +1669,7 @@ async def pipeline(
                     deps,
                     event_type=EventType.TOOL_RESULT.value,
                     content=_sanitize_action_result(tool_name, tool_args, result),
-                    visibility="global" if tool_name == "bot_state" and not result.startswith("[Error:") else "private",
+                    visibility="private",
                 )
                 await _record_action(
                     deps,

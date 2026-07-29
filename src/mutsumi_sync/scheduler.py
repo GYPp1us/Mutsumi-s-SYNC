@@ -49,6 +49,8 @@ class PipelineDeps:
     actor_name: str = ""
     pipeline_id: str = ""
     inbound_events: list[dict[str, str]] = field(default_factory=list)
+    current_event_ids: list[str] = field(default_factory=list)
+    active_work: dict[str, dict[str, str]] | None = None
 
 
 class PipelineScheduler:
@@ -79,6 +81,7 @@ class PipelineScheduler:
         self._heartbeat_batches: dict[str, asyncio.Task[None]] = {}
         self._scheduled_tasks: dict[int, asyncio.Task[None]] = {}
         self._episode_timers: dict[str, asyncio.Task[None]] = {}
+        self._active_work: dict[str, dict[str, str]] = {}
 
     def _make_key(self, event: MessageEvent) -> str:
         if event.message_type == "group" and event.group_id:
@@ -287,6 +290,7 @@ class PipelineScheduler:
             actor_name=actor_name,
             pipeline_id=f"{key}:{time.time_ns()}",
             inbound_events=inbound_events,
+            active_work=self._active_work,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -338,6 +342,7 @@ class PipelineScheduler:
             actor_id=self._actor_id(event),
             actor_name=self._actor_name(event),
             pipeline_id=f"{key}:{time.time_ns()}",
+            active_work=self._active_work,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -555,6 +560,7 @@ class PipelineScheduler:
             actor_id=str(candidate.get("actor_id") or ""),
             actor_name=str(candidate.get("actor_name") or ""),
             pipeline_id=f"heartbeat:{key}:{time.time_ns()}",
+            active_work=self._active_work,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),

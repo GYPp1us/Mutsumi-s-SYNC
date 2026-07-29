@@ -47,6 +47,8 @@ Mutsumi's SYNC v3 是一个基于 NapCat 的 QQ 聊天机器人。它不是简�
 | 请求级 token 预算、精确 turn 压缩 | 完成 |
 | 结构化 action ledger | 完成 |
 | 图片描述进入常规 pipeline | 完成 |
+| Global Life Stream 与 Actor Registry | 完成 |
+| 历史 tool round 原生回放 | 完成 |
 | Dashboard TUI | 调试界面，不作为生产 registry 基准 |
 | 交互式 tester | 调试界面 |
 | Markdown -> PNG -> image send | 完成，可选安装 |
@@ -78,6 +80,12 @@ Mutsumi's SYNC v3 是一个基于 NapCat 的 QQ 聊天机器人。它不是简�
 8. **日志链路要诚实**  
    pipeline 的关键分支、上下文拼接、LLM 结果、保存/窗口更新、cleanup 都应有可追踪日志。
 
+9. **上下文使用统一 Life Stream**
+   多个用户和服务来源都进入同一条按事件顺序排列的时间线；provider role 只表达消息类型，actor 与 conversation 由平台来源前缀表达。
+
+10. **历史工具调用必须保持原生结构**
+    事件通过 `turn_id` 和 `payload_json` 重建 `assistant(tool_calls)` 与 `tool` 结果，禁止把工具反馈伪装成普通 assistant 文本。
+
 ## 5. 模块职责
 
 ```text
@@ -94,7 +102,9 @@ src/mutsumi_sync/
   memory/
     window.py             rolling in-memory context window
     session.py            per-session activity/pending state
-    store.py              SQLite long-term store, summaries, self notes, media
+    store.py              SQLite long-term store, events, actors, summaries, self notes, media
+    actors.py             global actor/conversation source formatting
+    projection.py         Life Stream and native tool-round projection
   tools/
     registry.py           Tool and ToolRegistry
     config_manager.py     runtime config get/set/list/reload

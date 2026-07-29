@@ -22,6 +22,8 @@ from src.mutsumi_sync.pipeline import (
     _compact_context_for_request,
     _estimate_request_tokens,
     _generate_and_save_summary,
+    _clear_active_work,
+    _set_active_work,
 )
 import src.mutsumi_sync.pipeline as pipeline_module
 from src.mutsumi_sync.output_protocol import format_final_envelope
@@ -336,24 +338,17 @@ class TestPipelineE2EMultiRound:
         assert ctx[0]["content"]
         assert roles.count("system") == 1
 
-        self_context = ctx[1]
-        assert self_context["role"] == "user"
-        assert self_context["content"].rstrip().endswith(
-            "[Persona]\nSpeak as a calm long-term companion.\n[/Persona]\n[/Self Context]"
-        )
-
-        conversation_context = ctx[2]
-        assert conversation_context["role"] == "user"
-        assert "structure test note" in conversation_context["content"]
-        assert "past conversation about weather" in conversation_context["content"]
-        assert "+08:00" in conversation_context["content"]
+        assert "Speak as a calm long-term companion." in ctx[0]["content"]
+        assert "[Persona]" not in ctx[0]["content"]
+        assert "structure test note" in "\n".join(str(m["content"]) for m in ctx)
+        assert "past conversation about weather" not in "\n".join(str(m["content"]) for m in ctx)
         assert "工具 schema 是工具能力的唯一事实源" in ctx[0]["content"]
         assert "用未转义的 |" not in ctx[0]["content"]
 
         assert ctx[-2]["role"] == "user"
-        assert "Runtime Injection" in ctx[-2]["content"]
+        assert "当前时间：" in ctx[-2]["content"]
         assert ctx[-1]["role"] == "user"
-        assert ctx[-1]["content"] == "current user message"
+        assert "current user message" in ctx[-1]["content"]
 
         await store.close()
 
@@ -362,16 +357,23 @@ class TestPipelineE2EMultiRound:
         store = MessageStore(db_path=":memory:")
         await store.initialize()
         try:
-            window = MessageWindow()
-            window.add("qq:user:101", "first message", actor_name="Alice")
-            window.add("bot:self", "first reply", is_bot=True, actor_name="Mutsumi")
-            window.add("qq:user:202", "second message", actor_name="Bob")
+            await store.append_event(EventRecord(
+                conversation_id="group:888", actor_id="qq:user:101", actor_kind="human",
+                actor_name="Alice", event_type=EventType.INBOUND.value, content="first message",
+            ))
+            await store.append_event(EventRecord(
+                conversation_id="group:888", actor_id="bot:self", actor_kind="bot",
+                actor_name="Mutsumi", event_type=EventType.OUTBOUND.value, content="first reply",
+            ))
+            await store.append_event(EventRecord(
+                conversation_id="group:888", actor_id="qq:user:202", actor_kind="human",
+                actor_name="Bob", event_type=EventType.INBOUND.value, content="second message",
+            ))
             deps = PipelineDeps(
                 config=config,
                 registry=build_registry(config, store),
                 sender=CaptureSender(),
-                store=store,
-                window=window,
+                store=store, window=MessageWindow(),
                 session=SessionState(),
                 peer=Peer(chat_type=2, peer_uid="888"),
                 group_key="group:888:202",
@@ -383,9 +385,9 @@ class TestPipelineE2EMultiRound:
             context = await _build_context("current group message", deps)
             rendered = "\n".join(str(item.get("content", "")) for item in context)
 
-            assert "Speaker Alice (qq:user:101):" in rendered
-            assert "Speaker Bob (qq:user:202):" in rendered
-            assert "Speaker Mutsumi" not in rendered
+            assert "群聊「888」｜Alice（qq:user:101）" in rendered
+            assert "群聊「888」｜Bob（qq:user:202）" in rendered
+            assert "回复到群聊「888」｜first reply" in rendered
         finally:
             await store.close()
 
@@ -414,7 +416,7 @@ class TestPipelineE2EMultiRound:
         assert json.loads(saved[0].content)["bot"] == "a | b | c"
         await store.close()
 
-    async def test_priority_override_is_in_runtime_injection_only(self):
+    async def test_priority_override_is_no_longer_a_model_capability(self):
         config = make_config()
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
@@ -436,20 +438,42 @@ class TestPipelineE2EMultiRound:
         )
 
         ctx = await _build_context("current user message", deps)
-        user_messages = [m for m in ctx if m["role"] == "user"]
-
-        assert len(user_messages) == 5
-        joined = "\n".join(str(m["content"]) for m in user_messages)
-        assert joined.count("[Priority Override]") == 1
-        assert joined.count("Always preserve exact equations.") == 1
-        assert "Runtime Injection" in ctx[-2]["content"]
-        assert "Always preserve exact equations." in ctx[-2]["content"]
-        assert "Priority Override" not in ctx[-1]["content"]
-        assert ctx[-1]["content"] == "current user message"
-        assert "+08:00" in ctx[3]["content"], "Historical user messages should include readable +8 timestamps"
-        assert ctx[4]["content"] == "previous bot reply"
+        joined = "\n".join(str(m["content"]) for m in ctx)
+        assert "Priority Override" not in joined
+        assert "Always preserve exact equations." not in joined
+        tool_names = {
+            item["function"]["name"]
+            for item in registry.to_openai_schema()
+        }
+        assert "priority_override" not in tool_names
+        assert "bot_state" not in tool_names
 
         await store.close()
+
+    async def test_active_work_uses_empty_shared_registry_and_cleans_up(self):
+        config = make_config()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        try:
+            active_work = {}
+            deps = PipelineDeps(
+                config=config,
+                registry=build_registry(config, store),
+                sender=CaptureSender(),
+                store=store,
+                window=MessageWindow(),
+                session=SessionState(),
+                peer=Peer(chat_type=1, peer_uid="active-work"),
+                group_key="private:active-work",
+                pipeline_id="pipeline-active-work",
+                active_work=active_work,
+            )
+            _set_active_work(deps, "正在查询资料", phase="executing")
+            assert active_work["pipeline-active-work"]["phase"] == "executing"
+            _clear_active_work(deps)
+            assert active_work == {}
+        finally:
+            await store.close()
 
     async def test_cancelled_pipeline_keeps_inbound_message(self, monkeypatch):
         config = make_config()

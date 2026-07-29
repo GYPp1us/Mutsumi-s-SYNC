@@ -13,14 +13,14 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - SQLite message store, summaries, self notes, and media storage.
 - Global Event Ledger with provenance-preserving cross-conversation projections and idle Episode summaries.
 - Pipeline-native Media Ledger with SHA deduplication, stable media IDs, and global sticker search/maintenance tools.
-- Explicit `bot_state` canonical projection for facts about the bot itself, separate from private relationship memory.
-- Layered context assembly: stable provider-native Chinese `system`, global `Self Context`, conversation-scoped `Conversation Context`, working window, temporary `Runtime Injection`, and current input.
-- A separate persona prompt is loaded from `system-prompts.yaml` and injected into `Self Context`; it is never edited through `config.yaml`.
+- Unified global Life Stream context: all human/service inputs use provider `user`, while readable actor and conversation prefixes preserve source identity.
+- Historical tool rounds replay as native provider `assistant(tool_calls)` plus `tool` messages; they are never flattened into assistant prose.
+- The persona prompt is loaded from `system-prompts.yaml` and appended to the stable provider-native Chinese `system`; it is never edited through `config.yaml`.
 - Global inner journal for subjective bot-state continuity, with source conversation/actor provenance and bounded token/entry retention.
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
-- Priority Override memory, injected once per request in `Runtime Injection` for unusually important instructions.
+- Temporary platform state is injected once per request and includes current time, source, actor and active work; it is not durable conversation history.
 - Proactive heartbeat checks every 15 minutes for private chats and every 3 hours for groups active within the last 24 hours.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
@@ -264,15 +264,15 @@ Use `status_update` before a tool that is expected to take a noticeable amount o
 
 ## Context And Memory Protocol
 
-The LLM request uses one provider-native Chinese `system` message for durable platform rules. The next user message is `[Self Context]`, containing persona, canonical bot state, and the global inner journal. The following user message is `[Conversation Context]`, containing conversation-scoped self notes, summaries, and projected life context. These are documentary context, not fresh user requests. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
+The LLM request uses one provider-native Chinese `system` message for durable platform rules and the configured persona. The remaining request is a global chronological Life Stream followed by temporary platform state and the current source message. Every human and service source uses provider role `user`; readable prefixes identify the conversation and actor. The source identity is data supplied by the platform, not something the model should infer from prose.
+
+Completed tool rounds in the Life Stream are replayed as native provider messages: one `assistant` message with `tool_calls`, followed by matching `tool` results. Tool audit records remain durable, but are not flattened into ordinary assistant text.
 
 Inner journal entries are subjective bot-state deltas, not verified facts or instructions. They include source conversation/actor provenance for the model, but are never represented as fake user/assistant turns. A successful final turn may append one bounded `TO_SELF` entry; cancellation, failed visible output, and malformed output do not.
 
 Summaries, self notes, and historical user turns are annotated with readable UTC+8 timestamps. Historical assistant turns are passed through without synthetic timestamp prefixes. Older self-note lines without timestamps are injected as `很久之前`.
 
-Before the current user request, the pipeline injects a temporary `[Runtime Injection]` user message with current UTC+8 time, source, silent/remembering flags, peer metadata, and the active Priority Override. Runtime Injection is platform state, not user-authored chat, and is not written to durable history.
-
-`priority_override` is a write tool with `add`, `replace`, and `clear`. Its active content is injected only in Runtime Injection. Use it only for high-priority rules that are worth paying attention to every turn.
+Before the current user request, the pipeline injects a temporary platform-state user message with current UTC+8 time, source, silent/remembering flags, peer metadata and active work. This is platform state, not user-authored chat, and is not written to durable history.
 
 Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false` and `remember_output=true`: synthetic heartbeat input is not written, while verified proactive assistant output is written to the target window and event ledger.
 
@@ -282,18 +282,18 @@ Memory write tools are staged during the tool loop and committed exactly once du
 
 ### Global Event And Media Ledger
 
-The `events` table is the append-first interaction ledger. It records actor,
-conversation, visibility, lifecycle, tool, and media provenance. Global storage
-does not mean global prompt injection: private events remain private, group
-events remain in their group, and only explicitly global records cross
-conversations. Cross-conversation records are documentary data with actor IDs,
-never simulated `user` or `assistant` turns.
+The `events` table is the append-first global interaction ledger. It records
+actor, conversation, visibility, lifecycle, tool, turn and media provenance.
+The current context projector intentionally presents the unified life timeline
+in chronological order. Actor IDs, display names and private aliases are
+carried in readable prefixes; they are not simulated provider roles.
 
-A group has one shared conversation window while members retain separate actor
-and legacy memory scopes. After about 30 minutes of idle time, finalized events
-may be summarized into an Episode with exact sequence coverage. Raw events are
-never deleted; context projection chooses either the Episode or its covered raw
-events, keeping requests near the 100K-token attention budget.
+A group has one shared conversation window while members retain independent
+actor identities. The global `actor_profile` tool maintains a private alias and
+relationship label for each stable actor ID. After about 30 minutes of idle
+time, finalized events may be summarized into an Episode with exact sequence
+coverage. Raw events are never deleted; context projection can later choose an
+Episode or its covered raw events, keeping requests near the model budget.
 
 Incoming and successfully outgoing media are automatically registered with a
 stable SHA-derived `media_id`; inbound image URLs are downloaded into the
