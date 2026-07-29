@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.mutsumi_sync.memory.store import EpisodeRecord, EventRecord, MessageStore, EventType
-from src.mutsumi_sync.memory.projection import build_global_life_context
+from src.mutsumi_sync.memory.store import ActorRecord, EpisodeRecord, EventRecord, MessageStore, EventType
+from src.mutsumi_sync.memory.projection import build_global_life_context, build_life_stream
 
 
 @pytest.mark.asyncio
@@ -194,5 +194,97 @@ async def test_media_ledger_deduplicates_binary_and_keeps_description(tmp_path):
         saved = await store.get_media(first.media_id)
         assert saved is not None
         assert saved.short_description == "blue square"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_actor_registry_updates_global_alias_and_relationship(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        actor = await store.ensure_actor(ActorRecord(
+            actor_id="qq:user:alice",
+            kind="human",
+            platform="qq",
+            platform_subject_id="alice",
+            display_name="Alice",
+        ))
+        assert actor.private_alias == ""
+        updated = await store.update_actor_profile(
+            actor.actor_id,
+            private_alias="主人",
+            relationship="owner",
+        )
+        assert updated is not None
+        assert updated.private_alias == "主人"
+        assert updated.relationship == "owner"
+        assert (await store.get_actor(actor.actor_id)).private_alias == "主人"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_life_stream_replays_tool_round_as_native_provider_messages(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="qq:user:alice", actor_kind="human",
+            event_type=EventType.INBOUND.value, content="查一下天气", turn_id="turn-in",
+        ))
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self", actor_kind="bot",
+            event_type=EventType.TOOL_CALL.value, turn_id="pipeline:step:1",
+            content='{"tool":"weather","call_id":"call-1","arguments":{"city":"上海"}}',
+            payload={
+                "tool": "weather", "call_id": "call-1", "arguments": {"city": "上海"},
+                "assistant_content": "",
+            },
+        ))
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self", actor_kind="bot",
+            event_type=EventType.TOOL_RESULT.value, turn_id="pipeline:step:1",
+            content="晴天", payload={"tool": "weather", "call_id": "call-1", "result": "晴天"},
+        ))
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self", actor_kind="bot",
+            event_type=EventType.OUTBOUND.value, content="今天上海晴天。",
+        ))
+
+        stream = await build_life_stream(store)
+        assert [item["role"] for item in stream] == ["user", "assistant", "tool", "assistant"]
+        assert stream[1]["tool_calls"][0]["function"]["name"] == "weather"
+        assert stream[1]["tool_calls"][0]["function"]["arguments"] == '{"city": "上海"}'
+        assert stream[2] == {"role": "tool", "tool_call_id": "call-1", "content": "晴天"}
+        assert "[assistant]" not in "\n".join(str(item) for item in stream)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_life_stream_keeps_interleaved_pipeline_tool_round_contiguous(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self", actor_kind="bot",
+            event_type=EventType.TOOL_CALL.value, turn_id="pipeline-a:step:1",
+            payload={"tool": "lookup", "call_id": "a-1", "arguments": {}},
+        ))
+        await store.append_event(EventRecord(
+            conversation_id="private:bob", actor_id="qq:user:bob", actor_kind="human",
+            event_type=EventType.INBOUND.value, content="另一条聊天消息",
+        ))
+        await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self", actor_kind="bot",
+            event_type=EventType.TOOL_RESULT.value, turn_id="pipeline-a:step:1",
+            payload={"tool": "lookup", "call_id": "a-1", "result": "查到结果"},
+        ))
+
+        stream = await build_life_stream(store)
+        assert [item["role"] for item in stream] == ["assistant", "tool", "user"]
+        assert stream[1]["content"] == "查到结果"
+        assert "另一条聊天消息" in stream[2]["content"]
     finally:
         await store.close()

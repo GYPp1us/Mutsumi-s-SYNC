@@ -2,23 +2,19 @@
 
 ## Global Event Ledger Rules
 
-- `bot_state` is the only explicit global bot-self state tool; relationship facts remain conversation-scoped.
-
-- `events` is the append-first global fact source. It carries actor, conversation, visibility, audience, lifecycle, tool, and media provenance.
-- Global storage is not global prompt injection. Private events remain private; group events remain in their group; only explicitly global events cross conversations.
-- Cross-conversation events are documentary records with actor IDs, never simulated provider `user` or `assistant` turns.
-- A group has one shared conversation window while members retain independent actor identity and legacy memory/action scopes.
+- `events` is the append-first global Life Stream. It carries actor, conversation, visibility, audience, lifecycle, turn, tool, and media provenance.
+- The current projector presents the unified timeline chronologically. All human/service sources use provider `user`; readable actor/conversation prefixes preserve identity.
+- A group has one shared conversation window while members retain independent actor identities. `actor_profile` maintains global aliases and relationship labels.
 - Episodes summarize only finalized events and store exact sequence coverage. Raw events are never deleted, and a projection selects an Episode or its covered raw events, never both.
 - Media is pipeline-native. SHA-derived media IDs and descriptions are recorded automatically; inbound image URLs are downloaded when possible and otherwise retained as external references. Only the description and media ID enter model context; `sticker_search` and `sticker_manage` maintain the global media ledger.
 - Ordinary assistant content must pass the flat-text output gate. Complex Markdown goes through `send.markdown_image`.
 
 - LLM requests use a provider-native non-empty Chinese `system` message for durable platform rules.
 - The `persona` prompt and all runtime, message-summary, summary-merge, and Episode-summary prompts live in `system-prompts.yaml`, selected by `prompts.system_file`. Do not duplicate prompt bodies in Python. Production uses `/opt/mutsumi-sync-v3/shared/system-prompts.yaml`.
-- The first user context message is `[Self Context]` containing persona, canonical bot state, and global inner journal; the next is `[Conversation Context]` containing conversation-scoped context. Both are documentary context, not fresh user requests. The action ledger is not injected by default.
-- Working conversation messages after those context layers are only the current working context window.
-- A temporary `[Runtime Injection]` user message is inserted immediately before the current user request. It carries current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override. It is not user-authored chat and must not be written to durable history.
+- The provider-native `system` message contains stable platform rules and persona. The following Life Stream uses native `user`, `assistant`, and `tool` messages; tool rounds are reconstructed from `payload_json` and `turn_id`.
+- A temporary platform-state user message is inserted immediately before the current source message. It carries current UTC+8 time, source, actor, peer metadata and active work. It is not user-authored chat and must not be written to durable history.
 - Summaries, self-note entries, and historical `user` turns must use readable UTC+8 timestamps. Historical `assistant` turns must not receive synthetic timestamp prefixes. Existing self-note lines without timestamps are injected with `很久之前`.
-- `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is injected only once in Runtime Injection and should be used only for high-priority instructions.
+- `bot_state` and `priority_override` are retired model capabilities. Their legacy SQLite tables may remain until production data reset, but they must not be registered or injected.
 - Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
 - Pipe-based reply splitting is disabled. Assistant content is sent once and `|` remains literal.
 - `send(markdown_image=...)` records verified success/failure in the structured action ledger. Successful artifacts carry the generated file, message id, and Markdown hash; artifact markers must not enter assistant history.

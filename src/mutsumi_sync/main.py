@@ -15,13 +15,12 @@ from .tools.http_api import http_api_call, HTTP_API_SCHEMA
 from .tools.config_manager import config_manager, CONFIG_MANAGER_SCHEMA
 from .tools.memory import memory_search, memory_save, MEMORY_SEARCH_SCHEMA, MEMORY_SAVE_SCHEMA
 from .tools.self_note import self_note_tool, SELF_NOTE_SCHEMA
-from .tools.priority_override import priority_override_tool, PRIORITY_OVERRIDE_SCHEMA
+from .tools.actor_profile import actor_profile_tool, ACTOR_PROFILE_SCHEMA
 from .tools.send import send_tool, SEND_TOOL_SCHEMA
 from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 from .tools.status_update import status_update_tool, STATUS_UPDATE_SCHEMA
 from .tools.scheduler import scheduler_tool, SCHEDULER_SCHEMA
 from .tools.media import media_search, MEDIA_SEARCH_SCHEMA, sticker_manage, STICKER_MANAGE_SCHEMA
-from .tools.bot_state import bot_state_tool, BOT_STATE_SCHEMA
 
 logger = logging.getLogger("mutsumi.main")
 
@@ -134,28 +133,17 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
         handler=_self_note,
     ))
 
-    async def _bot_state(args: dict, **deps) -> str:
-        deps.pop("store", None)
-        return await bot_state_tool(args, store=store, **deps)
+    async def _actor_profile(args: dict, **deps) -> str:
+        return await actor_profile_tool(args, store=store, **deps)
 
     registry.register(Tool(
-        name="bot_state",
-        description="Maintain globally shared facts about the bot itself: identity, experience, values, or long-term plans. Never store a user's private facts here.",
-        parameters=BOT_STATE_SCHEMA,
-        handler=_bot_state,
-    ))
-
-    async def _priority_override(args: dict, **deps) -> str:
-        return await priority_override_tool(args, store=store, group_key=deps.get("group_key", ""))
-
-    registry.register(Tool(
-        name="priority_override",
+        name="actor_profile",
         description=(
-            "Manage the Priority Override field. Use it only for unusually important instructions "
-            "that must be repeated after every user input in the working context."
+            "维护全局参与者档案。可读取、列出或维护稳定 actor_id 对应的私下称呼和关系标签。"
+            "不要猜测 actor_id，只使用上下文或工具结果中的稳定 ID。"
         ),
-        parameters=PRIORITY_OVERRIDE_SCHEMA,
-        handler=_priority_override,
+        parameters=ACTOR_PROFILE_SCHEMA,
+        handler=_actor_profile,
     ))
 
     async def _send(args: dict, **deps) -> str:
