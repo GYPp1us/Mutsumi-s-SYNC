@@ -40,6 +40,7 @@ class TestConfig:
         assert isinstance(c.prompts.system.persona, str)
         assert c.prompts.system_file == "system-prompts.yaml"
         assert "TO_USER" in c.prompts.system.runtime
+        assert "Heartbeat 是静默请求" not in c.prompts.system.runtime
         assert c.inner_journal.max_entry_chars == 1000
         assert c.dirty is False
 
@@ -130,7 +131,8 @@ class TestConfig:
             "runtime: runtime-v1\n"
             "message_summary: message-v1\n"
             "summary_merge: merge-v1\n"
-            "episode_summary: episode-v1\n",
+            "episode_summary: episode-v1\n"
+            "heartbeat: heartbeat-v1\n",
             encoding="utf-8",
         )
         config_path = tmp_path / "config.yaml"
@@ -149,7 +151,8 @@ class TestConfig:
             "runtime: runtime-v2\n"
             "message_summary: message-v2\n"
             "summary_merge: merge-v2\n"
-            "episode_summary: episode-v2\n",
+            "episode_summary: episode-v2\n"
+            "heartbeat: heartbeat-v2\n",
             encoding="utf-8",
         )
         assert config.reload().startswith("[OK]")
@@ -166,7 +169,8 @@ class TestConfig:
             "runtime: runtime-v1\n"
             "message_summary: message-v1\n"
             "summary_merge: merge-v1\n"
-            "episode_summary: episode-v1\n",
+            "episode_summary: episode-v1\n"
+            "heartbeat: heartbeat-v1\n",
             encoding="utf-8",
         )
 
@@ -177,7 +181,13 @@ class TestConfig:
 
     def test_external_system_prompts_require_all_levels(self, tmp_path):
         prompt_path = tmp_path / "incomplete.yaml"
-        prompt_path.write_text("runtime: only-runtime\n", encoding="utf-8")
+        prompt_path.write_text(
+            "runtime: runtime\n"
+            "message_summary: message\n"
+            "summary_merge: merge\n"
+            "episode_summary: episode\n",
+            encoding="utf-8",
+        )
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             "prompts:\n  system_file: incomplete.yaml\n",
