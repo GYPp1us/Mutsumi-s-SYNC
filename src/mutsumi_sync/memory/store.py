@@ -534,23 +534,25 @@ class MessageStore:
         ]
 
     async def has_unanswered_proactive(self, conversation_id: str) -> bool:
-        """Return whether the latest proactive output predates no inbound reply."""
+        """Return whether a heartbeat output has no later real inbound reply."""
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT MAX(created_at) FROM messages WHERE group_key = ? AND category = 'proactive'",
+            "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE conversation_id = ? "
+            "AND event_type = 'outbound' AND status = 'finalized' "
+            "AND pipeline_id LIKE 'heartbeat:%'",
             (conversation_id,),
         )
         proactive_row = await cursor.fetchone()
-        proactive_at = float(proactive_row[0] or 0)
-        if not proactive_at:
+        proactive_sequence = int(proactive_row[0] or 0)
+        if not proactive_sequence:
             return False
         cursor = await self._conn.execute(
-            "SELECT MAX(created_at) FROM events WHERE conversation_id = ? "
+            "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE conversation_id = ? "
             "AND event_type = 'inbound' AND status != 'cancelled'",
             (conversation_id,),
         )
         inbound_row = await cursor.fetchone()
-        return proactive_at > float(inbound_row[0] or 0)
+        return proactive_sequence > int(inbound_row[0] or 0)
 
     async def add_episode(self, episode: EpisodeRecord) -> str:
         self._ensure_initialized()

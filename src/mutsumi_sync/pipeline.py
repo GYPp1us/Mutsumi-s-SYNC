@@ -584,9 +584,14 @@ def _extract_send_artifact(reply_result: str) -> dict | None:
 
 async def _register_sent_media(deps: PipelineDeps, tool_args: dict, artifact: dict | None) -> list[str]:
     media_ids: list[str] = []
+    existing_media_id = str(tool_args.get("media_id") or "").strip()
     file_path = str((artifact or {}).get("file") or tool_args.get("image") or "").strip()
     image_url = str(tool_args.get("image_url") or "").strip()
     try:
+        if existing_media_id:
+            media = await deps.store.get_media(existing_media_id)
+            if media is not None and media.status == "active":
+                media_ids.append(existing_media_id)
         if file_path and Path(file_path).is_file():
             media = await deps.store.register_media(
                 Path(file_path).read_bytes(),
@@ -611,6 +616,8 @@ async def _register_inbound_media(
     """Persist an inbound image locally, retaining a URL only as a fallback."""
     file_path = Path(image_file) if image_file else None
     if file_path and file_path.is_file():
+        if file_path.stat().st_size > MAX_INBOUND_MEDIA_BYTES:
+            raise ValueError("image exceeds the maximum allowed size")
         media = await deps.store.register_media(
             file_path.read_bytes(),
             kind=kind,
@@ -1430,6 +1437,7 @@ async def pipeline(
                                 sender=deps.sender,
                                 peer=deps.peer,
                                 config=deps.config,
+                                store=deps.store,
                             )
                         except Exception as e:
                             logger.exception("send_tool failed")

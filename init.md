@@ -147,7 +147,13 @@ context:
   debounce_timeout: 1.5
 
 prompts:
-  persona: ""
+  system_file: system-prompts.yaml
+
+heartbeat:
+  enabled: true
+  private_interval_seconds: 900
+  group_interval_seconds: 10800
+  active_window_seconds: 86400
 
 memory:
   archive_threshold_tokens: 100

@@ -8,7 +8,7 @@ import os
 from datetime import date
 
 from src.mutsumi_sync.config import Config
-from src.mutsumi_sync.memory.store import EventType, MessageStore, StoredMessage
+from src.mutsumi_sync.memory.store import EventRecord, EventType, MessageStore, StoredMessage
 from src.mutsumi_sync.memory.window import MessageWindow
 from src.mutsumi_sync.memory.session import SessionState
 from src.mutsumi_sync.message.sender import Peer
@@ -507,7 +507,7 @@ class TestPipelineE2EMultiRound:
         async def fake_llm_call(messages, deps):
             return next(calls)
 
-        async def fake_send_tool(args, *, sender, peer, config=None):
+        async def fake_send_tool(args, *, sender, peer, config=None, store=None):
             await sender.send(peer, [{"type": "image", "data": {"file": "rendered.png"}}])
             return json.dumps({
                 "status": "ok",
@@ -542,6 +542,76 @@ class TestPipelineE2EMultiRound:
         assert send_action["artifact"]["markdown_sha256"]
         assert all("sent image" not in item["content"] for item in deps.window.get_context())
 
+        await store.close()
+
+    async def test_media_id_send_works_through_pipeline_and_sets_proactive_gate(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(str(tmp_path / "media-pipeline.db"), str(tmp_path / "media"))
+        await store.initialize()
+        media = await store.register_media(b"reusable sticker", kind="sticker", ext="png")
+        registry = build_registry(config, store)
+        calls = iter([
+            LLMResult(tool_calls=[{
+                "id": "call_media",
+                "name": "send",
+                "arguments": {"media_id": media.media_id},
+            }]),
+            LLMResult(content=final_output()),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            return next(calls)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        conversation_id = "private:heartbeat-media"
+        deps = PipelineDeps(
+            config=config,
+            registry=registry,
+            sender=sender,
+            store=store,
+            window=MessageWindow(),
+            session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="heartbeat-media"),
+            group_key=conversation_id,
+            conversation_id=conversation_id,
+            actor_id="qq:user:heartbeat-media",
+            source="heartbeat",
+            pipeline_id="heartbeat:private:heartbeat-media:1",
+            remember_input=False,
+            remember_output=True,
+            allow_cold_poke=False,
+            allow_status_update=False,
+            allowed_tools={"media_search", "sticker_search", "send"},
+        )
+
+        await pipeline("heartbeat check", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert sender.sent[0]["message"] == [{
+            "type": "image",
+            "data": {"file": media.path},
+        }]
+        outbound = [
+            event
+            for event in await store.get_events(conversation_id=conversation_id)
+            if event.event_type == EventType.OUTBOUND.value
+        ]
+        assert len(outbound) == 1
+        assert outbound[0].media_ids == [media.media_id]
+        assert await store.has_unanswered_proactive(conversation_id) is True
+
+        await store.append_event(EventRecord(
+            conversation_id=conversation_id,
+            actor_id="qq:user:heartbeat-media",
+            actor_kind="human",
+            event_type=EventType.INBOUND.value,
+            content="user replied",
+        ))
+        assert await store.has_unanswered_proactive(conversation_id) is False
         await store.close()
 
     async def test_incoming_image_uses_vision_provider_when_enabled(self, monkeypatch):
@@ -1173,7 +1243,7 @@ class TestPipelineE2EDebounce:
             llm_call_count += 1
             return next(calls)
 
-        async def fake_send_tool(args, *, sender, peer, config=None):
+        async def fake_send_tool(args, *, sender, peer, config=None, store=None):
             if args.get("text"):
                 await sender.send(peer, [{"type": "text", "data": {"text": args["text"]}}])
             if args.get("markdown_image"):
