@@ -227,6 +227,7 @@ def register_scheduler_tool(registry: ToolRegistry, scheduler: PipelineScheduler
 
 async def run(config_path: str = "config.yaml") -> None:
     config = Config.load(config_path)
+    config.validate_startup()
     setup_logging(config=config)
     logger.info("Config loaded from %s", config_path)
 
