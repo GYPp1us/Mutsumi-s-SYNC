@@ -83,7 +83,7 @@ def test_release_script_synchronizes_prompts_and_migrates_renderer_timeout() -> 
     assert "if current <= 20" in source
 
 
-def test_prompt_sync_preserves_persona_and_replaces_all_operational_prompts(tmp_path) -> None:
+def test_prompt_sync_replaces_all_versioned_prompts_and_preserves_extra_keys(tmp_path) -> None:
     shared = tmp_path / "shared.yaml"
     release = tmp_path / "release.yaml"
     shared.write_text(
@@ -118,7 +118,7 @@ def test_prompt_sync_preserves_persona_and_replaces_all_operational_prompts(tmp_
     )
 
     migrated = yaml.safe_load(shared.read_text(encoding="utf-8"))
-    assert migrated["persona"] == "生产人格"
+    assert migrated["persona"] == "release-default"
     for key in ("runtime", "message_summary", "summary_merge", "episode_summary", "heartbeat"):
         assert migrated[key] == release_data[key]
     assert migrated["operator_note"] == "keep-me"

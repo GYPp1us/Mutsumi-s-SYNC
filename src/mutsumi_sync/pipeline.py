@@ -184,9 +184,6 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
     state_parts = [
         "平台状态（不是用户消息，也不是需要复述的内容）：",
         f"当前时间：{format_context_timestamp(time.time())}",
-        f"当前来源：{deps.source}",
-        f"当前聊天：{deps.conversation_id or deps.group_key}",
-        f"当前发言者：{deps.actor_name or deps.actor_id or 'unknown'}（{deps.actor_id or 'unknown'}）",
     ]
     if deps.source == "heartbeat":
         state_parts.append("这是平台发起的心跳检查，不是用户新消息。")
@@ -207,7 +204,10 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
 
     actor_kind = "service" if deps.source == "external_service" else "human"
     if deps.source == "heartbeat":
-        current_content = f"平台心跳｜目标聊天：{deps.conversation_id or deps.group_key}\n{message}"
+        current_content = (
+            f"平台心跳｜目标聊天：{deps.conversation_id or deps.group_key}\n"
+            "执行本次自主性检查。"
+        )
     elif len(deps.inbound_events) > 1:
         current_lines = [
             format_actor_source(
@@ -216,6 +216,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
                 actor_name=str(item.get("actor_name") or item.get("actor_id") or "user"),
                 actor_kind=actor_kind,
                 content=str(item.get("content") or ""),
+                created_at=item.get("created_at") or time.time(),
             )
             for item in deps.inbound_events
         ]
@@ -227,6 +228,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
             actor_name=deps.actor_name or str(deps.peer.peer_uid),
             actor_kind=actor_kind,
             content=message,
+            created_at=(deps.inbound_events[0].get("created_at") if deps.inbound_events else None) or time.time(),
         )
     messages.append({"role": "user", "content": current_content})
     return messages

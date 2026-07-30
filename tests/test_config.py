@@ -168,7 +168,7 @@ class TestConfig:
         prompt_path = tmp_path / "custom-prompts.yaml"
         prompt_path.write_text(
             "persona: '你称呼 {{user}}'\n"
-            "runtime: '用户ID是 {{user_id}}，昵称是 {{user_nickname}}'\n"
+            "runtime: 'bot是 {{bot_user_id}}、{{bot_nickname}}；用户ID是 {{user_id}}，昵称是 {{user_nickname}}'\n"
             "message_summary: '{{user}} 的消息'\n"
             "summary_merge: '{{user_id}}'\n"
             "episode_summary: '{{user_nickname}}'\n"
@@ -178,9 +178,11 @@ class TestConfig:
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             "identity:\n"
-            "  user_id: '3535616589'\n"
-            "  nickname: Sakuraba Ema\n"
-            "  alias: 前辈\n"
+            "  bot_user_id: '3535616589'\n"
+            "  bot_nickname: Sakuraba Ema\n"
+            "  owner_user_id: '1321878226'\n"
+            "  owner_nickname: GYP\n"
+            "  owner_alias: 前辈\n"
             "prompts:\n  system_file: custom-prompts.yaml\n",
             encoding="utf-8",
         )
@@ -190,6 +192,8 @@ class TestConfig:
         for prompt in config.prompts.system.model_dump().values():
             assert "{{user" not in prompt
         assert config.prompts.system.persona == "你称呼 前辈"
+        assert "1321878226" in config.prompts.system.runtime
+        assert "GYP" in config.prompts.system.runtime
         assert "3535616589" in config.prompts.system.runtime
         assert "Sakuraba Ema" in config.prompts.system.runtime
 
@@ -199,8 +203,37 @@ class TestConfig:
 
         config = Config.load(str(path))
 
-        assert config.identity.user_id == "3535616589"
+        assert config.identity.owner_user_id == "3535616589"
         assert config.ingress.target_user_id == "3535616589"
+
+    def test_startup_requires_distinct_complete_bot_and_owner_identities(self):
+        config = Config()
+        with pytest.raises(ValueError, match="identity.bot_user_id is required"):
+            config.validate_startup()
+
+        config.identity.bot_user_id = "3535616589"
+        config.identity.bot_nickname = "Sakuraba Ema"
+        config.identity.owner_user_id = "3535616589"
+        config.identity.owner_nickname = "GYP"
+        config.identity.owner_alias = "前辈"
+        with pytest.raises(ValueError, match="must be different"):
+            config.validate_startup()
+
+        config.identity.owner_user_id = "1321878226"
+        config.ingress.target_user_id = "1321878226"
+        config.validate_startup()
+
+    def test_startup_rejects_ingress_target_that_is_not_owner(self):
+        config = Config()
+        config.identity.bot_user_id = "3535616589"
+        config.identity.bot_nickname = "Sakuraba Ema"
+        config.identity.owner_user_id = "1321878226"
+        config.identity.owner_nickname = "GYP"
+        config.identity.owner_alias = "前辈"
+        config.ingress.target_user_id = "999999"
+
+        with pytest.raises(ValueError, match="must match identity.owner_user_id"):
+            config.validate_startup()
 
     def test_persona_is_not_saved_in_main_config(self, tmp_path):
         config_path = tmp_path / "config.yaml"

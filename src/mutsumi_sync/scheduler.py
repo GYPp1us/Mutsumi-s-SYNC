@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from .memory.window import MessageWindow
 from .memory.session import SessionState
@@ -49,7 +49,7 @@ class PipelineDeps:
     actor_id: str = ""
     actor_name: str = ""
     pipeline_id: str = ""
-    inbound_events: list[dict[str, str]] = field(default_factory=list)
+    inbound_events: list[dict[str, Any]] = field(default_factory=list)
     current_event_ids: list[str] = field(default_factory=list)
     precreated_event_ids: list[str] = field(default_factory=list)
     active_work: dict[str, dict[str, str]] | None = None
@@ -331,6 +331,7 @@ class PipelineScheduler:
                 "actor_id": actor_id,
                 "actor_name": actor_name,
                 "content": content,
+                "created_at": event.time or time.time(),
             }],
             precreated_event_ids=[event_id],
         )
@@ -378,6 +379,7 @@ class PipelineScheduler:
                 "actor_id": self._actor_id(ev),
                 "actor_name": self._actor_name(ev),
                 "content": content,
+                "created_at": ev.time or time.time(),
             }
             for ev, content in text_events
         ]

@@ -21,8 +21,8 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
-- Temporary platform state is injected once per request and includes current time, source, actor and active work; it is not durable conversation history.
-- The fixed owner identity is configured once under `identity`; prompt placeholders `{{user}}`, `{{user_id}}` and `{{user_nickname}}` are resolved when the prompt file loads.
+- Temporary platform state is injected once per request and contains current time, runtime flags and active work; source identity stays in the current message prefix.
+- Stable bot and owner identities are mandatory under `identity`; prompt placeholders are resolved when the prompt file loads.
 - Proactive heartbeat checks every 15 minutes for private chats and every 3 hours for groups active within the last 24 hours.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
@@ -140,9 +140,11 @@ prompts:
   system_file: system-prompts.yaml
 
 identity:
-  user_id: "3535616589"
-  nickname: "Sakuraba Ema"
-  alias: "前辈"
+  bot_user_id: "3535616589"
+  bot_nickname: "Sakuraba Ema"
+  owner_user_id: "1321878226"
+  owner_nickname: "GYP"
+  owner_alias: "前辈"
 
 inner_journal:
   max_entry_chars: 1000
@@ -331,7 +333,7 @@ Inner journal entries are subjective bot-state deltas, not verified facts or ins
 
 Summaries, self notes, and historical user turns are annotated with readable UTC+8 timestamps. Historical assistant turns are passed through without synthetic timestamp prefixes. Older self-note lines without timestamps are injected as `很久之前`.
 
-Before the current user request, the pipeline injects a temporary platform-state user message with current UTC+8 time, source, silent/remembering flags, peer metadata and active work. This is platform state, not user-authored chat, and is not written to durable history.
+Before the current user request, the pipeline injects a temporary platform-state user message with current UTC+8 time, runtime flags and active work. Conversation and actor identity appear only in the current source message prefix. Platform state is not user-authored chat and is not written to durable history.
 
 Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false` and `remember_output=true`: synthetic heartbeat input is not written, while verified proactive assistant output is written to the target window and event ledger.
 
@@ -366,9 +368,9 @@ summary workers, and context experiment load the `persona` field plus the same
 five operational prompt levels through `prompts.system_file`, so historical data is interpreted consistently at every
 LLM boundary. `config_manager reload` reloads both files. Production keeps the
 prompt file at `/opt/mutsumi-sync-v3/shared/system-prompts.yaml` so releases do
-not overwrite the operator persona. Deploys back up that shared file, preserve
-its `persona`, and atomically synchronize all operational prompts from the release.
-The prompt loader replaces the three fixed identity placeholders once at load time;
+not lose rollback history. Deploys back up that shared file and atomically synchronize
+the persona and all operational prompts from the release.
+The prompt loader replaces the fixed bot and owner identity placeholders once at load time;
 the current speaker still comes from the event's `actor_id` and platform nickname.
 
 ## Heartbeat And Vision

@@ -165,6 +165,13 @@ context:
 prompts:
   system_file: system-prompts.yaml
 
+identity:
+  bot_user_id: ""
+  bot_nickname: ""
+  owner_user_id: ""
+  owner_nickname: ""
+  owner_alias: ""
+
 heartbeat:
   enabled: true
   private_interval_seconds: 900
