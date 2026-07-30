@@ -19,6 +19,8 @@
 - Pipe-based reply splitting is disabled. Assistant content is sent once and `|` remains literal.
 - `send(markdown_image=...)` records verified success/failure in the structured action ledger. Successful artifacts carry the generated file, message id, and Markdown hash; artifact markers must not enter assistant history.
 - Memory writes remain staged until cancellation-protected cleanup. Immediate tool feedback must say `staged`, and each final operation is committed and ledgered exactly once.
+- Historical native tool projection must use the final committed memory-write result, not the provisional `staged` feedback.
+- Malformed final envelopes receive bounded correction. After exhaustion, send only an unambiguous complete `TO_USER` block or a flat-text protocol failure; never silently lose an ordinary user turn and never salvage `TO_SELF`.
 - Only `compaction` summaries may carry `covered_through_message_id`; per-message summaries and legacy `last_message_id` values never skip raw records on restart.
 - Heartbeat scans real inbound activity every 15 minutes for private conversations and every 3 hours for groups active within the last 24 hours.
 - Heartbeat uses `remember_input=False` but may persist verified assistant output and update the target window; it never sends cold-session pokes or status updates and yields to user pipelines.
@@ -146,6 +148,7 @@ sh scripts/install_markdown_renderer.sh
 render:
   markdown_image:
     enabled: true
+    timeout_seconds: 60
 ```
 
 Linux 若 Chromium 缺系统依赖，按安装脚本提示执行：

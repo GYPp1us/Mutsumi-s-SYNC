@@ -4,7 +4,7 @@ import tempfile
 import pytest
 
 from src.mutsumi_sync.memory.store import MessageStore
-from src.mutsumi_sync.tools.self_note import SELF_NOTE_SCHEMA, self_note_tool
+from src.mutsumi_sync.tools.self_note import SELF_NOTE_DESCRIPTION, SELF_NOTE_SCHEMA, self_note_tool
 
 
 async def make_store():
@@ -93,3 +93,4 @@ class TestSelfNoteTool:
     def test_schema(self):
         assert "action" in SELF_NOTE_SCHEMA["properties"]
         assert "replace" in SELF_NOTE_SCHEMA["properties"]["action"]["enum"]
+        assert "只读回忆场景不要调用" in SELF_NOTE_DESCRIPTION

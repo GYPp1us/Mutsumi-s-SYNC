@@ -28,7 +28,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Structured action ledger for verified tool/send outcomes; generated-image markers never enter assistant history.
 - Dashboard TUI and tester as local debugging surfaces; production behavior is defined by `main.py` and may have a different registry.
 - Final assistant output uses a strict `[TO_SELF]...[/TO_SELF]` plus `[TO_USER]...[/TO_USER]` envelope. Only `TO_USER` is visible; `TO_SELF` goes to the global inner journal.
-- If a model omits all envelope markers, the pipeline recovers its plain final content as `TO_USER` with an empty `TO_SELF`; malformed marker-bearing output still receives a bounded protocol rewrite.
+- If a model omits all envelope markers, the pipeline recovers its plain final content as `TO_USER` with an empty `TO_SELF`. Malformed marker-bearing output receives a bounded rewrite; after exhaustion, one unambiguous complete `TO_USER` block is sent without `TO_SELF`, otherwise the user receives a flat-text protocol error instead of silence.
 - Assistant `TO_USER` is sent as one QQ message; `|` is literal text.
 - `status_update` can send one short progress message before a long tool; automatic fallback progress never enters assistant history.
 - `no_reply` tool for deliberate silent turns.
@@ -278,7 +278,7 @@ Inbound user text is saved before the LLM call. If the task is cancelled, the sa
 
 Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete record-ID turns and stores a trusted `covered_through_message_id`. Legacy `last_message_id` values are ignored during restart restoration. Only successful conversation records are restored; memory, action artifacts, cancelled/error/no-reply records are excluded.
 
-Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate tool result says `staged`, while the final success or failure is stored in the action ledger.
+Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate live tool result says `staged`; the durable native tool history and action ledger expose the final committed success or failure.
 
 ### Global Event And Media Ledger
 
@@ -304,10 +304,11 @@ temporary URLs. `sticker_search` without a query lists all available stickers;
 
 System prompt ownership is centralized in `system-prompts.yaml`. The runtime,
 summary workers, and context experiment load the `persona` field plus the same
-four operational prompt levels through `prompts.system_file`, so historical data is interpreted consistently at every
+five operational prompt levels through `prompts.system_file`, so historical data is interpreted consistently at every
 LLM boundary. `config_manager reload` reloads both files. Production keeps the
 prompt file at `/opt/mutsumi-sync-v3/shared/system-prompts.yaml` so releases do
-not overwrite operator changes.
+not overwrite the operator persona. Deploys back up that shared file, preserve
+its `persona`, and atomically synchronize all operational prompts from the release.
 
 ## Heartbeat And Vision
 
@@ -360,6 +361,7 @@ Then enable:
 render:
   markdown_image:
     enabled: true
+    timeout_seconds: 60
 ```
 
 The renderer uses:
@@ -371,6 +373,8 @@ The renderer uses:
 - Playwright Chromium screenshots
 
 The generated PNG files are written to `data/generated/markdown/` by default.
+The 60-second default includes the first Playwright/Chromium cold start; warm
+renders normally complete much sooner.
 
 ## Tests
 

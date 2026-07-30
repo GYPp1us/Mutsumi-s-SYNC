@@ -78,6 +78,6 @@ render:
     node_path: node
     script_path: tools/markdown-renderer/render.mjs
     output_dir: data/generated/markdown
-    timeout_seconds: 20
+    timeout_seconds: 60
     viewport_width: 960
     max_height: 12000

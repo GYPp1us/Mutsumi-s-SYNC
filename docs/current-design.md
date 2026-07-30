@@ -50,7 +50,10 @@ future conversation window.
   blocks: `[TO_SELF]...[/TO_SELF]` followed by `[TO_USER]...[/TO_USER]`.
 - For model compatibility, final content with no protocol markers is recovered
   as empty `TO_SELF` plus `TO_USER`; marker-bearing malformed replies still use
-  the bounded rewrite loop. Strict parsing remains available for validation.
+  the bounded rewrite loop. When rewrites are exhausted, one complete,
+  unambiguous `TO_USER` block may be sent while `TO_SELF` is discarded;
+  otherwise a flat-text protocol error is sent for an ordinary visible pipeline
+  instead of silently dropping the turn. Strict parsing remains available for validation.
 - `TO_USER` is the only ordinary visible channel. It is flat-text gated and is
   sent once. `TO_SELF` is a bounded subjective delta stored in global inner
   journal only after a complete successful turn; protocol tags never enter the
@@ -92,7 +95,9 @@ present. Valid lifecycle states include `received`, `responded`, `no_reply`,
 Memory write tools (`memory_save` and `self_note`) are
 staged during the tool loop. Their immediate result explicitly says `staged`,
 not persisted. Cleanup flushes each staged operation once under cancellation
-protection and writes a verified action result. This preserves turn-level
+protection and writes a verified action result. Historical native tool
+projection selects that final committed result instead of the provisional
+`staged` response. This preserves turn-level
 atomicity when a pipeline is interrupted.
 
 ## 5. Working Window And Summaries
@@ -233,7 +238,10 @@ eligible for inner-journal commit.
 
 A release is complete only after local and server tests pass, the optional
 Markdown renderer check passes, the shared production config is patched without
-reformatting unrelated values, systemd reports the service active, NapCat is
+reformatting unrelated values, and shared operational prompts are synchronized
+atomically while preserving and backing up the production persona. The default
+Markdown renderer timeout is 60 seconds to cover Chromium cold startup. Systemd
+must report the service active, NapCat must be
 connected, and fresh logs verify text, tool, image, restart restoration, failed
 send, and compaction behavior.
 

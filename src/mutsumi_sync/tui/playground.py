@@ -20,8 +20,12 @@ from ..tools.registry import Tool, ToolRegistry
 from ..tools.http_api import http_api_call, HTTP_API_SCHEMA
 from ..tools.config_manager import config_manager, CONFIG_MANAGER_SCHEMA
 from ..tools.send import send_tool, SEND_TOOL_SCHEMA
-from ..tools.memory import memory_search, memory_save, MEMORY_SEARCH_SCHEMA, MEMORY_SAVE_SCHEMA
-from ..tools.self_note import self_note_tool, SELF_NOTE_SCHEMA
+from ..tools.memory import (
+    memory_search, memory_save,
+    MEMORY_SEARCH_DESCRIPTION, MEMORY_SEARCH_SCHEMA,
+    MEMORY_SAVE_DESCRIPTION, MEMORY_SAVE_SCHEMA,
+)
+from ..tools.self_note import self_note_tool, SELF_NOTE_DESCRIPTION, SELF_NOTE_SCHEMA
 
 _DIM = "\033[2m"
 _RESET = "\033[0m"
@@ -103,7 +107,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="memory_search",
-        description="搜索长期记忆，用关键词查找过去保存的信息",
+        description=MEMORY_SEARCH_DESCRIPTION,
         parameters=MEMORY_SEARCH_SCHEMA,
         handler=_memory_search,
     ))
@@ -113,7 +117,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="memory_save",
-        description="保存一条信息到长期记忆",
+        description=MEMORY_SAVE_DESCRIPTION,
         parameters=MEMORY_SAVE_SCHEMA,
         handler=_memory_save,
     ))
@@ -123,7 +127,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="self_note",
-        description="管理对用户的私人印象。add:追加, replace:覆盖",
+        description=SELF_NOTE_DESCRIPTION,
         parameters=SELF_NOTE_SCHEMA,
         handler=_self_note,
     ))
