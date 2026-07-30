@@ -29,6 +29,7 @@ class TestConfig:
         assert c.render.markdown_image.enabled is False
         assert c.render.markdown_image.node_path == "node"
         assert c.render.markdown_image.output_dir == "data/generated/markdown"
+        assert c.render.markdown_image.timeout_seconds == 60
         assert c.heartbeat.private_interval_seconds == 900
         assert c.heartbeat.group_interval_seconds == 10800
         assert c.heartbeat.active_window_seconds == 86400

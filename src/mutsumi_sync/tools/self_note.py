@@ -10,6 +10,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("mutsumi.tools.self_note")
 
+SELF_NOTE_DESCRIPTION = (
+    "仅在对当前发言者的关系定位、长期偏好或主观理解发生稳定变化时维护私人印象。"
+    "不要保存普通事实、当前问题、工具搜索结果或一次性任务；只读回忆场景不要调用。"
+    "add 追加，replace 全文覆盖。"
+)
+
 SELF_NOTE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -20,7 +26,7 @@ SELF_NOTE_SCHEMA = {
         },
         "content": {
             "type": "string",
-            "description": "要添加或覆盖的文本。建议 ≤1000 tokens。",
+            "description": "关系或长期主观理解的稳定变化。不得填写普通事实、搜索结果或一次性信息。建议 ≤1000 tokens。",
         },
     },
     "required": ["action", "content"],

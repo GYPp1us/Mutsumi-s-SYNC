@@ -10,6 +10,7 @@ from datetime import date
 from src.mutsumi_sync.config import Config
 from src.mutsumi_sync.memory.store import EventRecord, EventType, MessageStore, StoredMessage
 from src.mutsumi_sync.memory.window import MessageWindow
+from src.mutsumi_sync.memory.projection import build_life_stream
 from src.mutsumi_sync.memory.session import SessionState
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.classifier import MessageType
@@ -1066,6 +1067,90 @@ class TestPipelineE2EDebounce:
         assert assistant_tool_message["reasoning_content"] == "private reasoning required by provider"
         assert [item["message"] for item in sender.sent] == ["final content"]
 
+        await store.close()
+
+    async def test_completed_pipeline_enters_the_next_life_stream_context(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        captured_messages: list[list[dict]] = []
+
+        async def fake_llm_call(messages, deps):
+            captured_messages.append([dict(item) for item in messages])
+            reply = "第一轮回复" if len(captured_messages) == 1 else "第二轮回复"
+            return LLMResult(content=final_output(reply))
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        common = dict(
+            config=config, registry=registry, sender=sender, store=store,
+            window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="life-stream-real"),
+            group_key="private:life-stream-real",
+            conversation_id="private:life-stream-real",
+            actor_id="qq:user:life-stream-real",
+            actor_name="测试用户",
+        )
+
+        await pipeline("第一轮输入", MessageType.SHORT_TEXT, None, None, deps=PipelineDeps(**common))
+        first_events = await store.get_events(finalized_only=True)
+        assert {event.event_type for event in first_events} >= {"inbound", "outbound"}
+
+        await pipeline("第二轮输入", MessageType.SHORT_TEXT, None, None, deps=PipelineDeps(**common))
+
+        second_request = captured_messages[1]
+        assert any(item["role"] == "user" and "第一轮输入" in item["content"] for item in second_request)
+        assert any(item["role"] == "assistant" and "第一轮回复" in item["content"] for item in second_request)
+        assert sum("第二轮输入" in str(item.get("content", "")) for item in second_request) == 1
+        await store.close()
+
+    async def test_memory_save_malformed_envelope_still_replies_and_projects_commit(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        captured_followup: list[dict] = []
+        call_count = 0
+
+        async def fake_llm_call(messages, deps):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResult(tool_calls=[{
+                    "id": "save-1",
+                    "name": "memory_save",
+                    "arguments": {"content": "用户明确要求记住的长期事实"},
+                }])
+            if call_count == 2:
+                captured_followup.extend([dict(item) for item in messages])
+            return LLMResult(content="[TO_SELF]已经记住[/TO_SELF]\n缺少用户区块")
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="envelope-memory"),
+            group_key="private:envelope-memory",
+            conversation_id="private:envelope-memory",
+            actor_id="qq:user:envelope-memory",
+            actor_name="测试用户",
+        )
+
+        await pipeline("请记住这件事", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert call_count == 4
+        assert [item["message"] for item in sender.sent] == ["这次回复格式连续校验失败了，请稍后再试。"]
+        live_tool_result = next(item for item in captured_followup if item.get("role") == "tool")
+        assert "staged" in live_tool_result["content"]
+        memories = await store.get_messages(group_key=deps.group_key, category="memory")
+        assert [item.content for item in memories] == ["用户明确要求记住的长期事实"]
+        stream = await build_life_stream(store)
+        historical_result = next(item for item in stream if item.get("role") == "tool")
+        assert "saved memory" in historical_result["content"]
+        assert "staged" not in historical_result["content"]
+        assert await store.get_inner_journal() == []
         await store.close()
 
     async def test_staged_memory_write_commits_once_when_pipeline_is_cancelled(self, monkeypatch):

@@ -166,7 +166,7 @@ class MarkdownImageRenderConfig(BaseModel):
     node_path: str = "node"
     script_path: str = "tools/markdown-renderer/render.mjs"
     output_dir: str = "data/generated/markdown"
-    timeout_seconds: float = 20.0
+    timeout_seconds: float = 60.0
     viewport_width: int = 960
     max_height: int = 12000
 

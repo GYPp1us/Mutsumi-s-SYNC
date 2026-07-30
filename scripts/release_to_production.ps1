@@ -311,67 +311,28 @@ fi
     $systemPromptMigration = @'
 shared_prompts="$deploy_root/shared/system-prompts.yaml"
 release_prompts="$release_dir/system-prompts.yaml"
-if [ ! -f "$shared_prompts" ]; then
-  cp "$release_prompts" "$shared_prompts"
-else
-  "$deploy_root/venv/bin/python" - "$shared_prompts" "$release_prompts" "$release_name" <<'PY'
-from pathlib import Path
-import shutil
+"$deploy_root/venv/bin/python" "$release_dir/scripts/sync_system_prompts.py" \
+  "$shared_prompts" "$release_prompts" "$release_name"
+'@
+
+    $productionConfigMigration = @'
+shared_config="$deploy_root/shared/config.yaml"
+PYTHONPATH="$release_dir" "$deploy_root/venv/bin/python" - "$shared_config" <<'PY'
 import sys
-import yaml
 
-shared_path = Path(sys.argv[1])
-release_path = Path(sys.argv[2])
-release_name = sys.argv[3]
-shared_text = shared_path.read_text(encoding="utf-8")
-shared_data = yaml.safe_load(shared_text) or {}
-release_data = yaml.safe_load(release_path.read_text(encoding="utf-8")) or {}
+from src.mutsumi_sync.config import Config
 
-old_runtime_line = (
-    "  - 本轮确实不应产生可见回复时调用 no_reply，并保持最终 TO_USER 为空。"
-    "Heartbeat 是静默请求，不得写入用户消息、工作窗口或摘要；"
-    "只有明确写出的 TO_SELF 才可能进入 inner journal。"
-)
-new_runtime_lines = (
-    "  - 普通用户或定时任务 pipeline 确实不应产生可见回复时调用 no_reply，并保持最终 TO_USER 为空。\n"
-    "  - Heartbeat 是平台发起的自主性检查，不是用户消息；其合成输入不得写入对话历史或摘要。"
-    "在 Runtime Injection 明确允许主动输出时，可以发送有具体缘由的 TO_USER；"
-    "不适合开口时保持 TO_USER 为空。Heartbeat 不调用 no_reply。"
-)
-
-candidate = shared_text
-changed = False
-if old_runtime_line in candidate:
-    candidate = candidate.replace(old_runtime_line, new_runtime_lines, 1)
-    changed = True
-elif "Heartbeat 是静默请求" in str(shared_data.get("runtime") or ""):
-    raise RuntimeError("shared runtime prompt contains an unrecognized obsolete heartbeat rule")
-
-if not str(shared_data.get("heartbeat") or "").strip():
-    heartbeat = str(release_data.get("heartbeat") or "").strip()
-    if not heartbeat:
-        raise RuntimeError("release system-prompts.yaml has no heartbeat prompt")
-    heartbeat_block = "\n".join(f"  {line}" for line in heartbeat.splitlines())
-    candidate = candidate.rstrip() + "\n\nheartbeat: |-\n" + heartbeat_block + "\n"
-    changed = True
-
-parsed = yaml.safe_load(candidate) or {}
-required = ("runtime", "message_summary", "summary_merge", "episode_summary", "heartbeat")
-missing = [key for key in required if not str(parsed.get(key) or "").strip()]
-if missing:
-    raise RuntimeError(f"shared system prompts missing required fields: {', '.join(missing)}")
-
-if changed:
-    backup = shared_path.with_name(f"{shared_path.name}.bak-{release_name}")
-    shutil.copy2(shared_path, backup)
-    temporary = shared_path.with_suffix(shared_path.suffix + ".tmp")
-    temporary.write_text(candidate, encoding="utf-8")
-    temporary.replace(shared_path)
-    print(f"migrated shared system prompts; backup={backup}")
+config = Config.load(sys.argv[1])
+current = float(config.render.markdown_image.timeout_seconds)
+if current <= 20:
+    result = config.set("render.markdown_image.timeout_seconds", 60)
+    if not result.startswith("[OK]"):
+        raise RuntimeError(result)
+    config.save_key("render.markdown_image.timeout_seconds")
+    print(f"migrated render.markdown_image.timeout_seconds: {current:g} -> 60")
 else:
-    print("shared system prompts already current")
+    print(f"renderer timeout already operator-configured: {current:g}s")
 PY
-fi
 '@
 
     $body = @"
@@ -394,6 +355,7 @@ ln -sfn "`$deploy_root/shared/config.yaml" "`$release_dir/config.yaml"
 $systemPromptMigration
 rm -f "`$release_dir/system-prompts.yaml"
 ln -sfn "`$deploy_root/shared/system-prompts.yaml" "`$release_dir/system-prompts.yaml"
+$productionConfigMigration
 rm -rf "`$release_dir/data"
 ln -sfn "`$deploy_root/shared/data" "`$release_dir/data"
 

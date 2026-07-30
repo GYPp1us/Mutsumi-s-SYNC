@@ -28,6 +28,7 @@ from .tools.send import send_tool
 from .tools.status_update import send_status_update
 from .output_protocol import (
     OutputProtocolError,
+    extract_unambiguous_to_user,
     format_final_envelope,
     parse_final_envelope,
 )
@@ -1078,7 +1079,7 @@ async def pipeline(
         await _save_msg(deps, message, MessageType.MEDIA.value, None)
         return
 
-    _pending_writes: list[tuple[str, str, dict, Callable[[], Awaitable[str]]]] = []
+    _pending_writes: list[tuple[str, str, dict, str, Callable[[], Awaitable[str]]]] = []
     bot_replies: list[str] = []
     inner_candidate = ""
     responded = False
@@ -1246,7 +1247,23 @@ async def pipeline(
                         exc,
                     )
                     if output_rewrites > MAX_OUTPUT_REWRITES:
-                        final_status = "error"
+                        fallback_text = extract_unambiguous_to_user(result.content) or (
+                            "这次回复格式连续校验失败了，请稍后再试。"
+                        )
+                        if _unsupported_markdown_features(fallback_text):
+                            fallback_text = "这次回复格式连续校验失败了，请稍后再试。"
+                        visible_parts = await _send_visible_content(deps, fallback_text)
+                        if visible_parts:
+                            responded = True
+                            final_status = "responded"
+                            bot_replies.extend(visible_parts)
+                        else:
+                            final_status = "error"
+                        logger.error(
+                            "[OUTPUT PROTOCOL] rewrite exhausted fallback_sent=%s extracted=%s",
+                            bool(visible_parts),
+                            extract_unambiguous_to_user(result.content) is not None,
+                        )
                         break
                     messages.append({"role": "assistant", "content": result.content})
                     messages.append({
@@ -1267,7 +1284,20 @@ async def pipeline(
                         MAX_OUTPUT_REWRITES,
                     )
                     if output_rewrites > MAX_OUTPUT_REWRITES:
-                        final_status = "error"
+                        fallback_text = envelope.to_user or "这次回复格式连续校验失败了，请稍后再试。"
+                        if _unsupported_markdown_features(fallback_text):
+                            fallback_text = "这次回复格式连续校验失败了，请稍后再试。"
+                        visible_parts = await _send_visible_content(deps, fallback_text)
+                        if visible_parts:
+                            responded = True
+                            final_status = "responded"
+                            bot_replies.extend(visible_parts)
+                        else:
+                            final_status = "error"
+                        logger.error(
+                            "[OUTPUT PROTOCOL] TO_SELF rewrite exhausted fallback_sent=%s",
+                            bool(visible_parts),
+                        )
                         break
                     messages.append({"role": "assistant", "content": result.content})
                     messages.append({
@@ -1287,7 +1317,18 @@ async def pipeline(
                         ",".join(rich_features), output_rewrites, MAX_OUTPUT_REWRITES,
                     )
                     if output_rewrites > MAX_OUTPUT_REWRITES:
-                        final_status = "error"
+                        fallback_text = "这次回复无法通过纯文本校验，请稍后再试。"
+                        visible_parts = await _send_visible_content(deps, fallback_text)
+                        if visible_parts:
+                            responded = True
+                            final_status = "responded"
+                            bot_replies.extend(visible_parts)
+                        else:
+                            final_status = "error"
+                        logger.error(
+                            "[OUTPUT GATE] rewrite exhausted fallback_sent=%s",
+                            bool(visible_parts),
+                        )
                         break
                     messages.append({"role": "assistant", "content": result.content})
                     messages.append({
@@ -1456,7 +1497,7 @@ async def pipeline(
                     tr = "[OK] write tool suppressed by non-remembering pipeline]"
                 elif tool_name in WRITE_TOOLS:
                     _pending_writes.append((
-                        tool_name, call_id, tool_args,
+                        tool_name, call_id, tool_args, tool_turn_id,
                         lambda tn=tool_name, ta=tool_args: deps.registry.execute(
                             tn, ta, store=deps.store, group_key=deps.group_key,
                             config=deps.config, sender=deps.sender, peer=deps.peer,
@@ -1658,7 +1699,7 @@ async def pipeline(
         logger.info("[PIPE] cleanup start pending_writes=%d", len(_pending_writes))
 
         async def _flush_pending_writes() -> None:
-            for tool_name, call_id, tool_args, write_fn in _pending_writes:
+            for tool_name, call_id, tool_args, tool_turn_id, write_fn in _pending_writes:
                 try:
                     result = str(await write_fn())
                     log_tool_call(deps, tool_name, tool_args, result, queued=False)
@@ -1670,6 +1711,13 @@ async def pipeline(
                     event_type=EventType.TOOL_RESULT.value,
                     content=_sanitize_action_result(tool_name, tool_args, result),
                     visibility="private",
+                    payload={
+                        "tool": tool_name,
+                        "call_id": call_id,
+                        "result": _sanitize_action_result(tool_name, tool_args, result),
+                        "committed": not result.startswith("[Error:"),
+                    },
+                    turn_id=tool_turn_id,
                 )
                 await _record_action(
                     deps,
