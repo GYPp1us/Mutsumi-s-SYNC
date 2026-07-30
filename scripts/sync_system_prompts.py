@@ -14,6 +14,7 @@ OPERATIONAL_KEYS = (
     "episode_summary",
     "heartbeat",
 )
+VERSIONED_KEYS = ("persona", *OPERATIONAL_KEYS)
 
 
 def _load_mapping(path: Path) -> dict:
@@ -24,15 +25,15 @@ def _load_mapping(path: Path) -> dict:
 
 
 def sync_system_prompts(shared_path: Path, release_path: Path, backup_tag: str) -> Path | None:
-    """Keep the operator persona and atomically refresh operational prompts."""
+    """Atomically refresh all versioned prompts while preserving extra operator keys."""
     release_data = _load_mapping(release_path)
-    missing = [key for key in OPERATIONAL_KEYS if not str(release_data.get(key) or "").strip()]
+    missing = [key for key in VERSIONED_KEYS if not str(release_data.get(key) or "").strip()]
     if missing:
         raise ValueError(f"release system prompts missing required fields: {', '.join(missing)}")
 
     shared_data = _load_mapping(shared_path) if shared_path.exists() else {}
     candidate = {
-        "persona": shared_data.get("persona", release_data.get("persona", "")),
+        "persona": release_data.get("persona", ""),
         **{key: release_data[key] for key in OPERATIONAL_KEYS},
     }
     for key, value in shared_data.items():

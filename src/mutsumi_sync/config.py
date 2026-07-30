@@ -23,22 +23,26 @@ class SystemPromptsConfig(BaseModel):
 
 
 class IdentityConfig(BaseModel):
-    """The one configured human identity used by prompt placeholders."""
+    """Stable bot and owner identities used by prompt placeholders."""
 
-    user_id: str = ""
-    nickname: str = ""
-    alias: str = "前辈"
+    bot_user_id: str = ""
+    bot_nickname: str = ""
+    owner_user_id: str = ""
+    owner_nickname: str = ""
+    owner_alias: str = ""
 
 
 def render_system_prompts(prompts: SystemPromptsConfig, identity: IdentityConfig) -> SystemPromptsConfig:
     """Resolve stable identity placeholders once when prompts are loaded."""
-    user_id = str(identity.user_id).strip() or "未配置"
-    nickname = str(identity.nickname).strip() or "未配置"
-    alias = str(identity.alias).strip() or nickname
+    owner_user_id = str(identity.owner_user_id).strip() or "未配置"
+    owner_nickname = str(identity.owner_nickname).strip() or "未配置"
+    owner_alias = str(identity.owner_alias).strip() or "未配置"
     replacements = {
-        "{{user}}": alias,
-        "{{user_id}}": user_id,
-        "{{user_nickname}}": nickname,
+        "{{user}}": owner_alias,
+        "{{user_id}}": owner_user_id,
+        "{{user_nickname}}": owner_nickname,
+        "{{bot_user_id}}": str(identity.bot_user_id).strip() or "未配置",
+        "{{bot_nickname}}": str(identity.bot_nickname).strip() or "未配置",
     }
     values = {
         name: str(value)
@@ -237,6 +241,36 @@ class Config(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         self.prompts.system = render_system_prompts(self.prompts.system, self.identity)
 
+    def validate_startup(self) -> None:
+        errors: list[str] = []
+        bot_user_id = str(self.identity.bot_user_id).strip()
+        owner_user_id = str(self.identity.owner_user_id).strip()
+        required = {
+            "identity.bot_user_id": bot_user_id,
+            "identity.bot_nickname": self.identity.bot_nickname,
+            "identity.owner_user_id": owner_user_id,
+            "identity.owner_nickname": self.identity.owner_nickname,
+            "identity.owner_alias": self.identity.owner_alias,
+            "prompts.system.persona": self.prompts.system.persona,
+        }
+        for key, value in required.items():
+            if not str(value).strip():
+                errors.append(f"{key} is required")
+        for key, value in (
+            ("identity.bot_user_id", bot_user_id),
+            ("identity.owner_user_id", owner_user_id),
+        ):
+            if value and (not value.isdigit() or int(value) <= 0):
+                errors.append(f"{key} must be a positive QQ number")
+        if bot_user_id and owner_user_id and bot_user_id == owner_user_id:
+            errors.append("identity.bot_user_id and identity.owner_user_id must be different")
+
+        ingress_target = str(self.ingress.target_user_id).strip()
+        if ingress_target and owner_user_id and ingress_target != owner_user_id:
+            errors.append("ingress.target_user_id must match identity.owner_user_id")
+        if errors:
+            raise ValueError("Invalid startup configuration: " + "; ".join(errors))
+
     @classmethod
     def load(cls, config_path: str) -> Config:
         path = Path(config_path)
@@ -263,12 +297,15 @@ class Config(BaseModel):
 
             raw = resolve_env(raw)
             identity_raw = raw.setdefault("identity", {})
-            ingress_raw = raw.get("ingress")
+            ingress_raw = raw.setdefault("ingress", {})
             if isinstance(identity_raw, dict) and isinstance(ingress_raw, dict):
-                if not str(identity_raw.get("user_id") or "").strip():
-                    identity_raw["user_id"] = str(ingress_raw.get("target_user_id") or "").strip()
+                identity_raw.setdefault("owner_user_id", identity_raw.pop("user_id", ""))
+                identity_raw.setdefault("owner_nickname", identity_raw.pop("nickname", ""))
+                identity_raw.setdefault("owner_alias", identity_raw.pop("alias", ""))
+                if not str(identity_raw.get("owner_user_id") or "").strip():
+                    identity_raw["owner_user_id"] = str(ingress_raw.get("target_user_id") or "").strip()
                 if not str(ingress_raw.get("target_user_id") or "").strip():
-                    ingress_raw["target_user_id"] = str(identity_raw.get("user_id") or "").strip()
+                    ingress_raw["target_user_id"] = str(identity_raw.get("owner_user_id") or "").strip()
             prompts_raw = raw.get("prompts")
             if prompts_raw is None:
                 prompts_raw = {}

@@ -27,9 +27,9 @@ The persona prompt and five operational prompts live in the standalone
 `system-prompts.yaml` file and are selected through `prompts.system_file`.
 Runtime, message-summary, summary-merge, and Episode-summary requests load that
 same validated file; missing or empty operational levels fail startup.
-The small `identity` config block supplies the fixed owner identity. Prompt loading
-replaces `{{user}}` with its alias, `{{user_id}}` with its platform ID, and
-`{{user_nickname}}` with its configured nickname. It is a load-time substitution,
+The mandatory `identity` config block supplies distinct bot and owner IDs, names,
+and the owner's relationship alias. Prompt loading resolves their placeholders once.
+It is a load-time substitution,
 not a runtime actor resolver; current speakers remain identified by event `actor_id`.
 `config_manager reload`
 reloads the external prompt file. Production stores it under the shared deploy
@@ -39,7 +39,7 @@ Every LLM request has these layers, in order:
 
 1. A provider-native Chinese `system` message containing stable platform rules and the configured persona.
 2. The global chronological Life Stream. Human and service inputs use provider `user`, assistant outputs use `assistant`, and completed tool rounds use native `assistant(tool_calls)` plus `tool` messages. Actor and conversation identity is carried by readable source prefixes.
-3. A temporary platform-state `user` message containing current UTC+8 time, source, actor, peer metadata, flags and active work.
+3. A temporary platform-state `user` message containing current UTC+8 time, runtime flags and active work.
 4. The current source message.
 
 Platform state is not persisted. Platform timestamps are supplied values, not
@@ -283,8 +283,8 @@ eligible for inner-journal commit.
 
 A release is complete only after local and server tests pass, the optional
 Markdown renderer check passes, the shared production config is patched without
-reformatting unrelated values, and shared operational prompts are synchronized
-atomically while preserving and backing up the production persona. The default
+reformatting unrelated values, and all shared prompts are synchronized atomically
+after backing up the previous production prompt file. The default
 Markdown renderer timeout is 60 seconds to cover Chromium cold startup. Systemd
 must report the service active, NapCat must be
 connected, and fresh logs verify text, tool, image, restart restoration, failed
