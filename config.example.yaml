@@ -11,9 +11,11 @@ context:
   episode_idle_seconds: 1800
   episode_max_events: 160
 identity:
-  user_id: ""
-  nickname: ""
-  alias: "前辈"
+  bot_user_id: ""
+  bot_nickname: ""
+  owner_user_id: ""
+  owner_nickname: ""
+  owner_alias: ""
 model:
   api_key: ''
   base_url: https://api.deepseek.com/v1

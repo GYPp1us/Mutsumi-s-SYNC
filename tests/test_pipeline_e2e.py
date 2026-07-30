@@ -348,8 +348,12 @@ class TestPipelineE2EMultiRound:
 
         assert ctx[-2]["role"] == "user"
         assert "当前时间：" in ctx[-2]["content"]
+        assert "当前来源：" not in ctx[-2]["content"]
+        assert "当前聊天：" not in ctx[-2]["content"]
+        assert "当前发言者：" not in ctx[-2]["content"]
         assert ctx[-1]["role"] == "user"
         assert "current user message" in ctx[-1]["content"]
+        assert "很久之前" not in ctx[-1]["content"]
 
         await store.close()
 
