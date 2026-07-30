@@ -9,12 +9,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("mutsumi.tools.memory")
 
+MEMORY_SAVE_DESCRIPTION = (
+    "仅在用户明确要求记住，或出现新的、稳定的长期事实时保存一条记忆。"
+    "不要保存当前查询、临时任务、memory_search 的返回结果、已经存在的事实或仅用于本轮回答的信息；"
+    "用户只是在询问或回忆时不要调用。"
+)
+
+MEMORY_SEARCH_DESCRIPTION = (
+    "只读搜索已经保存的长期记忆。用于回答用户的回忆或事实查询；"
+    "搜索后不要为了整理、确认或重存结果而调用 memory_save 或 self_note。"
+)
+
 MEMORY_SAVE_SCHEMA = {
     "type": "object",
     "properties": {
         "content": {
             "type": "string",
-            "description": "要保存的事实或信息。一条一个事实。",
+            "description": "要保存的一条新的稳定长期事实，不得填写搜索结果、当前问题或重复事实。",
         },
     },
     "required": ["content"],
@@ -25,7 +36,7 @@ MEMORY_SEARCH_SCHEMA = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "搜索关键词（人名、事件、话题等）",
+            "description": "只读搜索关键词（人名、事件、话题等）。搜索本身不需要伴随任何记忆写入。",
         },
         "limit": {
             "type": "integer",

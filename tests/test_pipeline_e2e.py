@@ -8,8 +8,9 @@ import os
 from datetime import date
 
 from src.mutsumi_sync.config import Config
-from src.mutsumi_sync.memory.store import EventType, MessageStore, StoredMessage
+from src.mutsumi_sync.memory.store import EventRecord, EventType, MessageStore, StoredMessage
 from src.mutsumi_sync.memory.window import MessageWindow
+from src.mutsumi_sync.memory.projection import build_life_stream
 from src.mutsumi_sync.memory.session import SessionState
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.classifier import MessageType
@@ -22,6 +23,8 @@ from src.mutsumi_sync.pipeline import (
     _compact_context_for_request,
     _estimate_request_tokens,
     _generate_and_save_summary,
+    _clear_active_work,
+    _set_active_work,
 )
 import src.mutsumi_sync.pipeline as pipeline_module
 from src.mutsumi_sync.output_protocol import format_final_envelope
@@ -336,24 +339,17 @@ class TestPipelineE2EMultiRound:
         assert ctx[0]["content"]
         assert roles.count("system") == 1
 
-        self_context = ctx[1]
-        assert self_context["role"] == "user"
-        assert self_context["content"].rstrip().endswith(
-            "[Persona]\nSpeak as a calm long-term companion.\n[/Persona]\n[/Self Context]"
-        )
-
-        conversation_context = ctx[2]
-        assert conversation_context["role"] == "user"
-        assert "structure test note" in conversation_context["content"]
-        assert "past conversation about weather" in conversation_context["content"]
-        assert "+08:00" in conversation_context["content"]
+        assert "Speak as a calm long-term companion." in ctx[0]["content"]
+        assert "[Persona]" not in ctx[0]["content"]
+        assert "structure test note" in "\n".join(str(m["content"]) for m in ctx)
+        assert "past conversation about weather" not in "\n".join(str(m["content"]) for m in ctx)
         assert "工具 schema 是工具能力的唯一事实源" in ctx[0]["content"]
         assert "用未转义的 |" not in ctx[0]["content"]
 
         assert ctx[-2]["role"] == "user"
-        assert "Runtime Injection" in ctx[-2]["content"]
+        assert "当前时间：" in ctx[-2]["content"]
         assert ctx[-1]["role"] == "user"
-        assert ctx[-1]["content"] == "current user message"
+        assert "current user message" in ctx[-1]["content"]
 
         await store.close()
 
@@ -362,16 +358,23 @@ class TestPipelineE2EMultiRound:
         store = MessageStore(db_path=":memory:")
         await store.initialize()
         try:
-            window = MessageWindow()
-            window.add("qq:user:101", "first message", actor_name="Alice")
-            window.add("bot:self", "first reply", is_bot=True, actor_name="Mutsumi")
-            window.add("qq:user:202", "second message", actor_name="Bob")
+            await store.append_event(EventRecord(
+                conversation_id="group:888", actor_id="qq:user:101", actor_kind="human",
+                actor_name="Alice", event_type=EventType.INBOUND.value, content="first message",
+            ))
+            await store.append_event(EventRecord(
+                conversation_id="group:888", actor_id="bot:self", actor_kind="bot",
+                actor_name="Mutsumi", event_type=EventType.OUTBOUND.value, content="first reply",
+            ))
+            await store.append_event(EventRecord(
+                conversation_id="group:888", actor_id="qq:user:202", actor_kind="human",
+                actor_name="Bob", event_type=EventType.INBOUND.value, content="second message",
+            ))
             deps = PipelineDeps(
                 config=config,
                 registry=build_registry(config, store),
                 sender=CaptureSender(),
-                store=store,
-                window=window,
+                store=store, window=MessageWindow(),
                 session=SessionState(),
                 peer=Peer(chat_type=2, peer_uid="888"),
                 group_key="group:888:202",
@@ -383,9 +386,9 @@ class TestPipelineE2EMultiRound:
             context = await _build_context("current group message", deps)
             rendered = "\n".join(str(item.get("content", "")) for item in context)
 
-            assert "Speaker Alice (qq:user:101):" in rendered
-            assert "Speaker Bob (qq:user:202):" in rendered
-            assert "Speaker Mutsumi" not in rendered
+            assert "群聊「888」｜Alice（qq:user:101）" in rendered
+            assert "群聊「888」｜Bob（qq:user:202）" in rendered
+            assert "回复到群聊「888」｜first reply" in rendered
         finally:
             await store.close()
 
@@ -414,7 +417,7 @@ class TestPipelineE2EMultiRound:
         assert json.loads(saved[0].content)["bot"] == "a | b | c"
         await store.close()
 
-    async def test_priority_override_is_in_runtime_injection_only(self):
+    async def test_priority_override_is_no_longer_a_model_capability(self):
         config = make_config()
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
@@ -436,20 +439,42 @@ class TestPipelineE2EMultiRound:
         )
 
         ctx = await _build_context("current user message", deps)
-        user_messages = [m for m in ctx if m["role"] == "user"]
-
-        assert len(user_messages) == 5
-        joined = "\n".join(str(m["content"]) for m in user_messages)
-        assert joined.count("[Priority Override]") == 1
-        assert joined.count("Always preserve exact equations.") == 1
-        assert "Runtime Injection" in ctx[-2]["content"]
-        assert "Always preserve exact equations." in ctx[-2]["content"]
-        assert "Priority Override" not in ctx[-1]["content"]
-        assert ctx[-1]["content"] == "current user message"
-        assert "+08:00" in ctx[3]["content"], "Historical user messages should include readable +8 timestamps"
-        assert ctx[4]["content"] == "previous bot reply"
+        joined = "\n".join(str(m["content"]) for m in ctx)
+        assert "Priority Override" not in joined
+        assert "Always preserve exact equations." not in joined
+        tool_names = {
+            item["function"]["name"]
+            for item in registry.to_openai_schema()
+        }
+        assert "priority_override" not in tool_names
+        assert "bot_state" not in tool_names
 
         await store.close()
+
+    async def test_active_work_uses_empty_shared_registry_and_cleans_up(self):
+        config = make_config()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        try:
+            active_work = {}
+            deps = PipelineDeps(
+                config=config,
+                registry=build_registry(config, store),
+                sender=CaptureSender(),
+                store=store,
+                window=MessageWindow(),
+                session=SessionState(),
+                peer=Peer(chat_type=1, peer_uid="active-work"),
+                group_key="private:active-work",
+                pipeline_id="pipeline-active-work",
+                active_work=active_work,
+            )
+            _set_active_work(deps, "正在查询资料", phase="executing")
+            assert active_work["pipeline-active-work"]["phase"] == "executing"
+            _clear_active_work(deps)
+            assert active_work == {}
+        finally:
+            await store.close()
 
     async def test_cancelled_pipeline_keeps_inbound_message(self, monkeypatch):
         config = make_config()
@@ -507,7 +532,7 @@ class TestPipelineE2EMultiRound:
         async def fake_llm_call(messages, deps):
             return next(calls)
 
-        async def fake_send_tool(args, *, sender, peer, config=None):
+        async def fake_send_tool(args, *, sender, peer, config=None, store=None):
             await sender.send(peer, [{"type": "image", "data": {"file": "rendered.png"}}])
             return json.dumps({
                 "status": "ok",
@@ -542,6 +567,76 @@ class TestPipelineE2EMultiRound:
         assert send_action["artifact"]["markdown_sha256"]
         assert all("sent image" not in item["content"] for item in deps.window.get_context())
 
+        await store.close()
+
+    async def test_media_id_send_works_through_pipeline_and_sets_proactive_gate(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(str(tmp_path / "media-pipeline.db"), str(tmp_path / "media"))
+        await store.initialize()
+        media = await store.register_media(b"reusable sticker", kind="sticker", ext="png")
+        registry = build_registry(config, store)
+        calls = iter([
+            LLMResult(tool_calls=[{
+                "id": "call_media",
+                "name": "send",
+                "arguments": {"media_id": media.media_id},
+            }]),
+            LLMResult(content=final_output()),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            return next(calls)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        conversation_id = "private:heartbeat-media"
+        deps = PipelineDeps(
+            config=config,
+            registry=registry,
+            sender=sender,
+            store=store,
+            window=MessageWindow(),
+            session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="heartbeat-media"),
+            group_key=conversation_id,
+            conversation_id=conversation_id,
+            actor_id="qq:user:heartbeat-media",
+            source="heartbeat",
+            pipeline_id="heartbeat:private:heartbeat-media:1",
+            remember_input=False,
+            remember_output=True,
+            allow_cold_poke=False,
+            allow_status_update=False,
+            allowed_tools={"media_search", "sticker_search", "send"},
+        )
+
+        await pipeline("heartbeat check", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert sender.sent[0]["message"] == [{
+            "type": "image",
+            "data": {"file": media.path},
+        }]
+        outbound = [
+            event
+            for event in await store.get_events(conversation_id=conversation_id)
+            if event.event_type == EventType.OUTBOUND.value
+        ]
+        assert len(outbound) == 1
+        assert outbound[0].media_ids == [media.media_id]
+        assert await store.has_unanswered_proactive(conversation_id) is True
+
+        await store.append_event(EventRecord(
+            conversation_id=conversation_id,
+            actor_id="qq:user:heartbeat-media",
+            actor_kind="human",
+            event_type=EventType.INBOUND.value,
+            content="user replied",
+        ))
+        assert await store.has_unanswered_proactive(conversation_id) is False
         await store.close()
 
     async def test_incoming_image_uses_vision_provider_when_enabled(self, monkeypatch):
@@ -974,6 +1069,143 @@ class TestPipelineE2EDebounce:
 
         await store.close()
 
+    async def test_completed_pipeline_enters_the_next_life_stream_context(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        captured_messages: list[list[dict]] = []
+
+        async def fake_llm_call(messages, deps):
+            captured_messages.append([dict(item) for item in messages])
+            reply = "第一轮回复" if len(captured_messages) == 1 else "第二轮回复"
+            return LLMResult(content=final_output(reply))
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        common = dict(
+            config=config, registry=registry, sender=sender, store=store,
+            window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="life-stream-real"),
+            group_key="private:life-stream-real",
+            conversation_id="private:life-stream-real",
+            actor_id="qq:user:life-stream-real",
+            actor_name="测试用户",
+        )
+
+        await pipeline("第一轮输入", MessageType.SHORT_TEXT, None, None, deps=PipelineDeps(**common))
+        first_events = await store.get_events(finalized_only=True)
+        assert {event.event_type for event in first_events} >= {"inbound", "outbound"}
+
+        await pipeline("第二轮输入", MessageType.SHORT_TEXT, None, None, deps=PipelineDeps(**common))
+
+        second_request = captured_messages[1]
+        assert any(item["role"] == "user" and "第一轮输入" in item["content"] for item in second_request)
+        assert any(item["role"] == "assistant" and "第一轮回复" in item["content"] for item in second_request)
+        assert sum("第二轮输入" in str(item.get("content", "")) for item in second_request) == 1
+        await store.close()
+
+    async def test_memory_save_malformed_envelope_still_replies_and_projects_commit(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        captured_followup: list[dict] = []
+        call_count = 0
+
+        async def fake_llm_call(messages, deps):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResult(tool_calls=[{
+                    "id": "save-1",
+                    "name": "memory_save",
+                    "arguments": {"content": "用户明确要求记住的长期事实"},
+                }])
+            if call_count == 2:
+                captured_followup.extend([dict(item) for item in messages])
+            return LLMResult(content="[TO_SELF]已经记住[/TO_SELF]\n缺少用户区块")
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="envelope-memory"),
+            group_key="private:envelope-memory",
+            conversation_id="private:envelope-memory",
+            actor_id="qq:user:envelope-memory",
+            actor_name="测试用户",
+        )
+
+        await pipeline("请记住这件事", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        assert call_count == 4
+        assert [item["message"] for item in sender.sent] == ["这次回复格式连续校验失败了，请稍后再试。"]
+        live_tool_result = next(item for item in captured_followup if item.get("role") == "tool")
+        assert "staged" in live_tool_result["content"]
+        memories = await store.get_messages(group_key=deps.group_key, category="memory")
+        assert [item.content for item in memories] == ["用户明确要求记住的长期事实"]
+        stream = await build_life_stream(store)
+        historical_result = next(item for item in stream if item.get("role") == "tool")
+        assert "saved memory" in historical_result["content"]
+        assert "staged" not in historical_result["content"]
+        assert await store.get_inner_journal() == []
+        await store.close()
+
+    async def test_pipeline_reuses_precreated_service_event_without_duplicate(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        event = await store.append_event(EventRecord(
+            event_id="precreated-service-event",
+            conversation_id="service:calendar",
+            actor_id="service:calendar",
+            actor_kind="service",
+            actor_name="日程服务",
+            event_type=EventType.INBOUND.value,
+            content="服务上报的一条消息",
+            payload={
+                "post_type": "message",
+                "message_type": "private",
+                "user_id": "calendar",
+                "message_id": "calendar-1",
+                "message": [{"type": "text", "data": {"text": "服务上报的一条消息"}}],
+                "raw_message": "服务上报的一条消息",
+                "sender": {"nickname": "日程服务"},
+            },
+            status="received",
+        ))
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content=final_output("已收到服务上报"))
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="3535616589"),
+            group_key="service:calendar",
+            conversation_id="service:calendar",
+            actor_id="service:calendar",
+            actor_name="日程服务",
+            source="external_service",
+            precreated_event_ids=[event.event_id or ""],
+        )
+
+        await pipeline("服务上报的一条消息", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        inbound = [
+            item for item in await store.get_events(conversation_id="service:calendar", finalized_only=False)
+            if item.event_type == EventType.INBOUND.value
+        ]
+        assert len(inbound) == 1
+        assert inbound[0].status == "finalized"
+        assert [item["message"] for item in sender.sent] == ["已收到服务上报"]
+        await store.close()
+
     async def test_staged_memory_write_commits_once_when_pipeline_is_cancelled(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()
@@ -1173,7 +1405,7 @@ class TestPipelineE2EDebounce:
             llm_call_count += 1
             return next(calls)
 
-        async def fake_send_tool(args, *, sender, peer, config=None):
+        async def fake_send_tool(args, *, sender, peer, config=None, store=None):
             if args.get("text"):
                 await sender.send(peer, [{"type": "text", "data": {"text": args["text"]}}])
             if args.get("markdown_image"):

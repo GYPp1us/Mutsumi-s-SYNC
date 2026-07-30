@@ -81,3 +81,15 @@ def recover_final_envelope(content: str) -> FinalEnvelope | None:
         to_self=self_match.group(1).strip() if self_match else "",
         to_user=user_match.group(1).strip(),
     )
+
+
+def extract_unambiguous_to_user(content: str) -> str | None:
+    """Extract one complete TO_USER block for a last-resort visible fallback."""
+    text = str(content)
+    matches = list(re.finditer(r"\[TO_USER\](.*?)\[/TO_USER\]", text, re.DOTALL))
+    if len(matches) != 1:
+        return None
+    candidate = matches[0].group(1).strip()
+    if any(marker in candidate for marker in (_SELF_OPEN, _SELF_CLOSE, _USER_OPEN, _USER_CLOSE)):
+        return None
+    return candidate

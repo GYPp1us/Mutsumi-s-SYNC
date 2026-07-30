@@ -19,10 +19,36 @@ class SystemPromptsConfig(BaseModel):
     message_summary: str
     summary_merge: str
     episode_summary: str
-    heartbeat: str = (
-        "这是一次平台发起的自主性检查，不是用户的新消息。"
-        "只有存在具体且自然的话题时才填写 TO_USER，否则保持 TO_USER 为空。"
-    )
+    heartbeat: str
+
+
+class IdentityConfig(BaseModel):
+    """The one configured human identity used by prompt placeholders."""
+
+    user_id: str = ""
+    nickname: str = ""
+    alias: str = "前辈"
+
+
+def render_system_prompts(prompts: SystemPromptsConfig, identity: IdentityConfig) -> SystemPromptsConfig:
+    """Resolve stable identity placeholders once when prompts are loaded."""
+    user_id = str(identity.user_id).strip() or "未配置"
+    nickname = str(identity.nickname).strip() or "未配置"
+    alias = str(identity.alias).strip() or nickname
+    replacements = {
+        "{{user}}": alias,
+        "{{user_id}}": user_id,
+        "{{user_nickname}}": nickname,
+    }
+    values = {
+        name: str(value)
+        for name, value in prompts.model_dump().items()
+    }
+    for name, value in values.items():
+        for placeholder, replacement in replacements.items():
+            value = value.replace(placeholder, replacement)
+        values[name] = value
+    return SystemPromptsConfig(**values)
 
 
 def load_system_prompts(path: Path) -> SystemPromptsConfig:
@@ -60,6 +86,16 @@ class NapcatConfig(BaseModel):
     ws_url: str = "ws://localhost:3000"
     http_url: str = "http://localhost:3000"
     access_token: str = ""
+
+
+class IngressConfig(BaseModel):
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8765
+    token: str = ""
+    target_user_id: str | int = ""
+    max_body_bytes: int = 262_144
+    request_timeout_seconds: float = 10.0
 
 
 class ModelConfig(BaseModel):
@@ -169,7 +205,7 @@ class MarkdownImageRenderConfig(BaseModel):
     node_path: str = "node"
     script_path: str = "tools/markdown-renderer/render.mjs"
     output_dir: str = "data/generated/markdown"
-    timeout_seconds: float = 20.0
+    timeout_seconds: float = 60.0
     viewport_width: int = 960
     max_height: int = 12000
 
@@ -179,7 +215,9 @@ class RenderConfig(BaseModel):
 
 
 class Config(BaseModel):
+    identity: IdentityConfig = IdentityConfig()
     napcat: NapcatConfig = NapcatConfig()
+    ingress: IngressConfig = IngressConfig()
     model: ModelConfig = ModelConfig()
     context: ContextConfig = ContextConfig()
     session: SessionConfig = SessionConfig()
@@ -195,6 +233,9 @@ class Config(BaseModel):
     _config_path: str | None = None
     _system_prompts_path: str | None = None
     dirty: bool = False
+
+    def model_post_init(self, __context: Any) -> None:
+        self.prompts.system = render_system_prompts(self.prompts.system, self.identity)
 
     @classmethod
     def load(cls, config_path: str) -> Config:
@@ -221,6 +262,13 @@ class Config(BaseModel):
                 return value
 
             raw = resolve_env(raw)
+            identity_raw = raw.setdefault("identity", {})
+            ingress_raw = raw.get("ingress")
+            if isinstance(identity_raw, dict) and isinstance(ingress_raw, dict):
+                if not str(identity_raw.get("user_id") or "").strip():
+                    identity_raw["user_id"] = str(ingress_raw.get("target_user_id") or "").strip()
+                if not str(ingress_raw.get("target_user_id") or "").strip():
+                    ingress_raw["target_user_id"] = str(identity_raw.get("user_id") or "").strip()
             prompts_raw = raw.get("prompts")
             if prompts_raw is None:
                 prompts_raw = {}

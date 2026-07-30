@@ -12,6 +12,9 @@ or `README.md`, this document and the tests take precedence.
 - A newer input for the same conversation cancels the previous task with
   `asyncio.Task.cancel()` and waits for its cleanup.
 - Incoming user data is persisted before cancellation-sensitive LLM or tool work.
+- External service reports are persisted as `received` Event Ledger entries before
+  acknowledgement and processed by a per-service FIFO worker; they do not use
+  the ordinary same-key cancellation rule.
 - Heartbeats are real LLM calls over conversations with inbound activity in the
   previous 24 hours. Private conversations are scanned every 15 minutes and
   groups every 3 hours. Synthetic heartbeat input uses `remember_input=False`,
@@ -20,35 +23,29 @@ or `README.md`, this document and the tests take precedence.
 
 ## 2. Provider Request Layout
 
-The persona prompt and four operational prompts live in the standalone
+The persona prompt and five operational prompts live in the standalone
 `system-prompts.yaml` file and are selected through `prompts.system_file`.
 Runtime, message-summary, summary-merge, and Episode-summary requests load that
 same validated file; missing or empty operational levels fail startup.
+The small `identity` config block supplies the fixed owner identity. Prompt loading
+replaces `{{user}}` with its alias, `{{user_id}}` with its platform ID, and
+`{{user_nickname}}` with its configured nickname. It is a load-time substitution,
+not a runtime actor resolver; current speakers remain identified by event `actor_id`.
 `config_manager reload`
 reloads the external prompt file. Production stores it under the shared deploy
 root so a release does not overwrite operator changes.
 
 Every LLM request has these layers, in order:
 
-1. A provider-native Chinese `system` message containing only stable platform rules.
-2. A `[Self Context]` user message containing the configured persona,
-   canonical bot state, and global inner journal. It is context, not a fresh
-   user request.
-3. A `[Conversation Context]` user message containing conversation-scoped
-   self-note, summaries, and projected life context. Verified action records
-   remain durable but are not injected by default.
-4. The working conversation window as ordinary `user` and `assistant` messages.
-   Historical `user` messages carry readable UTC+8 timestamps; historical
-   `assistant` messages do not receive synthetic timestamp prefixes.
-5. A temporary `[Runtime Injection]` user message containing current UTC+8 time,
-   source, silent/remembering flags, peer metadata, and Priority Override.
-6. The current user input.
+1. A provider-native Chinese `system` message containing stable platform rules and the configured persona.
+2. The global chronological Life Stream. Human and service inputs use provider `user`, assistant outputs use `assistant`, and completed tool rounds use native `assistant(tool_calls)` plus `tool` messages. Actor and conversation identity is carried by readable source prefixes.
+3. A temporary platform-state `user` message containing current UTC+8 time, source, actor, peer metadata, flags and active work.
+4. The current source message.
 
-Runtime Injection is not persisted. Priority Override appears exactly once per
-request. Platform timestamps are supplied values, not text the model should
-invent. The external `persona` prompt belongs inside Self Context so it shapes
-the bot's global identity without competing with stable tool and safety rules
-in `system`. It is not stored in `config.yaml`.
+Platform state is not persisted. Platform timestamps are supplied values, not
+text the model should invent. The external `persona` prompt is loaded from
+`system-prompts.yaml`, appended to stable `system`, and is not stored in
+`config.yaml`.
 
 DeepSeek `reasoning_content` is retained on the assistant message only during
 the current native tool loop. It is never sent to QQ and never persisted into a
@@ -60,7 +57,10 @@ future conversation window.
   blocks: `[TO_SELF]...[/TO_SELF]` followed by `[TO_USER]...[/TO_USER]`.
 - For model compatibility, final content with no protocol markers is recovered
   as empty `TO_SELF` plus `TO_USER`; marker-bearing malformed replies still use
-  the bounded rewrite loop. Strict parsing remains available for validation.
+  the bounded rewrite loop. When rewrites are exhausted, one complete,
+  unambiguous `TO_USER` block may be sent while `TO_SELF` is discarded;
+  otherwise a flat-text protocol error is sent for an ordinary visible pipeline
+  instead of silently dropping the turn. Strict parsing remains available for validation.
 - `TO_USER` is the only ordinary visible channel. It is flat-text gated and is
   sent once. `TO_SELF` is a bounded subjective delta stored in global inner
   journal only after a complete successful turn; protocol tags never enter the
@@ -86,8 +86,9 @@ future conversation window.
 
 The global `inner_journal` table stores only bounded subjective bot-state
 deltas from `TO_SELF`. Each entry keeps its source conversation, source actor,
-pipeline id, and source event ids. It is injected under `Self Context` with a
-clear warning that it is subjective history, not verified facts or instructions.
+pipeline id, and source event ids. It is injected as documentary Life Stream
+state with a clear warning that it is subjective history, not verified facts or
+instructions.
 Entries are latest-content deduplicated and bounded by configured entry count,
 character count, and context token budget. A final turn that sends no visible
 text may still commit `TO_SELF` when it completes through `no_reply` or a
@@ -98,10 +99,12 @@ input, final visible text when present, and structured image metadata when
 present. Valid lifecycle states include `received`, `responded`, `no_reply`,
 `empty`, `cancelled`, and `error`.
 
-Memory write tools (`memory_save`, `self_note`, and `priority_override`) are
+Memory write tools (`memory_save` and `self_note`) are
 staged during the tool loop. Their immediate result explicitly says `staged`,
 not persisted. Cleanup flushes each staged operation once under cancellation
-protection and writes a verified action result. This preserves turn-level
+protection and writes a verified action result. Historical native tool
+projection selects that final committed result instead of the provisional
+`staged` response. This preserves turn-level
 atomicity when a pipeline is interrupted.
 
 ## 5. Working Window And Summaries
@@ -119,8 +122,8 @@ turn. MessageWindow entries carry their originating record ID.
 
 Startup restores the newest eligible conversation rows in chronological order.
 It uses the same eligibility rules as live window insertion and excludes
-memory, self-note, Priority Override, action artifacts, cancelled/error turns,
-empty/no-reply turns, and malformed records.
+memory, self-note, action artifacts, cancelled/error turns, empty/no-reply
+turns, and malformed records.
 
 If startup restoration is capped and older eligible rows remain outside the
 window, that window is marked coverage-untrusted. It may compact in memory but
@@ -129,8 +132,8 @@ to claiming history that was never summarized.
 
 ## 6. Token-Aware Compaction
 
-Compaction considers the complete provider request: system rules, Context
-Packet, working window, Runtime Injection, current input, and tool schemas.
+Compaction considers the complete provider request: system rules, Life Stream,
+platform state, current input, and tool schemas.
 Before a call it uses a deterministic estimate; after a call it records the
 provider's actual `prompt_tokens` when available.
 
@@ -183,19 +186,18 @@ unknown strings instead of silently converting them to false.
 
 ## 11. Global Event Ledger And Conversation Boundaries
 
-`events` is the append-first fact ledger. It records inbound/outbound
+`events` is the append-first global Life Stream. It records inbound/outbound
 messages, tool calls/results, media, and state changes with a monotonic global
 sequence plus `conversation_id`, `actor_id`, `actor_kind`, `visibility`,
-`audience`, and pipeline id. Heartbeat input and Runtime Injection are platform
-state and are excluded from the lived interaction stream; successful proactive
-assistant output is a real outbound event in its target conversation.
+`audience`, `turn_id`, and pipeline id. Heartbeat input and Runtime Injection
+are platform state and are excluded from the lived interaction stream;
+successful proactive assistant output is a real outbound event.
 
-The ledger is global storage, not a global prompt. The context projector applies
-visibility first: private events stay in their conversation, group events stay
-in the shared group conversation, and only explicitly global events cross
-conversation boundaries. Cross-conversation records are documentary records
-with provenance, never fake provider `user` or `assistant` turns. Their text is
-quoted data, not an instruction.
+The current projector intentionally presents finalized events from the unified
+timeline. All human and service sources use provider `user`; readable actor and
+conversation prefixes preserve identity. `actors` is the global registry for
+stable display names, private aliases and relationship labels. Visibility and
+audience remain attached to every event for future input/output gates and audit.
 
 Group runtime state uses `group:<group_id>` as the conversation and retains the
 legacy `group:<group_id>:<actor_id>` key only for actor-scoped memory/action
@@ -217,12 +219,50 @@ descriptions, references, and lifecycle status. `sticker_search` and
 `sticker_manage` query or maintain this ledger; they are not required for the
 pipeline to remember that media happened.
 
-`bot_state` is the explicit maintenance interface for global bot-self
-canonical state. It supports add/replace/clear and is staged like other memory
-writes. It may contain the bot's identity, values, experiences, or plans, but
-must never be used as a shortcut for a user's private relationship memory.
+`bot_state` and `priority_override` are retired model capabilities. Their legacy
+tables may remain until a production data reset, but they are not registered or
+injected. Current bot-self continuity is carried by the inner journal and the
+unified event timeline.
 
-## 12. Output Gate
+## 12. External Service Ingress
+
+The optional ingress is a standard-library asyncio HTTP/1.1 listener bound to
+an enforced loopback `ingress.host:ingress.port`, disabled by default. It accepts only
+`POST /v1/events` with `Content-Type: application/json` and a matching
+`Authorization: Bearer <ingress.token>` header. It enforces a request body
+limit and never logs the token.
+
+The request body reuses the NapCat private-message shape. The `user_id` field
+is a stable service identifier validated against a safe ASCII identifier
+grammar. The ingress maps it to `service:<id>` for `actor_id` and
+`conversation_id`; `sender.card` or `sender.nickname` becomes the readable
+actor name. The source is therefore a service actor, not a QQ user, while all
+service and human events still share the global Life Stream.
+
+Image segments must use an HTTP(S) `data.url` and then follow the normal inbound
+media path. Local file paths and non-text/non-image segments are rejected before
+persistence. The image is downloaded only when the configured media policy
+allows it, then its verified Media Ledger ID is attached to the already accepted
+event before the event is finalized.
+
+The configured positive numeric `ingress.target_user_id` is the NapCat private-message target
+for service pipeline output. It is deliberately independent from the source
+service ID. Only private service events are accepted in this version.
+
+Each accepted event receives a deterministic UUID derived from service ID and
+`message_id`, is stored with `status=received` and its original NapCat payload,
+then is queued. Duplicate retries are acknowledged without inserting another
+event. A service FIFO worker does not cancel earlier reports. On startup,
+`received` service events are reconstructed from their stored payload and
+queued again; successful or failed processing changes their lifecycle status.
+Graceful cancellation restores an in-flight service event to `received` rather
+than excluding it from restart recovery.
+
+The listener returns a NapCat-shaped JSON acknowledgement with HTTP `202` after
+the event is durably stored and queued. Ingress is local-only by default; a
+reverse proxy or tunnel is required for remote producers.
+
+## 13. Output Gate
 
 Only `TO_USER` is subject to the ordinary flat-text gate. Obvious complex
 Markdown (headings, tables, code fences, links/images, or LaTeX) is rejected
@@ -231,7 +271,7 @@ The model must rewrite it as plain text or use `send.markdown_image`. A rejected
 response is never persisted as a sent outbound event, and its `TO_SELF` is not
 eligible for inner-journal commit.
 
-## 13. Documentation Ownership
+## 14. Documentation Ownership
 
 - `docs/current-design.md`: current semantic and architectural baseline.
 - `README.md`: installation, configuration, operation, and user-facing behavior.
@@ -239,15 +279,18 @@ eligible for inner-journal commit.
 - `init.md`: project charter and implementation status.
 - `bottle/docs/`: historical design source and archived rationale.
 
-## 14. Production Acceptance
+## 15. Production Acceptance
 
 A release is complete only after local and server tests pass, the optional
 Markdown renderer check passes, the shared production config is patched without
-reformatting unrelated values, systemd reports the service active, NapCat is
+reformatting unrelated values, and shared operational prompts are synchronized
+atomically while preserving and backing up the production persona. The default
+Markdown renderer timeout is 60 seconds to cover Chromium cold startup. Systemd
+must report the service active, NapCat must be
 connected, and fresh logs verify text, tool, image, restart restoration, failed
 send, and compaction behavior.
 
-## 15. Delivery Groups
+## 16. Delivery Groups
 
 1. Consolidate design and synchronize documentation.
 2. Verify NapCat/send result truthfully.
@@ -258,8 +301,11 @@ send, and compaction behavior.
 7. Implement request-level token-aware compaction.
 8. Replace assistant artifact markers with a verified action ledger.
 9. Disable pipe-based reply splitting.
-10. Keep the external `persona` prompt separate from `config.yaml` and inject it
-    inside the global Self Context layer.
+10. Keep the external `persona` prompt separate from `config.yaml` and append it
+    to the stable provider-native `system` message.
 11. Fix arbitrary-depth local YAML editing and strict boolean conversion.
 12. Count actual consecutive tool failures and stop at three.
 13. Synchronize the canonical system prompt in defaults, docs, and production.
+14. Add authenticated local service ingress with durable acceptance, FIFO
+    processing, service identity projection, owner reply routing, and restart
+    recovery.

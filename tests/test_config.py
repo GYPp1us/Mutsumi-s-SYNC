@@ -4,6 +4,7 @@ from src.mutsumi_sync.config import (
     NapcatConfig,
     ModelConfig,
     ContextConfig,
+    IngressConfig,
     SessionConfig,
     MemoryConfig,
     SummarizerConfig,
@@ -19,6 +20,10 @@ class TestConfig:
     def test_defaults(self):
         c = Config()
         assert c.napcat.ws_url == "ws://localhost:3000"
+        assert c.ingress.enabled is False
+        assert c.ingress.host == "127.0.0.1"
+        assert c.ingress.port == 8765
+        assert c.ingress.target_user_id == ""
         assert c.model.model == "deepseek-chat"
         assert c.context.window_max_tokens == 100000
         assert c.context.model_context_tokens == 100000
@@ -29,6 +34,7 @@ class TestConfig:
         assert c.render.markdown_image.enabled is False
         assert c.render.markdown_image.node_path == "node"
         assert c.render.markdown_image.output_dir == "data/generated/markdown"
+        assert c.render.markdown_image.timeout_seconds == 60
         assert c.heartbeat.private_interval_seconds == 900
         assert c.heartbeat.group_interval_seconds == 10800
         assert c.heartbeat.active_window_seconds == 86400
@@ -40,6 +46,7 @@ class TestConfig:
         assert isinstance(c.prompts.system.persona, str)
         assert c.prompts.system_file == "system-prompts.yaml"
         assert "TO_USER" in c.prompts.system.runtime
+        assert "Heartbeat 是静默请求" not in c.prompts.system.runtime
         assert c.inner_journal.max_entry_chars == 1000
         assert c.dirty is False
 
@@ -130,7 +137,8 @@ class TestConfig:
             "runtime: runtime-v1\n"
             "message_summary: message-v1\n"
             "summary_merge: merge-v1\n"
-            "episode_summary: episode-v1\n",
+            "episode_summary: episode-v1\n"
+            "heartbeat: heartbeat-v1\n",
             encoding="utf-8",
         )
         config_path = tmp_path / "config.yaml"
@@ -149,11 +157,50 @@ class TestConfig:
             "runtime: runtime-v2\n"
             "message_summary: message-v2\n"
             "summary_merge: merge-v2\n"
-            "episode_summary: episode-v2\n",
+            "episode_summary: episode-v2\n"
+            "heartbeat: heartbeat-v2\n",
             encoding="utf-8",
         )
         assert config.reload().startswith("[OK]")
         assert config.prompts.system.runtime == "runtime-v2"
+
+    def test_identity_placeholders_are_resolved_for_every_prompt_level(self, tmp_path):
+        prompt_path = tmp_path / "custom-prompts.yaml"
+        prompt_path.write_text(
+            "persona: '你称呼 {{user}}'\n"
+            "runtime: '用户ID是 {{user_id}}，昵称是 {{user_nickname}}'\n"
+            "message_summary: '{{user}} 的消息'\n"
+            "summary_merge: '{{user_id}}'\n"
+            "episode_summary: '{{user_nickname}}'\n"
+            "heartbeat: '联系 {{user}}'\n",
+            encoding="utf-8",
+        )
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "identity:\n"
+            "  user_id: '3535616589'\n"
+            "  nickname: Sakuraba Ema\n"
+            "  alias: 前辈\n"
+            "prompts:\n  system_file: custom-prompts.yaml\n",
+            encoding="utf-8",
+        )
+
+        config = Config.load(str(config_path))
+
+        for prompt in config.prompts.system.model_dump().values():
+            assert "{{user" not in prompt
+        assert config.prompts.system.persona == "你称呼 前辈"
+        assert "3535616589" in config.prompts.system.runtime
+        assert "Sakuraba Ema" in config.prompts.system.runtime
+
+    def test_legacy_ingress_owner_populates_identity(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("ingress:\n  target_user_id: '3535616589'\n", encoding="utf-8")
+
+        config = Config.load(str(path))
+
+        assert config.identity.user_id == "3535616589"
+        assert config.ingress.target_user_id == "3535616589"
 
     def test_persona_is_not_saved_in_main_config(self, tmp_path):
         config_path = tmp_path / "config.yaml"
@@ -166,7 +213,8 @@ class TestConfig:
             "runtime: runtime-v1\n"
             "message_summary: message-v1\n"
             "summary_merge: merge-v1\n"
-            "episode_summary: episode-v1\n",
+            "episode_summary: episode-v1\n"
+            "heartbeat: heartbeat-v1\n",
             encoding="utf-8",
         )
 
@@ -177,7 +225,13 @@ class TestConfig:
 
     def test_external_system_prompts_require_all_levels(self, tmp_path):
         prompt_path = tmp_path / "incomplete.yaml"
-        prompt_path.write_text("runtime: only-runtime\n", encoding="utf-8")
+        prompt_path.write_text(
+            "runtime: runtime\n"
+            "message_summary: message\n"
+            "summary_merge: merge\n"
+            "episode_summary: episode\n",
+            encoding="utf-8",
+        )
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             "prompts:\n  system_file: incomplete.yaml\n",
@@ -213,6 +267,13 @@ class TestModelDefaults:
         m = ModelConfig()
         assert m.provider == "deepseek"
         assert m.model == "deepseek-chat"
+
+    def test_ingress_defaults(self):
+        ingress = IngressConfig()
+        assert ingress.enabled is False
+        assert ingress.host == "127.0.0.1"
+        assert ingress.port == 8765
+        assert ingress.max_body_bytes == 262_144
 
     def test_context_defaults(self):
         c = ContextConfig()

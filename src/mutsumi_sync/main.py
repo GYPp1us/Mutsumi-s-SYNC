@@ -5,6 +5,7 @@ import logging
 import sys
 
 from .config import Config
+from .ingress import ServiceIngress
 from .logging import start_stream_log_store, stop_stream_log_store
 from .memory.store import MessageStore
 from .message.receiver import MessageReceiver
@@ -13,15 +14,21 @@ from .scheduler import PipelineScheduler
 from .tools.registry import Tool, ToolRegistry
 from .tools.http_api import http_api_call, HTTP_API_SCHEMA
 from .tools.config_manager import config_manager, CONFIG_MANAGER_SCHEMA
-from .tools.memory import memory_search, memory_save, MEMORY_SEARCH_SCHEMA, MEMORY_SAVE_SCHEMA
-from .tools.self_note import self_note_tool, SELF_NOTE_SCHEMA
-from .tools.priority_override import priority_override_tool, PRIORITY_OVERRIDE_SCHEMA
+from .tools.memory import (
+    memory_search,
+    memory_save,
+    MEMORY_SEARCH_DESCRIPTION,
+    MEMORY_SEARCH_SCHEMA,
+    MEMORY_SAVE_DESCRIPTION,
+    MEMORY_SAVE_SCHEMA,
+)
+from .tools.self_note import self_note_tool, SELF_NOTE_DESCRIPTION, SELF_NOTE_SCHEMA
+from .tools.actor_profile import actor_profile_tool, ACTOR_PROFILE_SCHEMA
 from .tools.send import send_tool, SEND_TOOL_SCHEMA
 from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 from .tools.status_update import status_update_tool, STATUS_UPDATE_SCHEMA
 from .tools.scheduler import scheduler_tool, SCHEDULER_SCHEMA
 from .tools.media import media_search, MEDIA_SEARCH_SCHEMA, sticker_manage, STICKER_MANAGE_SCHEMA
-from .tools.bot_state import bot_state_tool, BOT_STATE_SCHEMA
 
 logger = logging.getLogger("mutsumi.main")
 
@@ -75,7 +82,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="memory_search",
-        description="搜索长期记忆，用关键词查找过去保存的信息",
+        description=MEMORY_SEARCH_DESCRIPTION,
         parameters=MEMORY_SEARCH_SCHEMA,
         handler=_memory_search,
     ))
@@ -85,7 +92,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="memory_save",
-        description="保存一条信息到长期记忆",
+        description=MEMORY_SAVE_DESCRIPTION,
         parameters=MEMORY_SAVE_SCHEMA,
         handler=_memory_save,
     ))
@@ -129,33 +136,22 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
 
     registry.register(Tool(
         name="self_note",
-        description="管理对用户的私人印象。add:追加, replace:覆盖",
+        description=SELF_NOTE_DESCRIPTION,
         parameters=SELF_NOTE_SCHEMA,
         handler=_self_note,
     ))
 
-    async def _bot_state(args: dict, **deps) -> str:
-        deps.pop("store", None)
-        return await bot_state_tool(args, store=store, **deps)
+    async def _actor_profile(args: dict, **deps) -> str:
+        return await actor_profile_tool(args, store=store, **deps)
 
     registry.register(Tool(
-        name="bot_state",
-        description="Maintain globally shared facts about the bot itself: identity, experience, values, or long-term plans. Never store a user's private facts here.",
-        parameters=BOT_STATE_SCHEMA,
-        handler=_bot_state,
-    ))
-
-    async def _priority_override(args: dict, **deps) -> str:
-        return await priority_override_tool(args, store=store, group_key=deps.get("group_key", ""))
-
-    registry.register(Tool(
-        name="priority_override",
+        name="actor_profile",
         description=(
-            "Manage the Priority Override field. Use it only for unusually important instructions "
-            "that must be repeated after every user input in the working context."
+            "维护全局参与者档案。可读取、列出或维护稳定 actor_id 对应的私下称呼和关系标签。"
+            "不要猜测 actor_id，只使用上下文或工具结果中的稳定 ID。"
         ),
-        parameters=PRIORITY_OVERRIDE_SCHEMA,
-        handler=_priority_override,
+        parameters=ACTOR_PROFILE_SCHEMA,
+        handler=_actor_profile,
     ))
 
     async def _send(args: dict, **deps) -> str:
@@ -241,6 +237,7 @@ async def run(config_path: str = "config.yaml") -> None:
     sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
     register_scheduler_tool(registry, scheduler)
+    ingress = ServiceIngress(config.ingress, store, scheduler.dispatch_service_event)
 
     receiver = MessageReceiver(config.napcat.ws_url, config.napcat.access_token)
     receiver.on_message(scheduler.dispatch)
@@ -248,8 +245,10 @@ async def run(config_path: str = "config.yaml") -> None:
     await scheduler.startup()
     logger.info("Starting receiver on %s", config.napcat.ws_url)
     try:
+        await ingress.start()
         await receiver.run()
     finally:
+        await ingress.close()
         await scheduler.shutdown()
 
 

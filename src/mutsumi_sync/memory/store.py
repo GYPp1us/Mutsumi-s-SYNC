@@ -59,6 +59,8 @@ class EventRecord:
     audience: str = "bot:self"
     visibility: str = "private"
     media_ids: list[str] | None = None
+    payload: dict[str, Any] | None = None
+    turn_id: str = ""
     pipeline_id: str = ""
     status: str = "finalized"
     created_at: float | None = None
@@ -74,6 +76,8 @@ class EventRecord:
             self.event_type,
             self.content,
             json.dumps(self.media_ids or [], ensure_ascii=False),
+            json.dumps(self.payload or {}, ensure_ascii=False),
+            self.turn_id,
             self.pipeline_id,
             self.visibility,
             self.audience,
@@ -92,6 +96,8 @@ class EventRecord:
             event_type=row["event_type"],
             content=row["content"],
             media_ids=json.loads(row["media_ids_json"] or "[]"),
+            payload=json.loads(row["payload_json"] or "{}") if "payload_json" in row.keys() else {},
+            turn_id=row["turn_id"] if "turn_id" in row.keys() else "",
             pipeline_id=row["pipeline_id"],
             visibility=row["visibility"],
             audience=row["audience"],
@@ -150,6 +156,36 @@ class MediaRecord:
             path=row["path"], source_url=row["source_url"], mime_type=row["mime_type"],
             description=row["description"], short_description=row["short_description"],
             status=row["status"], created_at=row["created_at"], last_used_at=row["last_used_at"],
+        )
+
+
+@dataclass
+class ActorRecord:
+    actor_id: str
+    kind: str
+    platform: str = ""
+    platform_subject_id: str = ""
+    display_name: str = ""
+    private_alias: str = ""
+    relationship: str = ""
+    metadata: dict[str, Any] | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "ActorRecord":
+        keys = set(row.keys())
+        return cls(
+            actor_id=row["actor_id"],
+            kind=row["kind"],
+            platform=row["platform"] if "platform" in keys else "",
+            platform_subject_id=row["platform_subject_id"] if "platform_subject_id" in keys else "",
+            display_name=row["display_name"] if "display_name" in keys else "",
+            private_alias=row["private_alias"] if "private_alias" in keys else "",
+            relationship=row["relationship"] if "relationship" in keys else "",
+            metadata=json.loads(row["metadata_json"] or "{}") if "metadata_json" in keys else {},
+            created_at=row["created_at"] if "created_at" in keys else None,
+            updated_at=row["updated_at"] if "updated_at" in keys else None,
         )
 
 
@@ -272,6 +308,8 @@ class MessageStore:
             event_type       TEXT NOT NULL,
             content          TEXT NOT NULL DEFAULT '',
             media_ids_json   TEXT NOT NULL DEFAULT '[]',
+            payload_json     TEXT NOT NULL DEFAULT '{}',
+            turn_id          TEXT NOT NULL DEFAULT '',
             pipeline_id      TEXT NOT NULL DEFAULT '',
             visibility       TEXT NOT NULL DEFAULT 'private',
             audience         TEXT NOT NULL DEFAULT 'bot:self',
@@ -287,6 +325,21 @@ class MessageStore:
             ON events(status, sequence);
         CREATE INDEX IF NOT EXISTS idx_events_activity
             ON events(event_type, created_at, conversation_id);
+
+        CREATE TABLE IF NOT EXISTS actors (
+            actor_id             TEXT PRIMARY KEY,
+            kind                 TEXT NOT NULL,
+            platform             TEXT NOT NULL DEFAULT '',
+            platform_subject_id  TEXT NOT NULL DEFAULT '',
+            display_name         TEXT NOT NULL DEFAULT '',
+            private_alias        TEXT NOT NULL DEFAULT '',
+            relationship         TEXT NOT NULL DEFAULT '',
+            metadata_json        TEXT NOT NULL DEFAULT '{}',
+            created_at           REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+            updated_at           REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_actors_kind ON actors(kind);
 
         CREATE TABLE IF NOT EXISTS episodes (
             episode_id       TEXT PRIMARY KEY,
@@ -403,6 +456,8 @@ class MessageStore:
         for statement in (
             "ALTER TABLE summaries ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'",
             "ALTER TABLE summaries ADD COLUMN covered_through_message_id INTEGER",
+            "ALTER TABLE events ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE events ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 await self._conn.execute(statement)
@@ -427,8 +482,8 @@ class MessageStore:
         values = event.to_insert_values()
         cursor = await self._conn.execute(
             "INSERT INTO events (event_id, conversation_id, actor_id, actor_kind, "
-            "actor_name, event_type, content, media_ids_json, pipeline_id, "
-            "visibility, audience, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "actor_name, event_type, content, media_ids_json, payload_json, turn_id, pipeline_id, "
+            "visibility, audience, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             values,
         )
         await self._conn.commit()
@@ -439,6 +494,84 @@ class MessageStore:
         if row is None:
             raise RuntimeError("event insert succeeded but the row cannot be read")
         return EventRecord.from_row(row)
+
+    async def get_event(self, event_id: str) -> EventRecord | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM events WHERE event_id = ?", (event_id,)
+        )
+        row = await cursor.fetchone()
+        return EventRecord.from_row(row) if row else None
+
+    async def get_pending_service_events(self) -> list[EventRecord]:
+        """Return accepted external events that were not finalized before shutdown."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM events WHERE event_type = 'inbound' AND actor_kind = 'service' "
+            "AND status = 'received' ORDER BY sequence ASC",
+        )
+        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def ensure_actor(self, actor: ActorRecord) -> ActorRecord:
+        self._ensure_initialized()
+        await self._conn.execute(
+            "INSERT INTO actors (actor_id, kind, platform, platform_subject_id, display_name, "
+            "private_alias, relationship, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(actor_id) DO UPDATE SET kind=excluded.kind, platform=excluded.platform, "
+            "platform_subject_id=excluded.platform_subject_id, display_name=excluded.display_name, "
+            "updated_at=strftime('%s', 'now')",
+            (
+                actor.actor_id,
+                actor.kind,
+                actor.platform,
+                actor.platform_subject_id,
+                actor.display_name,
+                actor.private_alias,
+                actor.relationship,
+                json.dumps(actor.metadata or {}, ensure_ascii=False),
+            ),
+        )
+        await self._conn.commit()
+        return await self.get_actor(actor.actor_id) or actor
+
+    async def get_actor(self, actor_id: str) -> ActorRecord | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute("SELECT * FROM actors WHERE actor_id = ?", (actor_id,))
+        row = await cursor.fetchone()
+        return ActorRecord.from_row(row) if row else None
+
+    async def list_actors(self, limit: int = 500) -> list[ActorRecord]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM actors ORDER BY updated_at DESC LIMIT ?", (max(1, int(limit)),)
+        )
+        return [ActorRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def update_actor_profile(
+        self,
+        actor_id: str,
+        *,
+        private_alias: str | None = None,
+        relationship: str | None = None,
+    ) -> ActorRecord | None:
+        self._ensure_initialized()
+        fields: list[str] = []
+        params: list[str] = []
+        if private_alias is not None:
+            fields.append("private_alias = ?")
+            params.append(private_alias.strip())
+        if relationship is not None:
+            fields.append("relationship = ?")
+            params.append(relationship.strip())
+        if not fields:
+            return await self.get_actor(actor_id)
+        fields.append("updated_at = strftime('%s', 'now')")
+        params.append(actor_id)
+        await self._conn.execute(
+            f"UPDATE actors SET {', '.join(fields)} WHERE actor_id = ?", params
+        )
+        await self._conn.commit()
+        return await self.get_actor(actor_id)
 
     async def update_event_status(self, event_id: str, status: str, content: str | None = None) -> None:
         """Update lifecycle state without changing an event's identity."""
@@ -452,6 +585,15 @@ class MessageStore:
                 "UPDATE events SET status = ?, content = ? WHERE event_id = ?",
                 (status, content, event_id),
             )
+        await self._conn.commit()
+
+    async def update_event_media_ids(self, event_id: str, media_ids: list[str]) -> None:
+        """Attach verified media ledger references to an existing event."""
+        self._ensure_initialized()
+        await self._conn.execute(
+            "UPDATE events SET media_ids_json = ? WHERE event_id = ?",
+            (json.dumps(media_ids, ensure_ascii=False), event_id),
+        )
         await self._conn.commit()
 
     async def get_events(
@@ -534,23 +676,25 @@ class MessageStore:
         ]
 
     async def has_unanswered_proactive(self, conversation_id: str) -> bool:
-        """Return whether the latest proactive output predates no inbound reply."""
+        """Return whether a heartbeat output has no later real inbound reply."""
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT MAX(created_at) FROM messages WHERE group_key = ? AND category = 'proactive'",
+            "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE conversation_id = ? "
+            "AND event_type = 'outbound' AND status = 'finalized' "
+            "AND pipeline_id LIKE 'heartbeat:%'",
             (conversation_id,),
         )
         proactive_row = await cursor.fetchone()
-        proactive_at = float(proactive_row[0] or 0)
-        if not proactive_at:
+        proactive_sequence = int(proactive_row[0] or 0)
+        if not proactive_sequence:
             return False
         cursor = await self._conn.execute(
-            "SELECT MAX(created_at) FROM events WHERE conversation_id = ? "
+            "SELECT COALESCE(MAX(sequence), 0) FROM events WHERE conversation_id = ? "
             "AND event_type = 'inbound' AND status != 'cancelled'",
             (conversation_id,),
         )
         inbound_row = await cursor.fetchone()
-        return proactive_at > float(inbound_row[0] or 0)
+        return proactive_sequence > int(inbound_row[0] or 0)
 
     async def add_episode(self, episode: EpisodeRecord) -> str:
         self._ensure_initialized()

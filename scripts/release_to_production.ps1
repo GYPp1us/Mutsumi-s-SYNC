@@ -308,6 +308,33 @@ fi
         'echo "[skip] server renderer check disabled by caller"'
     }
 
+    $systemPromptMigration = @'
+shared_prompts="$deploy_root/shared/system-prompts.yaml"
+release_prompts="$release_dir/system-prompts.yaml"
+"$deploy_root/venv/bin/python" "$release_dir/scripts/sync_system_prompts.py" \
+  "$shared_prompts" "$release_prompts" "$release_name"
+'@
+
+    $productionConfigMigration = @'
+shared_config="$deploy_root/shared/config.yaml"
+PYTHONPATH="$release_dir" "$deploy_root/venv/bin/python" - "$shared_config" <<'PY'
+import sys
+
+from src.mutsumi_sync.config import Config
+
+config = Config.load(sys.argv[1])
+current = float(config.render.markdown_image.timeout_seconds)
+if current <= 20:
+    result = config.set("render.markdown_image.timeout_seconds", 60)
+    if not result.startswith("[OK]"):
+        raise RuntimeError(result)
+    config.save_key("render.markdown_image.timeout_seconds")
+    print(f"migrated render.markdown_image.timeout_seconds: {current:g} -> 60")
+else:
+    print(f"renderer timeout already operator-configured: {current:g}s")
+PY
+'@
+
     $body = @"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -325,11 +352,10 @@ mkdir -p "`$release_dir"
 tar -xf "`$archive" -C "`$release_dir"
 
 ln -sfn "`$deploy_root/shared/config.yaml" "`$release_dir/config.yaml"
-if [ ! -f "`$deploy_root/shared/system-prompts.yaml" ]; then
-  cp "`$release_dir/system-prompts.yaml" "`$deploy_root/shared/system-prompts.yaml"
-fi
+$systemPromptMigration
 rm -f "`$release_dir/system-prompts.yaml"
 ln -sfn "`$deploy_root/shared/system-prompts.yaml" "`$release_dir/system-prompts.yaml"
+$productionConfigMigration
 rm -rf "`$release_dir/data"
 ln -sfn "`$deploy_root/shared/data" "`$release_dir/data"
 

@@ -38,7 +38,7 @@ async def test_bot_state_works_through_production_registry(tmp_path):
             group_key="private:test",
         )
 
-        assert result.startswith("[OK]")
-        assert (await store.get_canonical_state())["content"] == "I value honest answers."
+        assert result == "[Error: unknown tool: bot_state]"
+        assert await store.get_canonical_state() is None
     finally:
         await store.close()

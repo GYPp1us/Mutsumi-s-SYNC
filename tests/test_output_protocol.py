@@ -1,5 +1,6 @@
 from src.mutsumi_sync.output_protocol import (
     OutputProtocolError,
+    extract_unambiguous_to_user,
     format_final_envelope,
     parse_final_envelope,
     recover_final_envelope,
@@ -62,3 +63,9 @@ def test_non_strict_parse_recovers_plain_model_reply():
 
     assert parsed.to_self == ""
     assert parsed.to_user == "普通回复"
+
+
+def test_extract_unambiguous_to_user_salvages_only_one_complete_block():
+    assert extract_unambiguous_to_user("说明\n[TO_USER]可见回复[/TO_USER]") == "可见回复"
+    assert extract_unambiguous_to_user("[TO_USER]a[/TO_USER][TO_USER]b[/TO_USER]") is None
+    assert extract_unambiguous_to_user("[TO_USER]missing close") is None
