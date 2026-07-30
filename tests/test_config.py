@@ -4,6 +4,7 @@ from src.mutsumi_sync.config import (
     NapcatConfig,
     ModelConfig,
     ContextConfig,
+    IngressConfig,
     SessionConfig,
     MemoryConfig,
     SummarizerConfig,
@@ -19,6 +20,10 @@ class TestConfig:
     def test_defaults(self):
         c = Config()
         assert c.napcat.ws_url == "ws://localhost:3000"
+        assert c.ingress.enabled is False
+        assert c.ingress.host == "127.0.0.1"
+        assert c.ingress.port == 8765
+        assert c.ingress.target_user_id == ""
         assert c.model.model == "deepseek-chat"
         assert c.context.window_max_tokens == 100000
         assert c.context.model_context_tokens == 100000
@@ -224,6 +229,13 @@ class TestModelDefaults:
         m = ModelConfig()
         assert m.provider == "deepseek"
         assert m.model == "deepseek-chat"
+
+    def test_ingress_defaults(self):
+        ingress = IngressConfig()
+        assert ingress.enabled is False
+        assert ingress.host == "127.0.0.1"
+        assert ingress.port == 8765
+        assert ingress.max_body_bytes == 262_144
 
     def test_context_defaults(self):
         c = ContextConfig()

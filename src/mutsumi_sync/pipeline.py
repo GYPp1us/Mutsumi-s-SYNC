@@ -205,6 +205,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
         state_parts.append("与当前发言者有关的长期记录：\n" + self_note_text)
     messages.append({"role": "user", "content": "\n".join(state_parts)})
 
+    actor_kind = "service" if deps.source == "external_service" else "human"
     if deps.source == "heartbeat":
         current_content = f"平台心跳｜目标聊天：{deps.conversation_id or deps.group_key}\n{message}"
     elif len(deps.inbound_events) > 1:
@@ -213,7 +214,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
                 conversation_id=deps.conversation_id or deps.group_key,
                 actor_id=str(item.get("actor_id") or "unknown"),
                 actor_name=str(item.get("actor_name") or item.get("actor_id") or "user"),
-                actor_kind="human",
+                actor_kind=actor_kind,
                 content=str(item.get("content") or ""),
             )
             for item in deps.inbound_events
@@ -224,7 +225,7 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
             conversation_id=deps.conversation_id or deps.group_key,
             actor_id=deps.actor_id or str(deps.peer.peer_uid),
             actor_name=deps.actor_name or str(deps.peer.peer_uid),
-            actor_kind="human",
+            actor_kind=actor_kind,
             content=message,
         )
     messages.append({"role": "user", "content": current_content})
@@ -1087,7 +1088,7 @@ async def pipeline(
     cancelled = False
     final_status = "received"
     inbound_msg_id: int | None = None
-    inbound_event_ids: list[str] = []
+    inbound_event_ids: list[str] = list(deps.precreated_event_ids)
     input_metadata: dict | None = None
     input_media_id: str | None = None
     if msg_type == MessageType.IMAGE:
@@ -1116,11 +1117,15 @@ async def pipeline(
                 input_metadata["media_id"] = input_media_id
         except Exception:
             logger.exception("[MEDIA] failed to register inbound media")
-        inbound_event_ids = await _append_inbound_events(
-            deps,
-            message,
-            media_ids=[input_media_id] if input_media_id else None,
-        )
+        if not inbound_event_ids:
+            inbound_event_ids = await _append_inbound_events(
+                deps,
+                message,
+                media_ids=[input_media_id] if input_media_id else None,
+            )
+        elif input_media_id:
+            for event_id in inbound_event_ids:
+                await deps.store.update_event_media_ids(event_id, [input_media_id])
         deps.current_event_ids = list(inbound_event_ids)
         try:
             if deps.config.vision.enabled:
@@ -1165,7 +1170,8 @@ async def pipeline(
     try:
         if inbound_msg_id is None:
             inbound_msg_id = await _save_inbound_msg(deps, message, msg_type.value, input_metadata)
-            inbound_event_ids = await _append_inbound_events(deps, message)
+            if not inbound_event_ids:
+                inbound_event_ids = await _append_inbound_events(deps, message)
             deps.current_event_ids = list(inbound_event_ids)
         else:
             await _update_saved_msg(

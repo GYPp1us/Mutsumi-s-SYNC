@@ -7,6 +7,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 ## Features
 
 - NapCat WebSocket message receiving and HTTP sending.
+- Optional loopback HTTP ingress for authenticated NapCat-shaped reports from external services.
 - Per-user/per-group cancellable pipeline tasks.
 - OpenAI-compatible LLM provider with DeepSeek reasoning support.
 - Built-in tool registry with hot snapshot/version tracking.
@@ -106,6 +107,15 @@ napcat:
   http_url: http://localhost:3000
   access_token: ""
 
+ingress:
+  enabled: false
+  host: 127.0.0.1
+  port: 8765
+  token: ""
+  target_user_id: "3535616589"
+  max_body_bytes: 262144
+  request_timeout_seconds: 10
+
 model:
   provider: deepseek
   model: deepseek-chat
@@ -173,6 +183,49 @@ render:
 ```
 
 If no LLM API key is configured, the pipeline can still run in local stub/testing flows.
+
+## External Service Ingress
+
+The optional ingress enforces a loopback TCP address and accepts `POST /v1/events`.
+It uses the standard library asyncio HTTP server, so enabling it adds no Python
+runtime dependency. The listener is disabled by default. When enabled, both a
+Bearer token and a positive numeric owner QQ `target_user_id` are required.
+
+The body intentionally reuses the NapCat private-message event shape. The
+`user_id` field is interpreted as a stable external service ID, not a QQ user:
+
+```json
+{
+  "post_type": "message",
+  "message_type": "private",
+  "user_id": "calendar",
+  "message_id": "calendar-20260730-001",
+  "message": [{"type": "text", "data": {"text": "明天 09:30 有项目会议"}}],
+  "raw_message": "明天 09:30 有项目会议",
+  "sender": {"nickname": "日程服务"}
+}
+```
+
+The event is stored first as `received`, then placed into a FIFO queue for
+`service:calendar`. The pipeline replies through NapCat to the configured
+`target_user_id`. Duplicate `(service user_id, message_id)` reports are
+acknowledged without creating another event. Reports left in `received` state
+are restored after a backend restart.
+
+Example request:
+
+```bash
+curl -X POST http://127.0.0.1:8765/v1/events \
+  -H 'Authorization: Bearer YOUR_INGRESS_TOKEN' \
+  -H 'Content-Type: application/json' \
+  --data @report.json
+```
+
+Only private message events are accepted in this first version. External
+services may send text and image segments whose `data.url` is HTTP(S). Local
+image paths and record/video/forward or unknown segments are rejected before
+they reach the pipeline. In-flight reports cancelled during graceful shutdown
+return to `received` so startup recovery can process them again.
 
 ## Interactive Tester
 

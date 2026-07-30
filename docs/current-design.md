@@ -12,6 +12,9 @@ or `README.md`, this document and the tests take precedence.
 - A newer input for the same conversation cancels the previous task with
   `asyncio.Task.cancel()` and waits for its cleanup.
 - Incoming user data is persisted before cancellation-sensitive LLM or tool work.
+- External service reports are persisted as `received` Event Ledger entries before
+  acknowledgement and processed by a per-service FIFO worker; they do not use
+  the ordinary same-key cancellation rule.
 - Heartbeats are real LLM calls over conversations with inbound activity in the
   previous 24 hours. Private conversations are scanned every 15 minutes and
   groups every 3 hours. Synthetic heartbeat input uses `remember_input=False`,
@@ -20,7 +23,7 @@ or `README.md`, this document and the tests take precedence.
 
 ## 2. Provider Request Layout
 
-The persona prompt and four operational prompts live in the standalone
+The persona prompt and five operational prompts live in the standalone
 `system-prompts.yaml` file and are selected through `prompts.system_file`.
 Runtime, message-summary, summary-merge, and Episode-summary requests load that
 same validated file; missing or empty operational levels fail startup.
@@ -217,7 +220,45 @@ tables may remain until a production data reset, but they are not registered or
 injected. Current bot-self continuity is carried by the inner journal and the
 unified event timeline.
 
-## 12. Output Gate
+## 12. External Service Ingress
+
+The optional ingress is a standard-library asyncio HTTP/1.1 listener bound to
+an enforced loopback `ingress.host:ingress.port`, disabled by default. It accepts only
+`POST /v1/events` with `Content-Type: application/json` and a matching
+`Authorization: Bearer <ingress.token>` header. It enforces a request body
+limit and never logs the token.
+
+The request body reuses the NapCat private-message shape. The `user_id` field
+is a stable service identifier validated against a safe ASCII identifier
+grammar. The ingress maps it to `service:<id>` for `actor_id` and
+`conversation_id`; `sender.card` or `sender.nickname` becomes the readable
+actor name. The source is therefore a service actor, not a QQ user, while all
+service and human events still share the global Life Stream.
+
+Image segments must use an HTTP(S) `data.url` and then follow the normal inbound
+media path. Local file paths and non-text/non-image segments are rejected before
+persistence. The image is downloaded only when the configured media policy
+allows it, then its verified Media Ledger ID is attached to the already accepted
+event before the event is finalized.
+
+The configured positive numeric `ingress.target_user_id` is the NapCat private-message target
+for service pipeline output. It is deliberately independent from the source
+service ID. Only private service events are accepted in this version.
+
+Each accepted event receives a deterministic UUID derived from service ID and
+`message_id`, is stored with `status=received` and its original NapCat payload,
+then is queued. Duplicate retries are acknowledged without inserting another
+event. A service FIFO worker does not cancel earlier reports. On startup,
+`received` service events are reconstructed from their stored payload and
+queued again; successful or failed processing changes their lifecycle status.
+Graceful cancellation restores an in-flight service event to `received` rather
+than excluding it from restart recovery.
+
+The listener returns a NapCat-shaped JSON acknowledgement with HTTP `202` after
+the event is durably stored and queued. Ingress is local-only by default; a
+reverse proxy or tunnel is required for remote producers.
+
+## 13. Output Gate
 
 Only `TO_USER` is subject to the ordinary flat-text gate. Obvious complex
 Markdown (headings, tables, code fences, links/images, or LaTeX) is rejected
@@ -226,7 +267,7 @@ The model must rewrite it as plain text or use `send.markdown_image`. A rejected
 response is never persisted as a sent outbound event, and its `TO_SELF` is not
 eligible for inner-journal commit.
 
-## 13. Documentation Ownership
+## 14. Documentation Ownership
 
 - `docs/current-design.md`: current semantic and architectural baseline.
 - `README.md`: installation, configuration, operation, and user-facing behavior.
@@ -234,7 +275,7 @@ eligible for inner-journal commit.
 - `init.md`: project charter and implementation status.
 - `bottle/docs/`: historical design source and archived rationale.
 
-## 14. Production Acceptance
+## 15. Production Acceptance
 
 A release is complete only after local and server tests pass, the optional
 Markdown renderer check passes, the shared production config is patched without
@@ -245,7 +286,7 @@ must report the service active, NapCat must be
 connected, and fresh logs verify text, tool, image, restart restoration, failed
 send, and compaction behavior.
 
-## 15. Delivery Groups
+## 16. Delivery Groups
 
 1. Consolidate design and synchronize documentation.
 2. Verify NapCat/send result truthfully.
@@ -261,3 +302,6 @@ send, and compaction behavior.
 11. Fix arbitrary-depth local YAML editing and strict boolean conversion.
 12. Count actual consecutive tool failures and stop at three.
 13. Synchronize the canonical system prompt in defaults, docs, and production.
+14. Add authenticated local service ingress with durable acceptance, FIFO
+    processing, service identity projection, owner reply routing, and restart
+    recovery.

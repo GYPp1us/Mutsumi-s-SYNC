@@ -59,6 +59,16 @@ class NapcatConfig(BaseModel):
     access_token: str = ""
 
 
+class IngressConfig(BaseModel):
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8765
+    token: str = ""
+    target_user_id: str | int = ""
+    max_body_bytes: int = 262_144
+    request_timeout_seconds: float = 10.0
+
+
 class ModelConfig(BaseModel):
     provider: str = "deepseek"
     model: str = "deepseek-chat"
@@ -177,6 +187,7 @@ class RenderConfig(BaseModel):
 
 class Config(BaseModel):
     napcat: NapcatConfig = NapcatConfig()
+    ingress: IngressConfig = IngressConfig()
     model: ModelConfig = ModelConfig()
     context: ContextConfig = ContextConfig()
     session: SessionConfig = SessionConfig()

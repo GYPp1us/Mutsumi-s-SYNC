@@ -4,6 +4,7 @@
 
 - `events` is the append-first global Life Stream. It carries actor, conversation, visibility, audience, lifecycle, turn, tool, and media provenance.
 - The current projector presents the unified timeline chronologically. All human/service sources use provider `user`; readable actor/conversation prefixes preserve identity.
+- External service reports use the NapCat-shaped loopback ingress, but `user_id` maps to `service:<id>` and never to a QQ actor. Replies route to configured `ingress.target_user_id`.
 - A group has one shared conversation window while members retain independent actor identities. `actor_profile` maintains global aliases and relationship labels.
 - Episodes summarize only finalized events and store exact sequence coverage. Raw events are never deleted, and a projection selects an Episode or its covered raw events, never both.
 - Media is pipeline-native. SHA-derived media IDs and descriptions are recorded automatically; inbound image URLs are downloaded when possible and otherwise retained as external references. Only the description and media ID enter model context; `sticker_search` and `sticker_manage` maintain the global media ledger.
@@ -28,6 +29,7 @@
 - `scheduler` is a built-in durable one-shot scheduling tool. It requires formatted `scheduled_time`, accepts optional `prompt`, stores tasks in SQLite, restores pending/running tasks on startup, and returns a readable delay.
 - Image recognition is provided through the optional `vision` provider config. Supported providers are `openai-compatible` and `volcengine-ocr`; Volcengine OCR requires AK/SK and can also sign an optional `session_token`. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
 - Production logging uses the standard `mutsumi.*` logger tree and also writes append-only NDJSON stream records to `logging.stream_store.path` plus human-readable rotating text records to `logging.text_file.path`. Do not bypass standard logging for pipeline diagnostics.
+- The optional ingress enforces a loopback host and positive numeric owner QQ target, requires a Bearer token, accepts only text and HTTP(S) image URLs, persists accepted events as `received`, deduplicates by service `user_id` plus `message_id`, and restores unfinished service events after restart or graceful cancellation.
 
 # AGENTS.md - AI Agent 协作指南
 
@@ -40,6 +42,7 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | 能力 | 状态 |
 | --- | --- |
 | NapCat WebSocket/HTTP I/O | 可用 |
+| 本地认证外部服务 ingress | 可用，默认关闭，NapCat-shaped `POST /v1/events` |
 | `PipelineScheduler` 异步调度 | 可用，每个会话 key 一个 cancellable task |
 | 单函数 `pipeline()` | 可用，所有处理逻辑集中在一个异步函数 |
 | OpenAI-compatible LLM 调用 | 可用，支持 DeepSeek reasoning_content |
@@ -247,6 +250,7 @@ registry.register(Tool(
 | 文件 | 说明 |
 | --- | --- |
 | `src/mutsumi_sync/main.py` | 真实入口与工具注册 |
+| `src/mutsumi_sync/ingress.py` | 本地 HTTP ingress、token 鉴权与服务事件落库 |
 | `src/mutsumi_sync/scheduler.py` | 调度器、状态持有者 |
 | `src/mutsumi_sync/pipeline.py` | 单函数消息处理核心 |
 | `src/mutsumi_sync/config.py` | Pydantic 配置与 YAML 保存 |
