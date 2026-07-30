@@ -10,6 +10,10 @@ context:
   debounce_timeout: 1.5
   episode_idle_seconds: 1800
   episode_max_events: 160
+identity:
+  user_id: ""
+  nickname: ""
+  alias: "前辈"
 model:
   api_key: ''
   base_url: https://api.deepseek.com/v1

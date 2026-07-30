@@ -5,7 +5,9 @@ from src.mutsumi_sync.config import Config
 def test_runtime_prompt_contains_current_protocol_boundaries():
     config = Config()
     prompt = _build_default_system_prompt(config)
-    assert prompt == config.prompts.system.runtime
+    assert prompt.startswith(config.prompts.system.runtime.rstrip())
+    assert "人格设定：" in prompt
+    assert config.prompts.system.persona in prompt
     for phrase in (
         "TO_USER 必须是扁平纯文本",
         "使用 markdown_image",

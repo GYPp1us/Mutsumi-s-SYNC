@@ -12,6 +12,7 @@
 
 - LLM requests use a provider-native non-empty Chinese `system` message for durable platform rules.
 - The `persona` prompt and all runtime, message-summary, summary-merge, and Episode-summary prompts live in `system-prompts.yaml`, selected by `prompts.system_file`. Do not duplicate prompt bodies in Python. Production uses `/opt/mutsumi-sync-v3/shared/system-prompts.yaml`.
+- The fixed owner identity lives in the small `identity` config block (`user_id`, `nickname`, `alias`). Prompt placeholders `{{user}}`, `{{user_id}}`, and `{{user_nickname}}` are replaced once during prompt loading; current actor identity still comes from event metadata, never from nickname matching.
 - The provider-native `system` message contains stable platform rules and persona. The following Life Stream uses native `user`, `assistant`, and `tool` messages; tool rounds are reconstructed from `payload_json` and `turn_id`.
 - A temporary platform-state user message is inserted immediately before the current source message. It carries current UTC+8 time, source, actor, peer metadata and active work. It is not user-authored chat and must not be written to durable history.
 - Summaries, self-note entries, and historical `user` turns must use readable UTC+8 timestamps. Historical `assistant` turns must not receive synthetic timestamp prefixes. Existing self-note lines without timestamps are injected with `很久之前`.

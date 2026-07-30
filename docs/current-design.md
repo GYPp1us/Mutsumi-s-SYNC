@@ -27,6 +27,10 @@ The persona prompt and five operational prompts live in the standalone
 `system-prompts.yaml` file and are selected through `prompts.system_file`.
 Runtime, message-summary, summary-merge, and Episode-summary requests load that
 same validated file; missing or empty operational levels fail startup.
+The small `identity` config block supplies the fixed owner identity. Prompt loading
+replaces `{{user}}` with its alias, `{{user_id}}` with its platform ID, and
+`{{user_nickname}}` with its configured nickname. It is a load-time substitution,
+not a runtime actor resolver; current speakers remain identified by event `actor_id`.
 `config_manager reload`
 reloads the external prompt file. Production stores it under the shared deploy
 root so a release does not overwrite operator changes.

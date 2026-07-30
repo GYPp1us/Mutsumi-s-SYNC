@@ -22,6 +22,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
 - Temporary platform state is injected once per request and includes current time, source, actor and active work; it is not durable conversation history.
+- The fixed owner identity is configured once under `identity`; prompt placeholders `{{user}}`, `{{user_id}}` and `{{user_nickname}}` are resolved when the prompt file loads.
 - Proactive heartbeat checks every 15 minutes for private chats and every 3 hours for groups active within the last 24 hours.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
@@ -137,6 +138,11 @@ context:
 
 prompts:
   system_file: system-prompts.yaml
+
+identity:
+  user_id: "3535616589"
+  nickname: "Sakuraba Ema"
+  alias: "前辈"
 
 inner_journal:
   max_entry_chars: 1000
@@ -362,6 +368,8 @@ LLM boundary. `config_manager reload` reloads both files. Production keeps the
 prompt file at `/opt/mutsumi-sync-v3/shared/system-prompts.yaml` so releases do
 not overwrite the operator persona. Deploys back up that shared file, preserve
 its `persona`, and atomically synchronize all operational prompts from the release.
+The prompt loader replaces the three fixed identity placeholders once at load time;
+the current speaker still comes from the event's `actor_id` and platform nickname.
 
 ## Heartbeat And Vision
 
