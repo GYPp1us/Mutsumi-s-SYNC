@@ -5,6 +5,7 @@ import logging
 import sys
 
 from .config import Config
+from .ingress import ServiceIngress
 from .logging import start_stream_log_store, stop_stream_log_store
 from .memory.store import MessageStore
 from .message.receiver import MessageReceiver
@@ -236,6 +237,7 @@ async def run(config_path: str = "config.yaml") -> None:
     sender = MessageSender(config.napcat.http_url, config.napcat.access_token)
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
     register_scheduler_tool(registry, scheduler)
+    ingress = ServiceIngress(config.ingress, store, scheduler.dispatch_service_event)
 
     receiver = MessageReceiver(config.napcat.ws_url, config.napcat.access_token)
     receiver.on_message(scheduler.dispatch)
@@ -243,8 +245,10 @@ async def run(config_path: str = "config.yaml") -> None:
     await scheduler.startup()
     logger.info("Starting receiver on %s", config.napcat.ws_url)
     try:
+        await ingress.start()
         await receiver.run()
     finally:
+        await ingress.close()
         await scheduler.shutdown()
 
 

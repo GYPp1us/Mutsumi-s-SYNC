@@ -55,6 +55,14 @@ napcat:
   access_token: ''
   http_url: http://localhost:3000
   ws_url: ws://localhost:3000
+ingress:
+  enabled: false
+  host: 127.0.0.1
+  port: 8765
+  token: ''
+  target_user_id: ''
+  max_body_bytes: 262144
+  request_timeout_seconds: 10
 session:
   timeout: 300
 memory:

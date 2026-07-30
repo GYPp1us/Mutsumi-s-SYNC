@@ -1153,6 +1153,59 @@ class TestPipelineE2EDebounce:
         assert await store.get_inner_journal() == []
         await store.close()
 
+    async def test_pipeline_reuses_precreated_service_event_without_duplicate(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        event = await store.append_event(EventRecord(
+            event_id="precreated-service-event",
+            conversation_id="service:calendar",
+            actor_id="service:calendar",
+            actor_kind="service",
+            actor_name="日程服务",
+            event_type=EventType.INBOUND.value,
+            content="服务上报的一条消息",
+            payload={
+                "post_type": "message",
+                "message_type": "private",
+                "user_id": "calendar",
+                "message_id": "calendar-1",
+                "message": [{"type": "text", "data": {"text": "服务上报的一条消息"}}],
+                "raw_message": "服务上报的一条消息",
+                "sender": {"nickname": "日程服务"},
+            },
+            status="received",
+        ))
+
+        async def fake_llm_call(messages, deps):
+            return LLMResult(content=final_output("已收到服务上报"))
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="3535616589"),
+            group_key="service:calendar",
+            conversation_id="service:calendar",
+            actor_id="service:calendar",
+            actor_name="日程服务",
+            source="external_service",
+            precreated_event_ids=[event.event_id or ""],
+        )
+
+        await pipeline("服务上报的一条消息", MessageType.SHORT_TEXT, None, None, deps=deps)
+
+        inbound = [
+            item for item in await store.get_events(conversation_id="service:calendar", finalized_only=False)
+            if item.event_type == EventType.INBOUND.value
+        ]
+        assert len(inbound) == 1
+        assert inbound[0].status == "finalized"
+        assert [item["message"] for item in sender.sent] == ["已收到服务上报"]
+        await store.close()
+
     async def test_staged_memory_write_commits_once_when_pipeline_is_cancelled(self, monkeypatch):
         config = make_config()
         sender = CaptureSender()

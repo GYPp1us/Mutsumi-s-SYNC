@@ -495,6 +495,23 @@ class MessageStore:
             raise RuntimeError("event insert succeeded but the row cannot be read")
         return EventRecord.from_row(row)
 
+    async def get_event(self, event_id: str) -> EventRecord | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM events WHERE event_id = ?", (event_id,)
+        )
+        row = await cursor.fetchone()
+        return EventRecord.from_row(row) if row else None
+
+    async def get_pending_service_events(self) -> list[EventRecord]:
+        """Return accepted external events that were not finalized before shutdown."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM events WHERE event_type = 'inbound' AND actor_kind = 'service' "
+            "AND status = 'received' ORDER BY sequence ASC",
+        )
+        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
     async def ensure_actor(self, actor: ActorRecord) -> ActorRecord:
         self._ensure_initialized()
         await self._conn.execute(
@@ -568,6 +585,15 @@ class MessageStore:
                 "UPDATE events SET status = ?, content = ? WHERE event_id = ?",
                 (status, content, event_id),
             )
+        await self._conn.commit()
+
+    async def update_event_media_ids(self, event_id: str, media_ids: list[str]) -> None:
+        """Attach verified media ledger references to an existing event."""
+        self._ensure_initialized()
+        await self._conn.execute(
+            "UPDATE events SET media_ids_json = ? WHERE event_id = ?",
+            (json.dumps(media_ids, ensure_ascii=False), event_id),
+        )
         await self._conn.commit()
 
     async def get_events(

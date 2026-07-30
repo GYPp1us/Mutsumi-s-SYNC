@@ -84,6 +84,27 @@ async def test_event_status_can_finalize_or_cancel_without_changing_identity(tmp
 
 
 @pytest.mark.asyncio
+async def test_existing_event_can_receive_verified_media_references(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        event = await store.append_event(EventRecord(
+            conversation_id="service:calendar",
+            actor_id="service:calendar",
+            actor_kind="service",
+            event_type=EventType.INBOUND.value,
+            content="image pending",
+            status="received",
+        ))
+        await store.update_event_media_ids(event.event_id or "", ["sha256:test-image"])
+        saved = await store.get_event(event.event_id or "")
+        assert saved is not None
+        assert saved.media_ids == ["sha256:test-image"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_projection_replaces_covered_global_events_with_episode(tmp_path):
     store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
     await store.initialize()
