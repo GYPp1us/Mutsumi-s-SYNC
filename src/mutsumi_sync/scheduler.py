@@ -14,11 +14,12 @@ if TYPE_CHECKING:
     from .config import Config
     from .memory.store import MessageStore
     from .memory.store import ScheduledTaskRecord
-    from .message.receiver import MessageEvent
+    from .message.receiver import MessageEvent, ServiceMessageEvent
     from .message.sender import MessageSender, Peer
     from .tools.registry import ToolRegistry
 
 logger = logging.getLogger("mutsumi.scheduler")
+SERVICE_WORKER_IDLE_SECONDS = 60.0
 
 
 @dataclass
@@ -49,6 +50,9 @@ class PipelineDeps:
     actor_name: str = ""
     pipeline_id: str = ""
     inbound_events: list[dict[str, str]] = field(default_factory=list)
+    current_event_ids: list[str] = field(default_factory=list)
+    precreated_event_ids: list[str] = field(default_factory=list)
+    active_work: dict[str, dict[str, str]] | None = None
 
 
 class PipelineScheduler:
@@ -79,14 +83,23 @@ class PipelineScheduler:
         self._heartbeat_batches: dict[str, asyncio.Task[None]] = {}
         self._scheduled_tasks: dict[int, asyncio.Task[None]] = {}
         self._episode_timers: dict[str, asyncio.Task[None]] = {}
+        self._active_work: dict[str, dict[str, str]] = {}
+        self._service_queues: dict[str, asyncio.Queue[tuple[ServiceMessageEvent, str]]] = {}
+        self._service_workers: dict[str, asyncio.Task[None]] = {}
+        self._service_event_ids: set[str] = set()
+        self._shutting_down = False
 
     def _make_key(self, event: MessageEvent) -> str:
+        if getattr(event, "source_kind", "qq") == "service":
+            return f"service:{event.user_id}"
         if event.message_type == "group" and event.group_id:
             return f"group:{event.group_id}"
         return f"private:{event.user_id}"
 
     @staticmethod
     def _actor_id(event: MessageEvent) -> str:
+        if getattr(event, "source_kind", "qq") == "service":
+            return f"service:{event.user_id}"
         return f"qq:user:{event.user_id}"
 
     @staticmethod
@@ -96,6 +109,8 @@ class PipelineScheduler:
 
     @staticmethod
     def _storage_key(event: MessageEvent) -> str:
+        if getattr(event, "source_kind", "qq") == "service":
+            return f"service:{event.user_id}"
         if event.message_type == "group" and event.group_id:
             # Keep legacy per-actor memory scopes while the window/event stream
             # is shared by the actual group conversation.
@@ -220,6 +235,119 @@ class PipelineScheduler:
         self._cancel_debounce_timer(key)
         self._debounce_timers[key] = asyncio.create_task(self._debounce_expire(key))
 
+    async def dispatch_service_event(self, event: ServiceMessageEvent, event_id: str) -> None:
+        """Queue a persisted service event without cancelling earlier reports."""
+        if self._shutting_down:
+            raise RuntimeError("scheduler is shutting down")
+        if event_id in self._service_event_ids:
+            logger.info("[SCHED] service event already queued event_id=%s", event_id)
+            return
+        key = self._make_key(event)
+        self._ensure_user_state(key)
+        queue = self._service_queues.setdefault(key, asyncio.Queue())
+        self._service_event_ids.add(event_id)
+        try:
+            await queue.put((event, event_id))
+        except Exception:
+            self._service_event_ids.discard(event_id)
+            raise
+        self._ensure_service_worker(key)
+        logger.info("[SCHED] queued service event key=%s event_id=%s depth=%d", key, event_id, queue.qsize())
+
+    def _ensure_service_worker(self, key: str) -> None:
+        worker = self._service_workers.get(key)
+        if worker is not None and not worker.done():
+            return
+        worker = asyncio.create_task(self._run_service_queue(key))
+        self._service_workers[key] = worker
+        self._tasks[key] = worker
+
+    async def _run_service_queue(self, key: str) -> None:
+        queue = self._service_queues[key]
+        try:
+            while True:
+                try:
+                    event, event_id = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=SERVICE_WORKER_IDLE_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    break
+                try:
+                    await self._run_service_event(key, event, event_id)
+                except asyncio.CancelledError:
+                    record = await self.store.get_event(event_id)
+                    if record is not None and record.status == "cancelled":
+                        await self.store.update_event_status(event_id, "received")
+                        logger.info("[SCHED] restored cancelled service event to received event_id=%s", event_id)
+                    raise
+                except Exception:
+                    logger.exception("[SCHED] service pipeline failed key=%s event_id=%s", key, event_id)
+                finally:
+                    self._service_event_ids.discard(event_id)
+                    queue.task_done()
+                if queue.empty():
+                    self._schedule_episode_summary(key)
+        finally:
+            if self._service_workers.get(key) is asyncio.current_task():
+                self._service_workers.pop(key, None)
+            if self._tasks.get(key) is asyncio.current_task():
+                self._tasks.pop(key, None)
+            if queue.empty():
+                self._service_queues.pop(key, None)
+            elif not self._shutting_down:
+                self._ensure_service_worker(key)
+
+    async def _run_service_event(self, key: str, event: ServiceMessageEvent, event_id: str) -> None:
+        from .message.classifier import classify_message
+        from .pipeline import pipeline
+
+        classified = classify_message(event.message, event.raw_message)
+        self._cancel_episode_timer(key)
+        actor_id = self._actor_id(event)
+        actor_name = self._actor_name(event)
+        peer = self._make_service_peer()
+        content = classified.content or event.raw_message
+        deps = PipelineDeps(
+            config=self.config,
+            registry=self.registry,
+            sender=self.sender,
+            store=self.store,
+            window=self._windows[key],
+            session=self._sessions[key],
+            peer=peer,
+            group_key=key,
+            active_work=self._active_work,
+            token_counter=self.token_usage,
+            report_state=self._make_report_state(key),
+            report_llm_health=self._make_report_llm_health(),
+            source="external_service",
+            allow_cold_poke=False,
+            conversation_id=key,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            pipeline_id=f"{key}:{time.time_ns()}",
+            inbound_events=[{
+                "actor_id": actor_id,
+                "actor_name": actor_name,
+                "content": content,
+            }],
+            precreated_event_ids=[event_id],
+        )
+        logger.info("[SCHED] dispatching service key=%s event_id=%s type=%s", key, event_id, classified.msg_type.value)
+        await pipeline(
+            message=content,
+            msg_type=classified.msg_type,
+            image_file=classified.image_file,
+            image_url=classified.image_url,
+            media_kind=classified.media_kind,
+            deps=deps,
+        )
+
+    def _make_service_peer(self) -> Peer:
+        from .message.sender import Peer
+        return Peer(chat_type=1, peer_uid=str(self.config.ingress.target_user_id))
+
     async def _debounce_expire(self, key: str) -> None:
         await asyncio.sleep(self.config.context.debounce_timeout)
         events = self._pending_events.pop(key, [])
@@ -287,6 +415,7 @@ class PipelineScheduler:
             actor_name=actor_name,
             pipeline_id=f"{key}:{time.time_ns()}",
             inbound_events=inbound_events,
+            active_work=self._active_work,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -338,6 +467,7 @@ class PipelineScheduler:
             actor_id=self._actor_id(event),
             actor_name=self._actor_name(event),
             pipeline_id=f"{key}:{time.time_ns()}",
+            active_work=self._active_work,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -466,6 +596,23 @@ class PipelineScheduler:
                 window.coverage_trusted,
             )
 
+        if self.config.ingress.enabled:
+            pending_service_events = await self.store.get_pending_service_events()
+            for record in pending_service_events:
+                try:
+                    from .message.receiver import ServiceMessageEvent
+                    event = ServiceMessageEvent.model_validate({
+                        **(record.payload or {}),
+                        "source_kind": "service",
+                    })
+                    await self.dispatch_service_event(event, str(record.event_id))
+                except Exception:
+                    logger.exception("[STARTUP] failed to restore service event=%s", record.event_id)
+                    if record.event_id:
+                        await self.store.update_event_status(record.event_id, "error")
+            if pending_service_events:
+                logger.info("[STARTUP] restored %d pending service events", len(pending_service_events))
+
         if self.config.heartbeat.enabled and self._heartbeat_task is None:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
@@ -555,6 +702,7 @@ class PipelineScheduler:
             actor_id=str(candidate.get("actor_id") or ""),
             actor_name=str(candidate.get("actor_name") or ""),
             pipeline_id=f"heartbeat:{key}:{time.time_ns()}",
+            active_work=self._active_work,
             token_counter=self.token_usage,
             report_state=self._make_report_state(key),
             report_llm_health=self._make_report_llm_health(),
@@ -661,6 +809,7 @@ class PipelineScheduler:
 
     async def shutdown(self) -> None:
         logger.info("[SHUTDOWN] stopping scheduler with %d windows", len(self._windows))
+        self._shutting_down = True
 
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
@@ -691,6 +840,10 @@ class PipelineScheduler:
         for key in list(self._keys()):
             self._cleanup_debounce(key)
             await self.cancel_user(key)
+
+        self._service_queues.clear()
+        self._service_workers.clear()
+        self._service_event_ids.clear()
 
         await self.store.close()
         logger.info("[SHUTDOWN] complete")

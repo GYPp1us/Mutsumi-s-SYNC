@@ -2,27 +2,27 @@
 
 ## Global Event Ledger Rules
 
-- `bot_state` is the only explicit global bot-self state tool; relationship facts remain conversation-scoped.
-
-- `events` is the append-first global fact source. It carries actor, conversation, visibility, audience, lifecycle, tool, and media provenance.
-- Global storage is not global prompt injection. Private events remain private; group events remain in their group; only explicitly global events cross conversations.
-- Cross-conversation events are documentary records with actor IDs, never simulated provider `user` or `assistant` turns.
-- A group has one shared conversation window while members retain independent actor identity and legacy memory/action scopes.
+- `events` is the append-first global Life Stream. It carries actor, conversation, visibility, audience, lifecycle, turn, tool, and media provenance.
+- The current projector presents the unified timeline chronologically. All human/service sources use provider `user`; readable actor/conversation prefixes preserve identity.
+- External service reports use the NapCat-shaped loopback ingress, but `user_id` maps to `service:<id>` and never to a QQ actor. Replies route to configured `ingress.target_user_id`.
+- A group has one shared conversation window while members retain independent actor identities. `actor_profile` maintains global aliases and relationship labels.
 - Episodes summarize only finalized events and store exact sequence coverage. Raw events are never deleted, and a projection selects an Episode or its covered raw events, never both.
 - Media is pipeline-native. SHA-derived media IDs and descriptions are recorded automatically; inbound image URLs are downloaded when possible and otherwise retained as external references. Only the description and media ID enter model context; `sticker_search` and `sticker_manage` maintain the global media ledger.
 - Ordinary assistant content must pass the flat-text output gate. Complex Markdown goes through `send.markdown_image`.
 
 - LLM requests use a provider-native non-empty Chinese `system` message for durable platform rules.
 - The `persona` prompt and all runtime, message-summary, summary-merge, and Episode-summary prompts live in `system-prompts.yaml`, selected by `prompts.system_file`. Do not duplicate prompt bodies in Python. Production uses `/opt/mutsumi-sync-v3/shared/system-prompts.yaml`.
-- The first user context message is `[Self Context]` containing persona, canonical bot state, and global inner journal; the next is `[Conversation Context]` containing conversation-scoped context. Both are documentary context, not fresh user requests. The action ledger is not injected by default.
-- Working conversation messages after those context layers are only the current working context window.
-- A temporary `[Runtime Injection]` user message is inserted immediately before the current user request. It carries current UTC+8 time, source, silent/remembering flags, peer metadata, and active Priority Override. It is not user-authored chat and must not be written to durable history.
+- The fixed owner identity lives in the small `identity` config block (`user_id`, `nickname`, `alias`). Prompt placeholders `{{user}}`, `{{user_id}}`, and `{{user_nickname}}` are replaced once during prompt loading; current actor identity still comes from event metadata, never from nickname matching.
+- The provider-native `system` message contains stable platform rules and persona. The following Life Stream uses native `user`, `assistant`, and `tool` messages; tool rounds are reconstructed from `payload_json` and `turn_id`.
+- A temporary platform-state user message is inserted immediately before the current source message. It carries current UTC+8 time, source, actor, peer metadata and active work. It is not user-authored chat and must not be written to durable history.
 - Summaries, self-note entries, and historical `user` turns must use readable UTC+8 timestamps. Historical `assistant` turns must not receive synthetic timestamp prefixes. Existing self-note lines without timestamps are injected with `很久之前`.
-- `priority_override` is a built-in write tool. It uses the same add/replace style as self-note, plus clear. Its active content is injected only once in Runtime Injection and should be used only for high-priority instructions.
+- `bot_state` and `priority_override` are retired model capabilities. Their legacy SQLite tables may remain until production data reset, but they must not be registered or injected.
 - Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
 - Pipe-based reply splitting is disabled. Assistant content is sent once and `|` remains literal.
 - `send(markdown_image=...)` records verified success/failure in the structured action ledger. Successful artifacts carry the generated file, message id, and Markdown hash; artifact markers must not enter assistant history.
 - Memory writes remain staged until cancellation-protected cleanup. Immediate tool feedback must say `staged`, and each final operation is committed and ledgered exactly once.
+- Historical native tool projection must use the final committed memory-write result, not the provisional `staged` feedback.
+- Malformed final envelopes receive bounded correction. After exhaustion, send only an unambiguous complete `TO_USER` block or a flat-text protocol failure; never silently lose an ordinary user turn and never salvage `TO_SELF`.
 - Only `compaction` summaries may carry `covered_through_message_id`; per-message summaries and legacy `last_message_id` values never skip raw records on restart.
 - Heartbeat scans real inbound activity every 15 minutes for private conversations and every 3 hours for groups active within the last 24 hours.
 - Heartbeat uses `remember_input=False` but may persist verified assistant output and update the target window; it never sends cold-session pokes or status updates and yields to user pipelines.
@@ -30,6 +30,7 @@
 - `scheduler` is a built-in durable one-shot scheduling tool. It requires formatted `scheduled_time`, accepts optional `prompt`, stores tasks in SQLite, restores pending/running tasks on startup, and returns a readable delay.
 - Image recognition is provided through the optional `vision` provider config. Supported providers are `openai-compatible` and `volcengine-ocr`; Volcengine OCR requires AK/SK and can also sign an optional `session_token`. Do not bind image input to the main DeepSeek text model unless that provider explicitly supports images.
 - Production logging uses the standard `mutsumi.*` logger tree and also writes append-only NDJSON stream records to `logging.stream_store.path` plus human-readable rotating text records to `logging.text_file.path`. Do not bypass standard logging for pipeline diagnostics.
+- The optional ingress enforces a loopback host and positive numeric owner QQ target, requires a Bearer token, accepts only text and HTTP(S) image URLs, persists accepted events as `received`, deduplicates by service `user_id` plus `message_id`, and restores unfinished service events after restart or graceful cancellation.
 
 # AGENTS.md - AI Agent 协作指南
 
@@ -42,6 +43,7 @@ Mutsumi's SYNC v3 是一个基于 NapCat QQ 的异步聊天机器人。v3 从旧
 | 能力 | 状态 |
 | --- | --- |
 | NapCat WebSocket/HTTP I/O | 可用 |
+| 本地认证外部服务 ingress | 可用，默认关闭，NapCat-shaped `POST /v1/events` |
 | `PipelineScheduler` 异步调度 | 可用，每个会话 key 一个 cancellable task |
 | 单函数 `pipeline()` | 可用，所有处理逻辑集中在一个异步函数 |
 | OpenAI-compatible LLM 调用 | 可用，支持 DeepSeek reasoning_content |
@@ -150,6 +152,7 @@ sh scripts/install_markdown_renderer.sh
 render:
   markdown_image:
     enabled: true
+    timeout_seconds: 60
 ```
 
 Linux 若 Chromium 缺系统依赖，按安装脚本提示执行：
@@ -248,6 +251,7 @@ registry.register(Tool(
 | 文件 | 说明 |
 | --- | --- |
 | `src/mutsumi_sync/main.py` | 真实入口与工具注册 |
+| `src/mutsumi_sync/ingress.py` | 本地 HTTP ingress、token 鉴权与服务事件落库 |
 | `src/mutsumi_sync/scheduler.py` | 调度器、状态持有者 |
 | `src/mutsumi_sync/pipeline.py` | 单函数消息处理核心 |
 | `src/mutsumi_sync/config.py` | Pydantic 配置与 YAML 保存 |

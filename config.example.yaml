@@ -10,6 +10,10 @@ context:
   debounce_timeout: 1.5
   episode_idle_seconds: 1800
   episode_max_events: 160
+identity:
+  user_id: ""
+  nickname: ""
+  alias: "前辈"
 model:
   api_key: ''
   base_url: https://api.deepseek.com/v1
@@ -55,6 +59,14 @@ napcat:
   access_token: ''
   http_url: http://localhost:3000
   ws_url: ws://localhost:3000
+ingress:
+  enabled: false
+  host: 127.0.0.1
+  port: 8765
+  token: ''
+  target_user_id: ''
+  max_body_bytes: 262144
+  request_timeout_seconds: 10
 session:
   timeout: 300
 memory:
@@ -78,6 +90,6 @@ render:
     node_path: node
     script_path: tools/markdown-renderer/render.mjs
     output_dir: data/generated/markdown
-    timeout_seconds: 20
+    timeout_seconds: 60
     viewport_width: 960
     max_height: 12000

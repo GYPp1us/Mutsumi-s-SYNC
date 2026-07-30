@@ -25,6 +25,7 @@ Mutsumi's SYNC v3 是一个基于 NapCat 的 QQ 聊天机器人。它不是简�
 | --- | --- |
 | Runtime | Python 3.10+, asyncio |
 | QQ I/O | NapCat WebSocket + HTTP API |
+| 外部服务 I/O | 可选 loopback HTTP ingress，复用 NapCat message event |
 | LLM | OpenAI-compatible HTTP API via `httpx` |
 | 配置 | Pydantic + YAML + `.env` |
 | 存储 | SQLite via `aiosqlite` |
@@ -47,6 +48,9 @@ Mutsumi's SYNC v3 是一个基于 NapCat 的 QQ 聊天机器人。它不是简�
 | 请求级 token 预算、精确 turn 压缩 | 完成 |
 | 结构化 action ledger | 完成 |
 | 图片描述进入常规 pipeline | 完成 |
+| Global Life Stream 与 Actor Registry | 完成 |
+| 外部服务消息 ingress、去重、FIFO 与重启恢复 | 完成 |
+| 历史 tool round 原生回放 | 完成 |
 | Dashboard TUI | 调试界面，不作为生产 registry 基准 |
 | 交互式 tester | 调试界面 |
 | Markdown -> PNG -> image send | 完成，可选安装 |
@@ -78,6 +82,15 @@ Mutsumi's SYNC v3 是一个基于 NapCat 的 QQ 聊天机器人。它不是简�
 8. **日志链路要诚实**  
    pipeline 的关键分支、上下文拼接、LLM 结果、保存/窗口更新、cleanup 都应有可追踪日志。
 
+9. **上下文使用统一 Life Stream**
+   多个用户和服务来源都进入同一条按事件顺序排列的时间线；provider role 只表达消息类型，actor 与 conversation 由平台来源前缀表达。
+
+10. **历史工具调用必须保持原生结构**
+    事件通过 `turn_id` 和 `payload_json` 重建 `assistant(tool_calls)` 与 `tool` 结果，禁止把工具反馈伪装成普通 assistant 文本。
+
+11. **外部服务身份与 QQ 目标必须分离**
+    ingress 请求中的 `user_id` 只表示来源服务，映射为 `service:<id>`；模型回复始终通过配置的正整数 QQ `ingress.target_user_id` 发给所有者。监听必须为 loopback，消息只接受文本和 HTTP(S) 图片 URL。外部事件先持久化为 `received`，由 service FIFO worker 处理，重启或关机取消后恢复未完成事件。
+
 ## 5. 模块职责
 
 ```text
@@ -91,10 +104,13 @@ src/mutsumi_sync/
     receiver.py           NapCat WebSocket events
     sender.py             NapCat HTTP send API
     classifier.py         message segment classification
+  ingress.py              loopback HTTP service-event ingress
   memory/
     window.py             rolling in-memory context window
     session.py            per-session activity/pending state
-    store.py              SQLite long-term store, summaries, self notes, media
+    store.py              SQLite long-term store, events, actors, summaries, self notes, media
+    actors.py             global actor/conversation source formatting
+    projection.py         Life Stream and native tool-round projection
   tools/
     registry.py           Tool and ToolRegistry
     config_manager.py     runtime config get/set/list/reload
@@ -147,7 +163,20 @@ context:
   debounce_timeout: 1.5
 
 prompts:
-  persona: ""
+  system_file: system-prompts.yaml
+
+heartbeat:
+  enabled: true
+  private_interval_seconds: 900
+  group_interval_seconds: 10800
+  active_window_seconds: 86400
+
+ingress:
+  enabled: false
+  host: 127.0.0.1
+  port: 8765
+  token: ""
+  target_user_id: ""
 
 memory:
   archive_threshold_tokens: 100

@@ -1,8 +1,13 @@
 from pathlib import Path
+import subprocess
+import sys
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "release_to_production.ps1"
+PROMPT_SYNC = ROOT / "scripts" / "sync_system_prompts.py"
 
 
 def test_release_script_contains_operator_safety_contract() -> None:
@@ -68,3 +73,53 @@ def test_release_script_keeps_command_output_out_of_function_returns() -> None:
     assert "foreach ($line in @($output))" in source
     assert "Write-Host $line" in source
     assert "$createdPrOutput = (& gh pr create" in source
+
+
+def test_release_script_synchronizes_prompts_and_migrates_renderer_timeout() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    assert "scripts/sync_system_prompts.py" in source
+    assert 'config.set("render.markdown_image.timeout_seconds", 60)' in source
+    assert "if current <= 20" in source
+
+
+def test_prompt_sync_preserves_persona_and_replaces_all_operational_prompts(tmp_path) -> None:
+    shared = tmp_path / "shared.yaml"
+    release = tmp_path / "release.yaml"
+    shared.write_text(
+        yaml.safe_dump({
+            "persona": "生产人格",
+            "runtime": "含 Priority Override 和 bot_state 的旧规则",
+            "message_summary": "old-message",
+            "summary_merge": "old-merge",
+            "episode_summary": "old-episode",
+            "operator_note": "keep-me",
+        }, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    release_data = {
+        "persona": "release-default",
+        "runtime": "new-runtime",
+        "message_summary": "new-message",
+        "summary_merge": "new-merge",
+        "episode_summary": "new-episode",
+        "heartbeat": "new-heartbeat",
+    }
+    release.write_text(
+        yaml.safe_dump(release_data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [sys.executable, str(PROMPT_SYNC), str(shared), str(release), "test-release"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    migrated = yaml.safe_load(shared.read_text(encoding="utf-8"))
+    assert migrated["persona"] == "生产人格"
+    for key in ("runtime", "message_summary", "summary_merge", "episode_summary", "heartbeat"):
+        assert migrated[key] == release_data[key]
+    assert migrated["operator_note"] == "keep-me"
+    assert (tmp_path / "shared.yaml.bak-test-release").exists()

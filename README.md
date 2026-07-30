@@ -7,20 +7,22 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 ## Features
 
 - NapCat WebSocket message receiving and HTTP sending.
+- Optional loopback HTTP ingress for authenticated NapCat-shaped reports from external services.
 - Per-user/per-group cancellable pipeline tasks.
 - OpenAI-compatible LLM provider with DeepSeek reasoning support.
 - Built-in tool registry with hot snapshot/version tracking.
 - SQLite message store, summaries, self notes, and media storage.
 - Global Event Ledger with provenance-preserving cross-conversation projections and idle Episode summaries.
 - Pipeline-native Media Ledger with SHA deduplication, stable media IDs, and global sticker search/maintenance tools.
-- Explicit `bot_state` canonical projection for facts about the bot itself, separate from private relationship memory.
-- Layered context assembly: stable provider-native Chinese `system`, global `Self Context`, conversation-scoped `Conversation Context`, working window, temporary `Runtime Injection`, and current input.
-- A separate persona prompt is loaded from `system-prompts.yaml` and injected into `Self Context`; it is never edited through `config.yaml`.
+- Unified global Life Stream context: all human/service inputs use provider `user`, while readable actor and conversation prefixes preserve source identity.
+- Historical tool rounds replay as native provider `assistant(tool_calls)` plus `tool` messages; they are never flattened into assistant prose.
+- The persona prompt is loaded from `system-prompts.yaml` and appended to the stable provider-native Chinese `system`; it is never edited through `config.yaml`.
 - Global inner journal for subjective bot-state continuity, with source conversation/actor provenance and bounded token/entry retention.
 - Request-level token budgeting over messages and tool schemas, with exact complete-turn compaction boundaries.
 - Append-only NDJSON stream logs for durable real-time diagnostics.
 - Rotating human-readable text logs for `tail -f` and `grep`.
-- Priority Override memory, injected once per request in `Runtime Injection` for unusually important instructions.
+- Temporary platform state is injected once per request and includes current time, source, actor and active work; it is not durable conversation history.
+- The fixed owner identity is configured once under `identity`; prompt placeholders `{{user}}`, `{{user_id}}` and `{{user_nickname}}` are resolved when the prompt file loads.
 - Proactive heartbeat checks every 15 minutes for private chats and every 3 hours for groups active within the last 24 hours.
 - Optional vision providers for image-to-text descriptions, including OpenAI-compatible chat/completions and Volcengine OCR.
 - Durable inbound message persistence before LLM calls, so cancelled pipelines do not silently drop user input.
@@ -28,7 +30,7 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - Structured action ledger for verified tool/send outcomes; generated-image markers never enter assistant history.
 - Dashboard TUI and tester as local debugging surfaces; production behavior is defined by `main.py` and may have a different registry.
 - Final assistant output uses a strict `[TO_SELF]...[/TO_SELF]` plus `[TO_USER]...[/TO_USER]` envelope. Only `TO_USER` is visible; `TO_SELF` goes to the global inner journal.
-- If a model omits all envelope markers, the pipeline recovers its plain final content as `TO_USER` with an empty `TO_SELF`; malformed marker-bearing output still receives a bounded protocol rewrite.
+- If a model omits all envelope markers, the pipeline recovers its plain final content as `TO_USER` with an empty `TO_SELF`. Malformed marker-bearing output receives a bounded rewrite; after exhaustion, one unambiguous complete `TO_USER` block is sent without `TO_SELF`, otherwise the user receives a flat-text protocol error instead of silence.
 - Assistant `TO_USER` is sent as one QQ message; `|` is literal text.
 - `status_update` can send one short progress message before a long tool; automatic fallback progress never enters assistant history.
 - `no_reply` tool for deliberate silent turns.
@@ -106,6 +108,15 @@ napcat:
   http_url: http://localhost:3000
   access_token: ""
 
+ingress:
+  enabled: false
+  host: 127.0.0.1
+  port: 8765
+  token: ""
+  target_user_id: "3535616589"
+  max_body_bytes: 262144
+  request_timeout_seconds: 10
+
 model:
   provider: deepseek
   model: deepseek-chat
@@ -127,6 +138,11 @@ context:
 
 prompts:
   system_file: system-prompts.yaml
+
+identity:
+  user_id: "3535616589"
+  nickname: "Sakuraba Ema"
+  alias: "前辈"
 
 inner_journal:
   max_entry_chars: 1000
@@ -173,6 +189,49 @@ render:
 ```
 
 If no LLM API key is configured, the pipeline can still run in local stub/testing flows.
+
+## External Service Ingress
+
+The optional ingress enforces a loopback TCP address and accepts `POST /v1/events`.
+It uses the standard library asyncio HTTP server, so enabling it adds no Python
+runtime dependency. The listener is disabled by default. When enabled, both a
+Bearer token and a positive numeric owner QQ `target_user_id` are required.
+
+The body intentionally reuses the NapCat private-message event shape. The
+`user_id` field is interpreted as a stable external service ID, not a QQ user:
+
+```json
+{
+  "post_type": "message",
+  "message_type": "private",
+  "user_id": "calendar",
+  "message_id": "calendar-20260730-001",
+  "message": [{"type": "text", "data": {"text": "明天 09:30 有项目会议"}}],
+  "raw_message": "明天 09:30 有项目会议",
+  "sender": {"nickname": "日程服务"}
+}
+```
+
+The event is stored first as `received`, then placed into a FIFO queue for
+`service:calendar`. The pipeline replies through NapCat to the configured
+`target_user_id`. Duplicate `(service user_id, message_id)` reports are
+acknowledged without creating another event. Reports left in `received` state
+are restored after a backend restart.
+
+Example request:
+
+```bash
+curl -X POST http://127.0.0.1:8765/v1/events \
+  -H 'Authorization: Bearer YOUR_INGRESS_TOKEN' \
+  -H 'Content-Type: application/json' \
+  --data @report.json
+```
+
+Only private message events are accepted in this first version. External
+services may send text and image segments whose `data.url` is HTTP(S). Local
+image paths and record/video/forward or unknown segments are rejected before
+they reach the pipeline. In-flight reports cancelled during graceful shutdown
+return to `received` so startup recovery can process them again.
 
 ## Interactive Tester
 
@@ -264,36 +323,36 @@ Use `status_update` before a tool that is expected to take a noticeable amount o
 
 ## Context And Memory Protocol
 
-The LLM request uses one provider-native Chinese `system` message for durable platform rules. The next user message is `[Self Context]`, containing persona, canonical bot state, and the global inner journal. The following user message is `[Conversation Context]`, containing conversation-scoped self notes, summaries, and projected life context. These are documentary context, not fresh user requests. The verified action ledger remains durable audit data but is not injected into every request. Later user/assistant messages are the working conversation window.
+The LLM request uses one provider-native Chinese `system` message for durable platform rules and the configured persona. The remaining request is a global chronological Life Stream followed by temporary platform state and the current source message. Every human and service source uses provider role `user`; readable prefixes identify the conversation and actor. The source identity is data supplied by the platform, not something the model should infer from prose.
+
+Completed tool rounds in the Life Stream are replayed as native provider messages: one `assistant` message with `tool_calls`, followed by matching `tool` results. Tool audit records remain durable, but are not flattened into ordinary assistant text.
 
 Inner journal entries are subjective bot-state deltas, not verified facts or instructions. They include source conversation/actor provenance for the model, but are never represented as fake user/assistant turns. A successful final turn may append one bounded `TO_SELF` entry; cancellation, failed visible output, and malformed output do not.
 
 Summaries, self notes, and historical user turns are annotated with readable UTC+8 timestamps. Historical assistant turns are passed through without synthetic timestamp prefixes. Older self-note lines without timestamps are injected as `很久之前`.
 
-Before the current user request, the pipeline injects a temporary `[Runtime Injection]` user message with current UTC+8 time, source, silent/remembering flags, peer metadata, and the active Priority Override. Runtime Injection is platform state, not user-authored chat, and is not written to durable history.
-
-`priority_override` is a write tool with `add`, `replace`, and `clear`. Its active content is injected only in Runtime Injection. Use it only for high-priority rules that are worth paying attention to every turn.
+Before the current user request, the pipeline injects a temporary platform-state user message with current UTC+8 time, source, silent/remembering flags, peer metadata and active work. This is platform state, not user-authored chat, and is not written to durable history.
 
 Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false` and `remember_output=true`: synthetic heartbeat input is not written, while verified proactive assistant output is written to the target window and event ledger.
 
 Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete record-ID turns and stores a trusted `covered_through_message_id`. Legacy `last_message_id` values are ignored during restart restoration. Only successful conversation records are restored; memory, action artifacts, cancelled/error/no-reply records are excluded.
 
-Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate tool result says `staged`, while the final success or failure is stored in the action ledger.
+Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate live tool result says `staged`; the durable native tool history and action ledger expose the final committed success or failure.
 
 ### Global Event And Media Ledger
 
-The `events` table is the append-first interaction ledger. It records actor,
-conversation, visibility, lifecycle, tool, and media provenance. Global storage
-does not mean global prompt injection: private events remain private, group
-events remain in their group, and only explicitly global records cross
-conversations. Cross-conversation records are documentary data with actor IDs,
-never simulated `user` or `assistant` turns.
+The `events` table is the append-first global interaction ledger. It records
+actor, conversation, visibility, lifecycle, tool, turn and media provenance.
+The current context projector intentionally presents the unified life timeline
+in chronological order. Actor IDs, display names and private aliases are
+carried in readable prefixes; they are not simulated provider roles.
 
-A group has one shared conversation window while members retain separate actor
-and legacy memory scopes. After about 30 minutes of idle time, finalized events
-may be summarized into an Episode with exact sequence coverage. Raw events are
-never deleted; context projection chooses either the Episode or its covered raw
-events, keeping requests near the 100K-token attention budget.
+A group has one shared conversation window while members retain independent
+actor identities. The global `actor_profile` tool maintains a private alias and
+relationship label for each stable actor ID. After about 30 minutes of idle
+time, finalized events may be summarized into an Episode with exact sequence
+coverage. Raw events are never deleted; context projection can later choose an
+Episode or its covered raw events, keeping requests near the model budget.
 
 Incoming and successfully outgoing media are automatically registered with a
 stable SHA-derived `media_id`; inbound image URLs are downloaded into the
@@ -304,10 +363,13 @@ temporary URLs. `sticker_search` without a query lists all available stickers;
 
 System prompt ownership is centralized in `system-prompts.yaml`. The runtime,
 summary workers, and context experiment load the `persona` field plus the same
-four operational prompt levels through `prompts.system_file`, so historical data is interpreted consistently at every
+five operational prompt levels through `prompts.system_file`, so historical data is interpreted consistently at every
 LLM boundary. `config_manager reload` reloads both files. Production keeps the
 prompt file at `/opt/mutsumi-sync-v3/shared/system-prompts.yaml` so releases do
-not overwrite operator changes.
+not overwrite the operator persona. Deploys back up that shared file, preserve
+its `persona`, and atomically synchronize all operational prompts from the release.
+The prompt loader replaces the three fixed identity placeholders once at load time;
+the current speaker still comes from the event's `actor_id` and platform nickname.
 
 ## Heartbeat And Vision
 
@@ -360,6 +422,7 @@ Then enable:
 render:
   markdown_image:
     enabled: true
+    timeout_seconds: 60
 ```
 
 The renderer uses:
@@ -371,6 +434,8 @@ The renderer uses:
 - Playwright Chromium screenshots
 
 The generated PNG files are written to `data/generated/markdown/` by default.
+The 60-second default includes the first Playwright/Chromium cold start; warm
+renders normally complete much sooner.
 
 ## Tests
 

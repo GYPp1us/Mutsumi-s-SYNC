@@ -1,7 +1,14 @@
 import pytest
 import tempfile
 import os
-from src.mutsumi_sync.tools.memory import memory_save, memory_search, MEMORY_SAVE_SCHEMA, MEMORY_SEARCH_SCHEMA
+from src.mutsumi_sync.tools.memory import (
+    memory_save,
+    memory_search,
+    MEMORY_SAVE_DESCRIPTION,
+    MEMORY_SAVE_SCHEMA,
+    MEMORY_SEARCH_DESCRIPTION,
+    MEMORY_SEARCH_SCHEMA,
+)
 from src.mutsumi_sync.memory.store import MessageStore, StoredMessage
 
 
@@ -104,3 +111,8 @@ class TestSchemas:
     def test_memory_search_schema(self):
         assert "query" in MEMORY_SEARCH_SCHEMA["properties"]
         assert MEMORY_SEARCH_SCHEMA["required"] == ["query"]
+
+    def test_descriptions_separate_read_from_write(self):
+        assert "只读" in MEMORY_SEARCH_DESCRIPTION
+        assert "不要" in MEMORY_SAVE_DESCRIPTION
+        assert "memory_search" in MEMORY_SAVE_DESCRIPTION

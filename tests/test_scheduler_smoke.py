@@ -354,6 +354,60 @@ async def test_heartbeat_runs_proactive_pipeline_without_remembering_input(monke
         os.unlink(store_path)
 
 
+async def test_heartbeat_visible_output_waits_for_a_real_inbound_reply(monkeypatch):
+    config = Config.load("config.example.yaml")
+    config.session.timeout = 999999
+    registry = ToolRegistry()
+    sender = FakeSender()
+    store, store_path = make_store()
+    await store.initialize()
+    scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+    conversation_id = "private:proactive-user"
+    await store.append_event(EventRecord(
+        conversation_id=conversation_id,
+        actor_id="qq:user:proactive-user",
+        actor_kind="human",
+        actor_name="Proactive User",
+        event_type=EventType.INBOUND.value,
+        content="recent user message",
+    ))
+    visible_policies = []
+
+    async def fake_llm_call(messages, deps):
+        visible_policies.append(deps.allow_visible_output)
+        return LLMResult(
+            content=format_final_envelope(to_user="a concrete proactive message"),
+            input_tokens=5,
+            output_tokens=2,
+        )
+
+    monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+
+    try:
+        await scheduler.run_heartbeat_once()
+        assert len(sender.sent) == 1
+        assert await store.has_unanswered_proactive(conversation_id) is True
+
+        await scheduler.run_heartbeat_once()
+        assert len(sender.sent) == 1
+
+        await store.append_event(EventRecord(
+            conversation_id=conversation_id,
+            actor_id="qq:user:proactive-user",
+            actor_kind="human",
+            actor_name="Proactive User",
+            event_type=EventType.INBOUND.value,
+            content="user replied",
+        ))
+        await scheduler.run_heartbeat_once()
+
+        assert len(sender.sent) == 2
+        assert visible_policies == [True, False, True]
+    finally:
+        await store.close()
+        os.unlink(store_path)
+
+
 async def test_heartbeat_disables_cold_session_poke(monkeypatch):
     config = Config.load("config.example.yaml")
     registry = ToolRegistry()

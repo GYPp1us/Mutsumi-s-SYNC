@@ -5,18 +5,20 @@ from src.mutsumi_sync.config import Config
 def test_runtime_prompt_contains_current_protocol_boundaries():
     config = Config()
     prompt = _build_default_system_prompt(config)
-    assert prompt == config.prompts.system.runtime
+    assert prompt.startswith(config.prompts.system.runtime.rstrip())
+    assert "人格设定：" in prompt
+    assert config.prompts.system.persona in prompt
     for phrase in (
         "TO_USER 必须是扁平纯文本",
         "使用 markdown_image",
         "历史 Event",
-        "Canonical Bot State",
-        "不得把一个 actor 的事实转移给另一个 actor",
+        "所有真人和服务来源都使用 provider 的 user 角色",
+        "不得把一个人的事实移植给另一个人",
         "Media Ledger",
         "[TO_SELF]",
         "[TO_USER]",
         "status_update",
-        "Self Context",
+        "Life Stream",
     ):
         assert phrase in prompt
 

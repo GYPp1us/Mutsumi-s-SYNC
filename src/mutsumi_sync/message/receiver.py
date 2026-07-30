@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Literal
 from urllib.parse import parse_qs, urlparse, urlunparse
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from websockets import connect
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
@@ -19,18 +19,24 @@ class MessageEvent(BaseModel):
 
     post_type: str
     message_type: str
-    user_id: int
+    user_id: int | str
     group_id: int | None = None
     message: list[dict]
     raw_message: str
-    message_id: int
-    sender: dict
+    message_id: int | str = ""
+    sender: dict = Field(default_factory=dict)
     time: int = 0
     self_id: int = 0
     sub_type: str = ""
     message_seq: int | None = None
 
     model_config = ConfigDict(extra="ignore")
+
+
+class ServiceMessageEvent(MessageEvent):
+    """NapCat-shaped event whose user_id identifies an external service."""
+
+    source_kind: Literal["service"] = "service"
 
 
 class MessageReceiver:
