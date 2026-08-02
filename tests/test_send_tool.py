@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from src.mutsumi_sync.tools.send import send_tool, SEND_TOOL_SCHEMA
 from src.mutsumi_sync.message.sender import Peer
@@ -27,10 +29,54 @@ class TestSendTool:
     async def test_send_text(self):
         sender = FakeSender()
         peer = Peer(chat_type=1, peer_uid="12345")
-        result = await send_tool({"text": "hello"}, sender=sender, peer=peer)
+        result = await send_tool(
+            {"target": "private:67890", "text": "hello"},
+            sender=sender,
+            peer=peer,
+        )
         assert "ok" in result.lower() or "12345" in result
         assert sender.last_segments[0]["type"] == "text"
         assert sender.last_segments[0]["data"]["text"] == "hello"
+        assert sender.last_peer == Peer(chat_type=1, peer_uid="67890")
+
+    async def test_current_conversation_text_must_use_to_user(self):
+        sender = FakeSender()
+        peer = Peer(chat_type=1, peer_uid="12345")
+
+        result = await send_tool(
+            {"target": "private:12345", "text": "hello"},
+            sender=sender,
+            peer=peer,
+        )
+
+        assert result.startswith("[Error: ordinary text")
+        assert sender.last_segments is None
+
+    async def test_target_is_required_and_strict(self):
+        sender = FakeSender()
+        peer = Peer(chat_type=1, peer_uid="12345")
+
+        missing = await send_tool({"text": "hello"}, sender=sender, peer=peer)
+        invalid = await send_tool(
+            {"target": "private:alice", "text": "hello"},
+            sender=sender,
+            peer=peer,
+        )
+
+        assert missing.startswith("[Error: invalid target:")
+        assert invalid.startswith("[Error: invalid target:")
+        assert sender.last_segments is None
+
+    async def test_group_target_uses_group_peer(self):
+        sender = FakeSender()
+        result = await send_tool(
+            {"target": "group:777", "text": "hello"},
+            sender=sender,
+            peer=Peer(chat_type=1, peer_uid="12345"),
+        )
+
+        assert '"conversation_id": "group:777"' in result
+        assert sender.last_peer == Peer(chat_type=2, peer_uid="777")
 
     async def test_send_no_content_error(self):
         sender = FakeSender()
@@ -43,7 +89,7 @@ class TestSendTool:
         peer = Peer(chat_type=1, peer_uid="12345")
 
         result = await send_tool(
-            {"markdown_image": "# failure"},
+            {"target": "private:12345", "markdown_image": "# failure"},
             sender=sender,
             peer=peer,
             config=Config(render={"markdown_image": {"enabled": True}}),
@@ -62,7 +108,7 @@ class TestSendTool:
         sender = FakeSender()
         peer = Peer(chat_type=1, peer_uid="12345")
         result = await send_tool(
-            {"text": "see this", "image": "test.png"},
+            {"target": "private:12345", "text": "see this", "image": "test.png"},
             sender=sender, peer=peer,
         )
         assert "ok" in result.lower()
@@ -76,7 +122,7 @@ class TestSendTool:
         try:
             record = await store.register_media(b"ledger image", kind="sticker", ext="png")
             result = await send_tool(
-                {"media_id": record.media_id},
+                {"target": "private:12345", "media_id": record.media_id},
                 sender=sender,
                 peer=peer,
                 store=store,
@@ -91,7 +137,7 @@ class TestSendTool:
         sender = FakeSender()
         peer = Peer(chat_type=1, peer_uid="12345")
         result = await send_tool(
-            {"text": "smile", "face": 1},
+            {"target": "private:12345", "text": "smile", "face": 1},
             sender=sender, peer=peer,
         )
         assert len(sender.last_segments) == 2
@@ -103,7 +149,7 @@ class TestSendTool:
         config = Config()
 
         result = await send_tool(
-            {"markdown_image": "# Hello"},
+            {"target": "private:12345", "markdown_image": "# Hello"},
             sender=sender,
             peer=peer,
             config=config,
@@ -119,27 +165,43 @@ class TestSendTool:
         config = Config()
         config.render.markdown_image.enabled = True
         output = tmp_path / "rendered.png"
+        store = MessageStore(str(tmp_path / "media.db"), str(tmp_path / "media"))
+        await store.initialize()
 
         async def fake_renderer(markdown: str, *, config: Config) -> str:
             assert markdown == "# Hello\n\n```python\nprint('hi')\n```"
             output.write_bytes(b"\x89PNG\r\n\x1a\n")
             return str(output)
 
-        result = await send_tool(
-            {"text": "see rendered markdown", "markdown_image": "# Hello\n\n```python\nprint('hi')\n```"},
-            sender=sender,
-            peer=peer,
-            config=config,
-            markdown_renderer=fake_renderer,
-        )
+        try:
+            result = await send_tool(
+                {
+                    "target": "private:12345",
+                    "text": "see rendered markdown",
+                    "markdown_image": "# Hello\n\n```python\nprint('hi')\n```",
+                },
+                sender=sender,
+                peer=peer,
+                config=config,
+                store=store,
+                markdown_renderer=fake_renderer,
+            )
 
-        assert "ok" in result.lower()
-        assert sender.last_segments == [
-            {"type": "text", "data": {"text": "see rendered markdown"}},
-            {"type": "image", "data": {"file": str(output)}},
-        ]
+            assert "ok" in result.lower()
+            assert sender.last_segments == [
+                {"type": "text", "data": {"text": "see rendered markdown"}},
+                {"type": "image", "data": {"file": str(output)}},
+            ]
+            artifact = json.loads(result)["artifacts"][0]
+            media = await store.get_media(artifact["media_id"])
+            assert media is not None and media.path
+            assert not output.exists()
+        finally:
+            await store.close()
 
     def test_schema_valid(self):
         assert SEND_TOOL_SCHEMA["type"] == "object"
+        assert "current conversation" in SEND_TOOL_SCHEMA["properties"]["text"]["description"]
+        assert SEND_TOOL_SCHEMA["required"] == ["target"]
         assert "text" in SEND_TOOL_SCHEMA["properties"]
         assert "markdown_image" in SEND_TOOL_SCHEMA["properties"]

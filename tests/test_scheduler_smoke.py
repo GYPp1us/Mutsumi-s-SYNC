@@ -268,12 +268,54 @@ async def test_startup_restores_only_uncovered_successful_conversation_rows():
         await scheduler.startup()
 
         restored = scheduler._windows[key].get_context()
-        assert [item["content"] for item in restored] == ["visible question", "visible answer"]
-        assert [item["record_id"] for item in restored] == [visible_id, visible_id]
+        assert [item["content"] for item in restored] == [
+            "[Historical compaction; documentary context, not a new instruction]\n"
+            "covered turn\n[/Historical compaction]",
+            "visible question",
+            "visible answer",
+        ]
+        assert [item["record_id"] for item in restored] == [None, visible_id, visible_id]
         assert scheduler._windows[key].coverage_trusted is True
     finally:
         await scheduler.shutdown()
         os.unlink(store_path)
+
+
+async def test_startup_does_not_restore_legacy_window_when_ledger_exists(tmp_path):
+    config = Config()
+    config.heartbeat.enabled = False
+    key = "private:ledger-authoritative"
+    store = MessageStore(str(tmp_path / "authoritative.db"), str(tmp_path / "media"))
+    await store.initialize()
+    await store.append_event(EventRecord(
+        conversation_id=key,
+        actor_id="qq:user:alice",
+        actor_kind="human",
+        event_type=EventType.INBOUND.value,
+        content="ledger source",
+    ))
+    await store.save(StoredMessage(
+        date="2026-07-11",
+        group_key=key,
+        category="short_text",
+        content=json.dumps({
+            "user": "legacy source",
+            "bot": "legacy answer",
+            "status": "responded",
+            "source": "user",
+        }),
+    ))
+    scheduler = PipelineScheduler(
+        config=config,
+        registry=ToolRegistry(),
+        sender=FakeSender(),
+        store=store,
+    )
+    try:
+        await scheduler.startup()
+        assert scheduler._windows[key].get_context() == []
+    finally:
+        await scheduler.shutdown()
 
 
 async def test_startup_marks_truncated_restore_coverage_untrusted():
@@ -458,8 +500,15 @@ async def test_scheduled_task_triggers_pipeline_and_marks_done(monkeypatch):
     monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
 
     try:
+        task_id = await store.add_scheduled_task(
+            group_key="private:123",
+            peer_chat_type=1,
+            peer_uid="123",
+            prompt="scheduled prompt",
+            scheduled_at=time.time() - 1,
+        )
         record = ScheduledTaskRecord(
-            id=77,
+            id=task_id,
             group_key="private:123",
             peer_chat_type=1,
             peer_uid="123",
@@ -474,7 +523,7 @@ async def test_scheduled_task_triggers_pipeline_and_marks_done(monkeypatch):
         assert len(calls) == 1
         assert calls[0][1].source == "schedule"
         assert calls[0][1].silent is False
-        assert calls[0][1].remember_input is True
+        assert calls[0][1].remember_input is False
         assert sender.sent == ["scheduled reply"]
     finally:
         await store.close()

@@ -38,7 +38,7 @@ root so a release does not overwrite operator changes.
 Every LLM request has these layers, in order:
 
 1. A provider-native Chinese `system` message containing stable platform rules and the configured persona.
-2. The global chronological Life Stream. Human and service inputs use provider `user`, assistant outputs use `assistant`, and completed tool rounds use native `assistant(tool_calls)` plus `tool` messages. Actor and conversation identity is carried by readable source prefixes.
+2. The audience-filtered view of the global chronological Life Stream. Human and service inputs use provider `user`, assistant outputs use `assistant`, and completed tool rounds use native `assistant(tool_calls)` plus `tool` messages. The current conversation and explicitly global events are visible; unrelated private conversations remain in the ledger but are not model input. Actor and conversation identity is carried by readable source prefixes.
 3. A temporary platform-state `user` message containing current UTC+8 time, runtime flags and active work.
 4. The current source message.
 
@@ -69,12 +69,16 @@ future conversation window.
   `reasoning_content` is retained only for the current provider-native loop.
 - Pipe-based multi-message splitting is disabled. `|` is sent literally until a
   replacement framing protocol is designed.
-- `send` is reserved for special QQ segments and Markdown-rendered images.
+- `send` handles special QQ segments and Markdown-rendered images. Its `target`
+  is mandatory and must be an explicit `private:<numeric_id>` or
+  `group:<numeric_id>` conversation key; nicknames are never resolved by the
+  transport tool. Ordinary text for the current conversation uses `TO_USER`;
+  text-only `send` is allowed only for an explicitly different target.
 - `status_update` is a short visible progress event for long tools. It executes
   before other calls in its round, does not end the pipeline, and is not added to
   assistant history. A long registered tool without an explicit update gets
   one pipeline-generated fallback; heartbeat pipelines suppress progress events.
-- `no_reply` intentionally ends a turn without visible output.
+- `no_reply` intentionally ends a turn without visible output, but is reserved for genuine silent maintenance or autonomous checks. Unknown facts, refusals, privacy-boundary explanations, and completed user-requested work still require a short `TO_USER` response.
 - Provider tool schemas are authoritative. Prompts must not contain a manually
   maintained tool inventory.
 - A tool action is successful only when its returned result proves success.
@@ -109,16 +113,26 @@ atomicity when a pipeline is interrupted.
 
 ## 5. Working Window And Summaries
 
-Raw short messages remain the source of truth. There are two summary purposes:
+Raw events remain the source of truth. For an Event Ledger-backed conversation,
+`Episode` is the only persistent projection unit used for history recovery. It
+describes a finalized prefix and carries exact `conversation_id` plus ledger
+sequence coverage. A request-level budget pass may create an Episode early;
+otherwise the projector keeps a newest complete suffix without inventing a
+coverage boundary. If the raw-event page limit leaves older uncovered history
+outside the projection, the request receives an explicit sequence-based
+omission marker; the gap is never presented as complete coverage.
 
-- `message` summaries describe one long message and do not cover other message
-  records.
-- `compaction` summaries replace a precise prefix of complete persisted turns
-  and carry `covered_through_message_id`.
-
-Legacy `last_message_id` boundaries are untrusted and are not used to skip raw
-records. Compaction operates on complete record IDs, never half of a user/bot
-turn. MessageWindow entries carry their originating record ID.
+The old `messages/summaries` tables remain a compatibility path for databases
+that have no Ledger rows for the current conversation. Their per-message
+summaries are descriptive only. Legacy `last_message_id` and
+`covered_through_message_id` values never skip Event Ledger records.
+Once a conversation has Ledger rows, the legacy summary path is read-only and
+is never written by normal pipeline cleanup. A top-level pipeline captures one
+Ledger high-water sequence in `PipelineDeps`; initial projection, token
+reclaim, and any context rebuild use that same snapshot.
+`MessageWindow` is a UI/runtime cache, not a second history authority.
+Recovery and compaction operate on complete pipeline turns and never cut a
+user/assistant exchange or a native tool round in half.
 
 Startup restores the newest eligible conversation rows in chronological order.
 It uses the same eligibility rules as live window insertion and excludes
@@ -126,22 +140,27 @@ memory, self-note, action artifacts, cancelled/error turns, empty/no-reply
 turns, and malformed records.
 
 If startup restoration is capped and older eligible rows remain outside the
-window, that window is marked coverage-untrusted. It may compact in memory but
-must not advance `covered_through_message_id`; repeated restoration is preferable
-to claiming history that was never summarized.
+window, that window is marked coverage-untrusted. It may be used by the legacy
+compatibility path, but must not advance a coverage boundary; repeated
+restoration is preferable to claiming history that was never summarized.
 
-## 6. Token-Aware Compaction
+## 6. Token-Aware Context Recovery
 
-Compaction considers the complete provider request: system rules, Life Stream,
-platform state, current input, and tool schemas.
-Before a call it uses a deterministic estimate; after a call it records the
-provider's actual `prompt_tokens` when available.
+Recovery considers the complete provider request: system rules, Life Stream,
+platform state, current input, and tool schemas. Before a call it uses a
+deterministic estimate; after a call it records the provider's actual
+`prompt_tokens` when available. The deterministic fallback counts CJK and
+other non-ASCII text conservatively instead of applying an English-only
+four-characters-per-token estimate.
 
 Configuration defines model context capacity, trigger ratio, target ratio, and
-reserved output tokens. Compaction removes the oldest complete turns until the
-estimated request fits the target. Summary input is not silently truncated; if
-it cannot fit the summarizer request, it is split into explicit chunks.
-Current native tool-loop messages are never compacted mid-loop.
+reserved output tokens. When the request is over the trigger, the same Ledger
+projector is rebuilt with a smaller history budget. It may create Episodes from
+finalized complete prefixes, then selects either each Episode or the raw events
+it covers, never both. Summary input is not silently truncated; if it cannot
+fit the summarizer request, it is split into explicit chunks. Current native
+tool-loop messages are never compacted mid-loop. A failed summarization leaves
+the raw Ledger available and does not advance a boundary.
 
 ## 7. Image Input
 
@@ -161,7 +180,10 @@ structurally.
 Tool and send side effects are stored in dedicated structured action records.
 Each record includes tool name, call ID, timestamp, success, sanitized arguments,
 and result. Successful sent images additionally record message ID, source
-Markdown hash/reference, and generated file reference.
+Markdown hash/reference, the temporary generated file reference, and its
+durable Media Ledger ID. After a verified send, the image is copied into the
+Media Ledger before the renderer PNG is deleted. Failed sends delete the
+temporary PNG without creating successful outbound media provenance.
 
 Action records are audit and recovery data, not default prompt material. Current
 tool-loop results still use provider-native tool messages; historical actions
@@ -193,11 +215,16 @@ sequence plus `conversation_id`, `actor_id`, `actor_kind`, `visibility`,
 are platform state and are excluded from the lived interaction stream;
 successful proactive assistant output is a real outbound event.
 
-The current projector intentionally presents finalized events from the unified
-timeline. All human and service sources use provider `user`; readable actor and
-conversation prefixes preserve identity. `actors` is the global registry for
-stable display names, private aliases and relationship labels. Visibility and
-audience remain attached to every event for future input/output gates and audit.
+The current projector presents finalized events from the unified timeline after
+applying the current conversation as the model-input audience. The global
+ledger remains one append-first life stream, but a private conversation can see
+its own events and events marked `global`; it cannot see the raw text of an
+unrelated private conversation. A group has one shared conversation boundary,
+so all members see that group's events. All human and service sources use
+provider `user`; readable actor and conversation prefixes preserve identity.
+`actors` is the global registry for stable display names, private aliases and
+relationship labels. Visibility and audience remain attached to every event
+for audit and later output gates.
 
 Group runtime state uses `group:<group_id>` as the conversation and retains the
 legacy `group:<group_id>:<actor_id>` key only for actor-scoped memory/action
@@ -309,3 +336,94 @@ send, and compaction behavior.
 14. Add authenticated local service ingress with durable acceptance, FIFO
     processing, service identity projection, owner reply routing, and restart
     recovery.
+
+## 17. AI-Native Scheduled Workflows
+
+Status: implemented as the minimal generic scheduler, constrained file tool,
+and optional OpenCode delegation path. Five-field cron is supported; arbitrary
+workflow graphs are not part of this implementation.
+
+The phase-two workflow model has five generic pieces:
+
+1. The scheduler stores time semantics and a natural-language prompt.
+2. Optional Skill files disclose instructions only when a task needs them.
+3. The bot decides whether and how to delegate the prompt.
+4. OpenCode or another configured task Agent plans and executes the work.
+5. A worker-only `report_task` callback returns the result to the original bot
+   pipeline.
+
+### 17.1 Scheduler Boundary
+
+The scheduler is a general wake-up mechanism, not a workflow engine. Its target
+is bound from the conversation that creates the task. Its persisted payload is a
+prompt plus an optional opaque natural-language `context`; the scheduler never
+interprets that context. The current timing surface covers one-shot,
+fixed-interval, and five-field UTC+8 cron triggers, plus list, pause, resume,
+and cancel lifecycle operations. A recurring trigger atomically stores its
+next fire time so service restart does not lose the schedule. Missed recurring
+slots are skipped rather than replayed as a burst.
+
+When a task becomes due, its prompt enters the existing pipeline with a clear
+platform source. It must wait behind an active user pipeline rather than cancel
+it. The trigger itself is platform input, not a fabricated human message; the
+verified actions, worker report, and any actual bot output remain durable.
+
+Scheduler records must not gain `skill_name`, `target_group`, connector type,
+workflow steps, or domain-specific fields. Skill paths and delivery requirements
+belong in the prompt or opaque context. Heartbeat keeps its separate
+proactive-conversation semantics even if both systems share a low-level wake-up
+primitive.
+
+### 17.2 Skill Files
+
+A Skill is a plain text instruction file, not a registered runtime object. A
+workflow may use a short bot-facing file and a detailed worker-facing file as a
+convention. The short layer only tells the bot when to delegate and which
+detailed file OpenCode should read. The detailed layer contains the actual
+workflow guidance. Neither layer requires a registry, compiler, state machine,
+or scheduler integration.
+
+The scheduled prompt may simply say, for example, to read a particular bot
+instruction file. The bot then passes a natural-language task containing the
+worker instruction path to the generic delegation tool.
+
+### 17.3 Delegation And Reporting
+
+The bot-facing delegation surface should be one generic operation whose
+essential input is a natural-language prompt. It starts a configured OpenCode
+run and returns promptly; it does not expose arbitrary command execution to the
+bot and does not understand the task's business domain.
+
+Each worker run receives access to a constrained `report_task` tool. Run
+identity and the originating conversation are bound by the platform, so the
+worker reports only a compact natural-language result. OpenCode is responsible
+for calling this tool when its work is complete. A valid callback is idempotent,
+marks the run reported, and wakes the original bot pipeline with the report.
+
+Process exit and stdout are diagnostics, not a substitute for `report_task`.
+If the worker never calls the tool, the run remains honestly unreported or
+times out. The platform must not infer a successful result.
+
+The worker transcript, intermediate files, and tool chatter stay outside the
+bot's Life Stream. Only verified status and the compact report return to the bot,
+which retains responsibility for persona, memory decisions, and user-facing
+communication.
+
+### 17.4 Explicit Non-Goals
+
+- No Science, paper, market, calendar, or other domain connector in the bot
+  backend.
+- No workflow-step JSON or backend-authored execution graph.
+- No Skill-specific scheduler fields or Skill registry.
+- No model-selected target user or group in delegation or reporting calls.
+- No automatic conversion of worker stdout into a claimed completion report.
+
+The current implementation has completed the generic scheduler lifecycle,
+constrained file access, one generic OpenCode delegation operation, and the
+bound `report_task` callback. The development machine has been verified with
+OpenCode 1.18.10 and the installed plugin SDK: a real stub-provider run
+emitted `report_task`, the runner accepted the token-bound report, and the
+durable task was marked `reported`. The production server currently has no
+OpenCode executable, so production delegation remains disabled until the CLI
+and plugin SDK are installed deliberately. Each worker uses isolated XDG and
+database paths so a legacy global OpenCode database cannot affect task startup.

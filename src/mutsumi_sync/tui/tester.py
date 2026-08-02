@@ -10,6 +10,7 @@ from ..memory.store import MessageStore
 from ..message.classifier import MessageType
 from ..message.receiver import MessageEvent
 from ..message.sender import MessageSender
+from ..main import build_registry as build_production_registry, register_scheduler_tool
 from ..scheduler import PipelineScheduler
 from ..tools.registry import Tool, ToolRegistry
 from ..tools.http_api import http_api_call, HTTP_API_SCHEMA
@@ -78,66 +79,8 @@ def setup_test_logging(queue: asyncio.Queue[logging.LogRecord]) -> None:
 
 
 def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
-    registry = ToolRegistry()
-
-    registry.register(Tool(
-        name="http_api_call",
-        description="发送 HTTP 请求到任意 URL",
-        parameters=HTTP_API_SCHEMA,
-        handler=http_api_call,
-    ))
-
-    async def _config_manager(args: dict) -> str:
-        return await config_manager(args, config=config)
-
-    registry.register(Tool(
-        name="config_manager",
-        description="读取、修改、热重载配置",
-        parameters=CONFIG_MANAGER_SCHEMA,
-        handler=_config_manager,
-    ))
-
-    async def _memory_search(args: dict, **deps) -> str:
-        return await memory_search(args, store=store, group_key=deps.get("group_key", ""))
-
-    registry.register(Tool(
-        name="memory_search",
-        description=MEMORY_SEARCH_DESCRIPTION,
-        parameters=MEMORY_SEARCH_SCHEMA,
-        handler=_memory_search,
-    ))
-
-    async def _memory_save(args: dict, **deps) -> str:
-        return await memory_save(args, store=store, group_key=deps.get("group_key", ""))
-
-    registry.register(Tool(
-        name="memory_save",
-        description=MEMORY_SAVE_DESCRIPTION,
-        parameters=MEMORY_SAVE_SCHEMA,
-        handler=_memory_save,
-    ))
-
-    async def _self_note(args: dict, **deps) -> str:
-        return await self_note_tool(args, store=store, group_key=deps.get("group_key", ""))
-
-    registry.register(Tool(
-        name="self_note",
-        description=SELF_NOTE_DESCRIPTION,
-        parameters=SELF_NOTE_SCHEMA,
-        handler=_self_note,
-    ))
-
-    async def _send(args: dict, **deps) -> str:
-        return await send_tool(args, sender=deps.get("sender"), peer=deps.get("peer"), config=config)
-
-    registry.register(Tool(
-        name="send",
-        description="发送消息到用户。支持 text/image/markdown_image/face/at/reply/forward 段类型。",
-        parameters=SEND_TOOL_SCHEMA,
-        handler=_send,
-    ))
-
-    return registry
+    """Use the production registry so the tester exercises real tool wiring."""
+    return build_production_registry(config, store)
 
 
 def _fake_event(user_id: int, group_id: int | None, text: str) -> MessageEvent:
@@ -227,6 +170,7 @@ async def run_tester(config_path: str = "config.yaml") -> None:
     registry = build_registry(config, store)
     sender = _FakeSender()
     scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+    register_scheduler_tool(registry, scheduler)
     await scheduler.startup()
 
     log_queue: asyncio.Queue[logging.LogRecord] = asyncio.Queue(maxsize=500)

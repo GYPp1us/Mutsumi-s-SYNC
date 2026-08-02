@@ -19,6 +19,8 @@ def test_runtime_prompt_contains_current_protocol_boundaries():
         "[TO_USER]",
         "status_update",
         "Life Stream",
+        "当前来源消息首次提供",
+        "调用次数必须为零",
     ):
         assert phrase in prompt
 

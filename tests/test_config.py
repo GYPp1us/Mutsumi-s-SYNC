@@ -72,6 +72,13 @@ class TestConfig:
         assert c.render.markdown_image.node_path == "node-custom"
         assert c.render.markdown_image.output_dir == "out/markdown"
 
+    def test_load_rejects_non_mapping_prompts(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("prompts: invalid\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="config.prompts must be a YAML mapping"):
+            Config.load(str(path))
+
     def test_set_simple(self):
         c = Config()
         result = c.set("session.timeout", 60)

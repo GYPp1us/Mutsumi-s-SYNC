@@ -51,6 +51,9 @@ Mutsumi's SYNC v3 是一个基于 NapCat 的 QQ 聊天机器人。它不是简�
 | Global Life Stream 与 Actor Registry | 完成 |
 | 外部服务消息 ingress、去重、FIFO 与重启恢复 | 完成 |
 | 历史 tool round 原生回放 | 完成 |
+| 持久化一次性/固定间隔/cron scheduler tool | 完成 |
+| 文件型 Skill 与受控 file_edit tool | 完成 |
+| 可选 OpenCode 委派与显式 report_task 回报 | 完成，已用开发服务器 OpenCode 1.18.10 与 stub provider 做端到端验证；生产机当前未安装，默认关闭 |
 | Dashboard TUI | 调试界面，不作为生产 registry 基准 |
 | 交互式 tester | 调试界面 |
 | Markdown -> PNG -> image send | 完成，可选安装 |
@@ -118,6 +121,11 @@ src/mutsumi_sync/
     self_note.py          self-note management
     send.py               message sending tool
     markdown_renderer.py  Python bridge to Node renderer
+    file_edit.py          constrained Skill workspace editing
+    scheduler.py          durable time + prompt tool
+    delegate.py           optional OpenCode delegation tool
+  opencode.py             OpenCode process and report callback bridge
+skills/                   optional BOT.md/SKILL.md instruction files
   tui/
     tester.py             interactive test runner
     dashboard.py          full-screen runtime dashboard
@@ -240,6 +248,7 @@ send_tool(markdown_image)
 -> node tools/markdown-renderer/render.mjs
 -> PNG file
 -> image segment passed to sender
+-> temporary PNG removed after sender returns
 ```
 
 ## 9. 当前上下文事实源

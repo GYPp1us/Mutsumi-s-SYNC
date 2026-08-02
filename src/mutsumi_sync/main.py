@@ -29,6 +29,8 @@ from .tools.no_reply import no_reply_tool, NO_REPLY_SCHEMA
 from .tools.status_update import status_update_tool, STATUS_UPDATE_SCHEMA
 from .tools.scheduler import scheduler_tool, SCHEDULER_SCHEMA
 from .tools.media import media_search, MEDIA_SEARCH_SCHEMA, sticker_manage, STICKER_MANAGE_SCHEMA
+from .tools.file_edit import file_edit_tool, FILE_EDIT_SCHEMA
+from .tools.delegate import delegate_task_tool, DELEGATE_TASK_SCHEMA
 
 logger = logging.getLogger("mutsumi.main")
 
@@ -57,6 +59,20 @@ def setup_logging(level: int = logging.INFO, config: Config | None = None) -> No
 
 def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
     registry = ToolRegistry()
+
+    if config.file_tools.enabled:
+        async def _file_edit(args: dict, **deps) -> str:
+            return await file_edit_tool(args, config=config)
+
+        registry.register(Tool(
+            name="file_edit",
+            description=(
+                "在受控的 skills 文件根目录中列出、读取、完整写入或精确替换文本。"
+                "只能操作工具结果中显示的相对路径；不能执行命令、访问配置或数据库。"
+            ),
+            parameters=FILE_EDIT_SCHEMA,
+            handler=_file_edit,
+        ))
 
     registry.register(Tool(
         name="http_api_call",
@@ -168,6 +184,8 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
         description=(
             "特殊发送工具。普通文字回复请写入最终 assistant content 的 TO_USER 区块；仅在需要发送图片、"
             "media_id、markdown_image、QQ 表情、@、reply 或 forward 等特殊消息段时使用。"
+            "跨会话互动可以使用 target+text 向不同目标发送文字；当前会话的普通文字仍必须使用 TO_USER。"
+            "target 必填，只能使用 private:<numeric_id> 或 group:<numeric_id>，不要使用昵称。"
         ),
         parameters=SEND_TOOL_SCHEMA,
         handler=_send,
@@ -195,7 +213,7 @@ def build_registry(config: Config, store: MessageStore) -> ToolRegistry:
         name="no_reply",
         description=(
             "当本轮不应该向用户发送任何消息时调用。调用后 pipeline 会结束本轮并保持静默。"
-            "例如只需更新记忆、静默处理定时任务或忽略无需回复的消息。"
+            "只用于确实没有可见内容的静默维护或自主检查；普通问题、未知事实、拒答、隐私边界说明和工具完成结果都必须写入 TO_USER，不能用 no_reply 逃避回答。"
         ),
         parameters=NO_REPLY_SCHEMA,
         handler=no_reply_tool,
@@ -210,19 +228,43 @@ def register_scheduler_tool(registry: ToolRegistry, scheduler: PipelineScheduler
             args,
             scheduler=scheduler,
             group_key=deps.get("group_key", ""),
+            conversation_id=deps.get("conversation_id", ""),
             peer=deps.get("peer"),
         )
 
     registry.register(Tool(
         name="scheduler",
         description=(
-            "Register a one-shot scheduled task. scheduled_time is required and must be a formatted time; "
-            "prompt is optional and will be fed to the pipeline when the task fires. "
-            "Returns a readable duration from now to the planned trigger time."
+            "Manage durable one-shot, fixed-interval, or five-field cron wake-ups. The task is bound to the current chat; "
+            "store a natural-language prompt, an optional opaque natural-language context, and a time rule. "
+            "The scheduler does not interpret context as workflow data. Use operation=list/pause/resume/cancel for lifecycle changes. "
+            "A due task waits behind an active user pipeline and does not cancel it."
         ),
         parameters=SCHEDULER_SCHEMA,
         handler=_scheduler_tool,
     ))
+
+    if getattr(scheduler, "_opencode_runner", None) is not None:
+        async def _delegate_task(args: dict, **deps) -> str:
+            return await delegate_task_tool(
+                args,
+                scheduler=scheduler,
+                conversation_id=deps.get("conversation_id", ""),
+                group_key=deps.get("group_key", ""),
+            )
+
+        registry.register(Tool(
+            name="delegate_task",
+            description=(
+                "将一个需要较长执行的自然语言任务异步交给 OpenCode。"
+                "可以在 prompt 中给出 Skill 文件路径和交付要求；任务完成时必须调用 report_task 回报。"
+                "不要用它发送普通聊天文字，也不要猜测未回报的任务已经完成。"
+            ),
+            parameters=DELEGATE_TASK_SCHEMA,
+            handler=_delegate_task,
+            latency_class="long",
+            status_hint="我先把这项工作交给外部任务 Agent 处理。",
+        ))
 
 
 async def run(config_path: str = "config.yaml") -> None:

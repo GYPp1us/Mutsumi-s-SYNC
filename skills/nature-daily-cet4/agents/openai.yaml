@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nature CET4 Daily Reading"
+  short_description: "Turn public Nature Briefing items into CET4 reading practice."
+  default_prompt: "Use $nature-daily-cet4 to schedule a public Nature Briefing reading exercise and deliver it safely."

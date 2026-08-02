@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from ..config import Config
+from ..config import Config, resolve_runtime_path
 
 
 async def render_markdown_image(markdown: str, *, config: Config) -> str:
@@ -14,7 +14,14 @@ async def render_markdown_image(markdown: str, *, config: Config) -> str:
     if not markdown.strip():
         raise RuntimeError("markdown image content is empty")
 
-    output_dir = Path(render_config.output_dir)
+    output_dir = resolve_runtime_path(
+        render_config.output_dir,
+        getattr(config, "_config_path", None),
+    )
+    script_path = resolve_runtime_path(
+        render_config.script_path,
+        getattr(config, "_config_path", None),
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "markdown": markdown,
@@ -25,7 +32,7 @@ async def render_markdown_image(markdown: str, *, config: Config) -> str:
 
     stdout = await _run_renderer_process(
         render_config.node_path,
-        render_config.script_path,
+        str(script_path),
         json.dumps(payload, ensure_ascii=False),
         render_config.timeout_seconds,
     )

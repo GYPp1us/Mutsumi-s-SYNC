@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import hashlib
@@ -13,6 +14,25 @@ from typing import Any
 import aiosqlite
 
 logger = logging.getLogger("mutsumi.store")
+
+# These outcomes remain in the append-only ledger for audit and retry
+# decisions, but they do not represent a conversational turn that the model
+# should see or that an Episode may cover.
+NON_PROJECTABLE_EVENT_STATUSES = frozenset({
+    "cancelled",
+    "error",
+    "no_reply",
+    "empty",
+})
+
+# These platform facts may be covered by an Episode after a conversational
+# turn starts, but they must not block the coverage frontier when they occur
+# between two Episodes. They have no ordinary provider-message projection.
+COVERAGE_ONLY_EVENT_TYPES = frozenset({
+    "media",
+    "state_change",
+    "status_update",
+})
 
 
 def _mime_for_extension(ext: str) -> str:
@@ -233,6 +253,11 @@ class ScheduledTaskRecord:
     scheduled_at: float
     status: str
     created_at: float
+    context: str = ""
+    schedule_kind: str = "once"
+    interval_seconds: float | None = None
+    cron_expression: str = ""
+    last_run_at: float | None = None
 
     @classmethod
     def from_row(cls, row: aiosqlite.Row) -> ScheduledTaskRecord:
@@ -242,9 +267,56 @@ class ScheduledTaskRecord:
             peer_chat_type=row["peer_chat_type"],
             peer_uid=row["peer_uid"],
             prompt=row["prompt"],
+            context=str(row["context"] or "") if "context" in row.keys() else "",
             scheduled_at=row["scheduled_at"],
             status=row["status"],
             created_at=row["created_at"],
+            schedule_kind=row["schedule_kind"] if "schedule_kind" in row.keys() else "once",
+            interval_seconds=(
+                row["interval_seconds"]
+                if "interval_seconds" in row.keys()
+                else None
+            ),
+            cron_expression=(
+                str(row["cron_expression"] or "")
+                if "cron_expression" in row.keys()
+                else ""
+            ),
+            last_run_at=row["last_run_at"] if "last_run_at" in row.keys() else None,
+        )
+
+
+@dataclass
+class DelegatedTaskRecord:
+    run_id: str
+    conversation_id: str
+    prompt: str
+    workspace: str
+    report_token: str
+    status: str
+    report: str = ""
+    report_event_id: str = ""
+    exit_code: int | None = None
+    created_at: float | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "DelegatedTaskRecord":
+        keys = set(row.keys())
+        return cls(
+            run_id=row["run_id"],
+            conversation_id=row["conversation_id"],
+            prompt=row["prompt"],
+            workspace=row["workspace"],
+            report_token=row["report_token"],
+            status=row["status"],
+            report=row["report"] if "report" in keys else "",
+            report_event_id=row["report_event_id"] if "report_event_id" in keys else "",
+            exit_code=row["exit_code"] if "exit_code" in keys else None,
+            created_at=row["created_at"] if "created_at" in keys else None,
+            started_at=row["started_at"] if "started_at" in keys else None,
+            finished_at=row["finished_at"] if "finished_at" in keys else None,
         )
 
 
@@ -425,19 +497,43 @@ class MessageStore:
             peer_chat_type  INTEGER NOT NULL,
             peer_uid        TEXT    NOT NULL,
             prompt          TEXT    NOT NULL,
+            context         TEXT    NOT NULL DEFAULT '',
             scheduled_at    REAL    NOT NULL,
+            schedule_kind   TEXT    NOT NULL DEFAULT 'once',
+            interval_seconds REAL,
+            cron_expression TEXT    NOT NULL DEFAULT '',
+            last_run_at     REAL,
             status          TEXT    NOT NULL DEFAULT 'pending',
             created_at      REAL    NOT NULL DEFAULT (strftime('%s', 'now'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_status_time
             ON scheduled_tasks(status, scheduled_at);
+
+        CREATE TABLE IF NOT EXISTS delegated_tasks (
+            run_id          TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            prompt          TEXT NOT NULL,
+            workspace       TEXT NOT NULL,
+            report_token    TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            report          TEXT NOT NULL DEFAULT '',
+            report_event_id TEXT NOT NULL DEFAULT '',
+            exit_code       INTEGER,
+            created_at      REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+            started_at      REAL,
+            finished_at     REAL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_delegated_tasks_status
+            ON delegated_tasks(status, created_at);
     """
 
     def __init__(self, db_path: str = "data/mutsumi.db", media_dir: str = "data/media"):
         self.db_path = Path(db_path)
         self.media_dir = Path(media_dir)
         self._conn: aiosqlite.Connection | None = None
+        self._episode_locks: dict[str, asyncio.Lock] = {}
 
     async def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -458,6 +554,17 @@ class MessageStore:
             "ALTER TABLE summaries ADD COLUMN covered_through_message_id INTEGER",
             "ALTER TABLE events ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'",
             "ALTER TABLE events ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE scheduled_tasks ADD COLUMN schedule_kind TEXT NOT NULL DEFAULT 'once'",
+            "ALTER TABLE scheduled_tasks ADD COLUMN interval_seconds REAL",
+            "ALTER TABLE scheduled_tasks ADD COLUMN cron_expression TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE scheduled_tasks ADD COLUMN last_run_at REAL",
+            "ALTER TABLE scheduled_tasks ADD COLUMN context TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE delegated_tasks ADD COLUMN report TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE delegated_tasks ADD COLUMN report_event_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE delegated_tasks ADD COLUMN exit_code INTEGER",
+            "ALTER TABLE delegated_tasks ADD COLUMN created_at REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE delegated_tasks ADD COLUMN started_at REAL",
+            "ALTER TABLE delegated_tasks ADD COLUMN finished_at REAL",
         ):
             try:
                 await self._conn.execute(statement)
@@ -587,6 +694,98 @@ class MessageStore:
             )
         await self._conn.commit()
 
+    async def update_event_record(
+        self,
+        event_id: str,
+        *,
+        status: str | None = None,
+        content: str | None = None,
+        payload: dict[str, Any] | None = None,
+        media_ids: list[str] | None = None,
+    ) -> None:
+        """Update mutable lifecycle fields of a still-open ledger event.
+
+        Event identity and sequence stay immutable. This is used for staged
+        tool results: the provider receives a provisional result immediately,
+        then cleanup finalizes that same ledger row instead of appending a
+        second result for the same tool call.
+        """
+        self._ensure_initialized()
+        fields: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            fields.append("status = ?")
+            params.append(status)
+        if content is not None:
+            fields.append("content = ?")
+            params.append(content)
+        if payload is not None:
+            fields.append("payload_json = ?")
+            params.append(json.dumps(payload, ensure_ascii=False))
+        if media_ids is not None:
+            fields.append("media_ids_json = ?")
+            params.append(json.dumps(media_ids, ensure_ascii=False))
+        if not fields:
+            return
+        params.append(event_id)
+        await self._conn.execute(
+            f"UPDATE events SET {', '.join(fields)} WHERE event_id = ?",
+            params,
+        )
+        await self._conn.commit()
+
+    async def update_pipeline_status(self, pipeline_id: str, status: str) -> None:
+        """Close unfinished pipeline records while preserving sent output facts."""
+        self._ensure_initialized()
+        if not str(pipeline_id).strip():
+            return
+        await self._conn.execute(
+            "UPDATE events SET status = ? WHERE pipeline_id = ? "
+            "AND event_type != 'outbound'",
+            (status, pipeline_id),
+        )
+        await self._conn.commit()
+
+    async def cancel_orphaned_pipelines(self) -> int:
+        """Close non-service pipeline fragments left by a hard process restart.
+
+        A service event is intentionally excluded: ingress and OpenCode report
+        events have their own durable restart queues. Ordinary user, schedule,
+        and heartbeat fragments cannot still be running when a new scheduler
+        instance starts, so leaving them as ``received`` would block Episode
+        reclamation forever while they remain correctly hidden from history.
+        """
+        self._ensure_initialized()
+        terminal = tuple(NON_PROJECTABLE_EVENT_STATUSES | {"finalized"})
+        placeholders = ",".join("?" for _ in terminal)
+        cursor = await self._conn.execute(
+            "SELECT pipeline_id FROM events "
+            "WHERE pipeline_id != '' AND status NOT IN (" + placeholders + ") "
+            "GROUP BY pipeline_id "
+            "HAVING SUM(CASE WHEN actor_kind = 'service' THEN 1 ELSE 0 END) = 0",
+            terminal,
+        )
+        pipeline_ids = [str(row["pipeline_id"]) for row in await cursor.fetchall()]
+        for pipeline_id in pipeline_ids:
+            await self._conn.execute(
+                "UPDATE events SET status = 'cancelled' "
+                "WHERE pipeline_id = ? AND event_type != 'outbound' "
+                "AND status NOT IN (" + placeholders + ")",
+                (pipeline_id, *terminal),
+            )
+        if pipeline_ids:
+            await self._conn.commit()
+        return len(pipeline_ids)
+
+    async def update_event_pipeline_id(self, event_id: str, pipeline_id: str) -> None:
+        """Move a retryable accepted event to a fresh pipeline attempt."""
+        self._ensure_initialized()
+        await self._conn.execute(
+            "UPDATE events SET pipeline_id = ? WHERE event_id = ?",
+            (pipeline_id, event_id),
+        )
+        await self._conn.commit()
+
     async def update_event_media_ids(self, event_id: str, media_ids: list[str]) -> None:
         """Attach verified media ledger references to an existing event."""
         self._ensure_initialized()
@@ -603,6 +802,7 @@ class MessageStore:
         exclude_conversation_id: str | None = None,
         visibility: str | None = None,
         after_sequence: int = 0,
+        max_sequence: int | None = None,
         limit: int = 200,
         finalized_only: bool = True,
         latest: bool = False,
@@ -619,6 +819,9 @@ class MessageStore:
         if visibility is not None:
             query += " AND visibility = ?"
             params.append(visibility)
+        if max_sequence is not None:
+            query += " AND sequence <= ?"
+            params.append(max(0, int(max_sequence)))
         if finalized_only:
             query += " AND status = 'finalized'"
         query += f" ORDER BY sequence {'DESC' if latest else 'ASC'} LIMIT ?"
@@ -629,12 +832,191 @@ class MessageStore:
             rows.reverse()
         return [EventRecord.from_row(row) for row in rows]
 
+    async def get_events_outside_episode_ranges(
+        self,
+        episodes: list[EpisodeRecord],
+        *,
+        max_sequence: int | None = None,
+        limit: int = 200,
+        finalized_only: bool = False,
+        latest: bool = False,
+        audience_conversation_id: str | None = None,
+    ) -> list[EventRecord]:
+        """Return raw events not covered by the supplied verified Episodes.
+
+        The caller owns Episode validation. Keeping the exclusion ranges in
+        this query prevents a recent-event limit from filling up with rows
+        that have already been replaced by an Episode, while still retaining
+        raw events in older uncovered gaps.
+        """
+        self._ensure_initialized()
+        query = "SELECT * FROM events WHERE 1 = 1"
+        params: list[Any] = []
+        if finalized_only:
+            query += " AND status = 'finalized'"
+        if max_sequence is not None:
+            query += " AND sequence <= ?"
+            params.append(max(0, int(max_sequence)))
+        if audience_conversation_id:
+            query += " AND (visibility = 'global' OR conversation_id = ?)"
+            params.append(audience_conversation_id)
+        for episode in episodes:
+            query += (
+                " AND NOT (conversation_id = ? AND sequence BETWEEN ? AND ?)"
+            )
+            params.extend((
+                episode.conversation_id,
+                int(episode.first_sequence),
+                int(episode.last_sequence),
+            ))
+        query += f" ORDER BY sequence {'DESC' if latest else 'ASC'} LIMIT ?"
+        params.append(max(1, int(limit)))
+        cursor = await self._conn.execute(query, params)
+        rows = list(await cursor.fetchall())
+        if latest:
+            rows.reverse()
+        return [EventRecord.from_row(row) for row in rows]
+
+    async def has_events_outside_episode_ranges_before(
+        self,
+        episodes: list[EpisodeRecord],
+        *,
+        before_sequence: int,
+        max_sequence: int | None = None,
+        finalized_only: bool = False,
+        audience_conversation_id: str | None = None,
+    ) -> bool:
+        """Detect an older raw event hidden by a bounded projection page."""
+        self._ensure_initialized()
+        query = (
+            "SELECT 1 FROM events WHERE sequence < ? "
+            "AND event_type IN ('inbound', 'outbound', 'tool_call', 'tool_result')"
+        )
+        params: list[Any] = [max(1, int(before_sequence))]
+        if finalized_only:
+            query += " AND status = 'finalized'"
+        if max_sequence is not None:
+            query += " AND sequence <= ?"
+            params.append(max(0, int(max_sequence)))
+        if audience_conversation_id:
+            query += " AND (visibility = 'global' OR conversation_id = ?)"
+            params.append(audience_conversation_id)
+        for episode in episodes:
+            query += (
+                " AND NOT (conversation_id = ? AND sequence BETWEEN ? AND ?)"
+            )
+            params.extend((
+                episode.conversation_id,
+                int(episode.first_sequence),
+                int(episode.last_sequence),
+            ))
+        query += " LIMIT 1"
+        cursor = await self._conn.execute(query, params)
+        return await cursor.fetchone() is not None
+
+    async def get_legacy_events_outside_episode_ranges(
+        self,
+        episodes: list[EpisodeRecord],
+        *,
+        max_sequence: int | None = None,
+        audience_conversation_id: str | None = None,
+    ) -> list[EventRecord]:
+        """Load legacy Ledger rows that have no pipeline identity.
+
+        Current pipeline writes always include ``pipeline_id``. Older rows
+        cannot identify the rest of a turn from one paged event, so the
+        compatibility path reads them as a complete set and lets the normal
+        logical-group/token projection apply the final bound.
+        """
+        self._ensure_initialized()
+        query = "SELECT * FROM events WHERE pipeline_id = ''"
+        params: list[Any] = []
+        if max_sequence is not None:
+            query += " AND sequence <= ?"
+            params.append(max(0, int(max_sequence)))
+        if audience_conversation_id:
+            query += " AND (visibility = 'global' OR conversation_id = ?)"
+            params.append(audience_conversation_id)
+        for episode in episodes:
+            query += (
+                " AND NOT (conversation_id = ? AND sequence BETWEEN ? AND ?)"
+            )
+            params.extend((
+                episode.conversation_id,
+                int(episode.first_sequence),
+                int(episode.last_sequence),
+            ))
+        query += " ORDER BY sequence ASC"
+        cursor = await self._conn.execute(query, params)
+        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def get_events_by_pipeline_ids(
+        self,
+        pipeline_ids: set[str] | list[str],
+        *,
+        max_sequence: int | None = None,
+        finalized_only: bool = False,
+        audience_conversation_id: str | None = None,
+    ) -> list[EventRecord]:
+        """Load complete pipeline groups needed by a bounded projection."""
+        self._ensure_initialized()
+        values = [str(value) for value in pipeline_ids if str(value)]
+        if not values:
+            return []
+        placeholders = ",".join("?" for _ in values)
+        query = (
+            "SELECT * FROM events WHERE pipeline_id IN ("
+            + placeholders
+            + ")"
+        )
+        params: list[Any] = values
+        if max_sequence is not None:
+            query += " AND sequence <= ?"
+            params.append(max(0, int(max_sequence)))
+        if finalized_only:
+            query += " AND status = 'finalized'"
+        if audience_conversation_id:
+            query += " AND (visibility = 'global' OR conversation_id = ?)"
+            params.append(audience_conversation_id)
+        query += " ORDER BY sequence ASC"
+        cursor = await self._conn.execute(query, params)
+        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def get_events_by_turn_ids(
+        self,
+        turn_ids: set[str] | list[str],
+        *,
+        max_sequence: int | None = None,
+        finalized_only: bool = False,
+        audience_conversation_id: str | None = None,
+    ) -> list[EventRecord]:
+        """Load complete legacy tool rounds that have no pipeline id."""
+        self._ensure_initialized()
+        values = [str(value) for value in turn_ids if str(value)]
+        if not values:
+            return []
+        placeholders = ",".join("?" for _ in values)
+        query = "SELECT * FROM events WHERE turn_id IN (" + placeholders + ")"
+        params: list[Any] = values
+        if max_sequence is not None:
+            query += " AND sequence <= ?"
+            params.append(max(0, int(max_sequence)))
+        if finalized_only:
+            query += " AND status = 'finalized'"
+        if audience_conversation_id:
+            query += " AND (visibility = 'global' OR conversation_id = ?)"
+            params.append(audience_conversation_id)
+        query += " ORDER BY sequence ASC"
+        cursor = await self._conn.execute(query, params)
+        return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
     async def get_events_by_sequence(
         self,
         first_sequence: int,
         last_sequence: int,
         *,
         conversation_id: str | None = None,
+        max_sequence: int | None = None,
         finalized_only: bool = False,
     ) -> list[EventRecord]:
         self._ensure_initialized()
@@ -643,11 +1025,23 @@ class MessageStore:
         if conversation_id is not None:
             query += " AND conversation_id = ?"
             params.append(conversation_id)
+        if max_sequence is not None:
+            query += " AND sequence <= ?"
+            params.append(max(0, int(max_sequence)))
         if finalized_only:
             query += " AND status = 'finalized'"
         query += " ORDER BY sequence ASC"
         cursor = await self._conn.execute(query, params)
         return [EventRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def get_event_high_water_sequence(self) -> int:
+        """Return the ledger position visible to a new context snapshot."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) FROM events"
+        )
+        row = await cursor.fetchone()
+        return int(row[0] or 0) if row else 0
 
     async def get_recent_active_conversations(
         self,
@@ -699,16 +1093,55 @@ class MessageStore:
     async def add_episode(self, episode: EpisodeRecord) -> str:
         self._ensure_initialized()
         episode_id = episode.episode_id or f"ep_{uuid.uuid4().hex}"
-        await self._conn.execute(
-            "INSERT INTO episodes (episode_id, conversation_id, first_sequence, last_sequence, "
-            "participants_json, narrative, open_loops, media_ids_json, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (episode_id, episode.conversation_id, episode.first_sequence, episode.last_sequence,
-             episode.participants_json, episode.narrative, episode.open_loops,
-             episode.media_ids_json, episode.status),
-        )
-        await self._conn.commit()
-        return episode_id
+        if episode.first_sequence <= 0 or episode.last_sequence < episode.first_sequence:
+            raise ValueError("episode coverage must be a positive ordered range")
+
+        # The in-process lock prevents normal races. BEGIN IMMEDIATE makes the
+        # exact-range de-duplication meaningful when two writers share a DB.
+        # Semantic overlap is resolved by the canonical projector after it has
+        # validated every Episode; storage cannot know whether an old ready row
+        # cuts an incomplete tool round.
+        await self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await self._conn.execute(
+                "SELECT episode_id, first_sequence, last_sequence FROM episodes "
+                "WHERE conversation_id = ? AND status = 'ready' "
+                "AND first_sequence = ? AND last_sequence = ? LIMIT 1",
+                (episode.conversation_id, episode.first_sequence, episode.last_sequence),
+            )
+            existing = await cursor.fetchone()
+            if existing is not None:
+                await self._conn.rollback()
+                return str(existing["episode_id"])
+
+            await self._conn.execute(
+                "INSERT INTO episodes (episode_id, conversation_id, first_sequence, last_sequence, "
+                "participants_json, narrative, open_loops, media_ids_json, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (episode_id, episode.conversation_id, episode.first_sequence, episode.last_sequence,
+                 episode.participants_json, episode.narrative, episode.open_loops,
+                 episode.media_ids_json, episode.status),
+            )
+            await self._conn.commit()
+            return episode_id
+        except Exception:
+            await self._conn.rollback()
+            raise
+
+    def episode_lock(self, conversation_id: str) -> asyncio.Lock:
+        """Serialize archive selection and commit for one conversation.
+
+        Idle timers and token-pressure reclamation can reach the same store at
+        the same time. The ledger remains the source of truth, but serializing
+        the selection prevents two provider calls from summarizing the same
+        uncovered prefix.
+        """
+        key = str(conversation_id)
+        lock = self._episode_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._episode_locks[key] = lock
+        return lock
 
     async def get_episodes(self, conversation_id: str, limit: int = 20) -> list[EpisodeRecord]:
         self._ensure_initialized()
@@ -720,14 +1153,91 @@ class MessageStore:
         rows.reverse()
         return [EpisodeRecord.from_row(row) for row in rows]
 
-    async def get_latest_episode_sequence(self, conversation_id: str) -> int:
+    async def get_all_episodes(
+        self,
+        limit: int = 2000,
+        *,
+        max_sequence: int | None = None,
+    ) -> list[EpisodeRecord]:
+        """Return ready episode projections in global sequence order."""
         self._ensure_initialized()
-        cursor = await self._conn.execute(
-            "SELECT COALESCE(MAX(last_sequence), 0) FROM episodes WHERE conversation_id = ?",
-            (conversation_id,),
+        query = (
+            "SELECT * FROM episodes WHERE status = 'ready'"
         )
-        row = await cursor.fetchone()
-        return int(row[0] or 0)
+        params: list[Any] = []
+        if max_sequence is not None:
+            query += " AND last_sequence <= ?"
+            params.append(max(0, int(max_sequence)))
+        query += " ORDER BY first_sequence ASC LIMIT ?"
+        params.append(max(1, int(limit)))
+        cursor = await self._conn.execute(query, params)
+        return [EpisodeRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def get_latest_episode_sequence(
+        self,
+        conversation_id: str,
+        *,
+        max_sequence: int | None = None,
+    ) -> int:
+        """Return the contiguous Episode frontier for one conversation.
+
+        ``MAX(last_sequence)`` is not a valid coverage cursor: an older
+        Episode can be missing between two ready rows. The frontier advances
+        only while every non-terminal conversation event is inside the next
+        Episode. Terminal cancelled/error rows are already excluded from
+        model history and therefore do not block the frontier.
+        """
+        self._ensure_initialized()
+        # Episode validation is deliberately owned by the projection module.
+        # Reimplementing only endpoint/range checks here lets an old Episode
+        # that cuts a tool round advance the archive cursor and hide raw facts
+        # after a restart.  Import lazily because projection imports the store
+        # data classes.
+        from .projection import (
+            _select_valid_episodes,
+            frontier_relevant_event_sequences,
+        )
+
+        episodes = await self.get_episodes(conversation_id, limit=1_000_000)
+        valid_episodes, covered_by_episode = await _select_valid_episodes(
+            self,
+            episodes,
+            max_sequence=max_sequence,
+            require_complete_groups=True,
+        )
+        if not valid_episodes:
+            return 0
+
+        conversation_events = await self.get_events(
+            conversation_id=conversation_id,
+            max_sequence=max_sequence,
+            limit=1_000_000,
+            finalized_only=False,
+        )
+        event_sequences = sorted(frontier_relevant_event_sequences(conversation_events))
+        if not event_sequences:
+            return 0
+
+        frontier = 0
+        index = 0
+        for episode in sorted(valid_episodes, key=lambda item: (item.first_sequence, item.last_sequence)):
+            first = int(episode.first_sequence)
+            last = int(episode.last_sequence)
+            covered = sorted(
+                sequence
+                for sequence in covered_by_episode.get(episode.episode_id or "", set())
+                if sequence in event_sequences
+            )
+            if not covered:
+                continue
+            expected = event_sequences[index:index + len(covered)]
+            if covered != expected or covered[0] != event_sequences[index]:
+                break
+            frontier = covered[-1]
+            index += len(covered)
+            if index >= len(event_sequences):
+                break
+        return frontier
 
     async def update_message_content(self, msg_id: int, content: str) -> None:
         self._ensure_initialized()
@@ -974,6 +1484,10 @@ class MessageStore:
         covered_through_message_id: int | None = None,
     ) -> int:
         self._ensure_initialized()
+        if kind != "compaction":
+            # A per-message archive note is descriptive only. It must never
+            # advance the restart/recovery cursor and hide unrelated records.
+            covered_through_message_id = None
         cursor = await self._conn.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM summaries WHERE group_key = ?",
             (group_key,)
@@ -1188,7 +1702,8 @@ class MessageStore:
         if self._conn:
             await self._conn.close()
             self._conn = None
-            logger.info("MessageStore closed")
+        self._episode_locks.clear()
+        logger.info("MessageStore closed")
 
     async def get_message_group_keys(self) -> list[str]:
         """Return all distinct group_keys from messages table."""
@@ -1196,6 +1711,15 @@ class MessageStore:
         cursor = await self._conn.execute("SELECT DISTINCT group_key FROM messages")
         rows = await cursor.fetchall()
         return [r["group_key"] for r in rows]
+
+    async def get_event_conversation_ids(self) -> list[str]:
+        """Return ledger conversations in their first-seen order."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT conversation_id, MIN(sequence) AS first_sequence "
+            "FROM events GROUP BY conversation_id ORDER BY first_sequence ASC"
+        )
+        return [str(row["conversation_id"]) for row in await cursor.fetchall()]
 
     async def get_newest_compaction_summary(self, group_key: str) -> dict | None:
         """Return the newest summary with an explicitly trusted coverage boundary."""
@@ -1217,6 +1741,33 @@ class MessageStore:
             "summary": row["summary"],
             "kind": row["kind"],
             "covered_through_message_id": row["covered_through_message_id"],
+        }
+
+    async def get_latest_compaction_summary(self, group_key: str) -> dict | None:
+        """Return the latest legacy compaction text, trusted or otherwise.
+
+        A legacy window can be capped before its coverage is trustworthy. The
+        summary is still useful inside the current process, but it must not be
+        used as a restart cursor until it has a real message boundary.
+        """
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, seq, source, summary, kind, covered_through_message_id, created_at "
+            "FROM summaries WHERE group_key = ? AND kind = 'compaction' "
+            "ORDER BY id DESC LIMIT 1",
+            (group_key,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "seq": row["seq"],
+            "source": row["source"],
+            "summary": row["summary"],
+            "kind": row["kind"],
+            "covered_through_message_id": row["covered_through_message_id"],
+            "created_at": row["created_at"],
         }
 
     async def get_restorable_messages(
@@ -1349,14 +1900,29 @@ class MessageStore:
         peer_chat_type: int,
         peer_uid: str,
         prompt: str,
+        context: str = "",
         scheduled_at: float,
+        schedule_kind: str = "once",
+        interval_seconds: float | None = None,
+        cron_expression: str = "",
     ) -> int:
         self._ensure_initialized()
         cursor = await self._conn.execute(
             "INSERT INTO scheduled_tasks "
-            "(group_key, peer_chat_type, peer_uid, prompt, scheduled_at, status) "
-            "VALUES (?, ?, ?, ?, ?, 'pending')",
-            (group_key, peer_chat_type, peer_uid, prompt, scheduled_at),
+            "(group_key, peer_chat_type, peer_uid, prompt, context, scheduled_at, "
+            "schedule_kind, interval_seconds, cron_expression, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+            (
+                group_key,
+                peer_chat_type,
+                peer_uid,
+                prompt,
+                context,
+                scheduled_at,
+                schedule_kind,
+                interval_seconds,
+                cron_expression,
+            ),
         )
         await self._conn.commit()
         return cursor.lastrowid
@@ -1364,11 +1930,51 @@ class MessageStore:
     async def get_pending_scheduled_tasks(self) -> list[ScheduledTaskRecord]:
         self._ensure_initialized()
         cursor = await self._conn.execute(
-            "SELECT id, group_key, peer_chat_type, peer_uid, prompt, scheduled_at, status, created_at "
+            "SELECT id, group_key, peer_chat_type, peer_uid, prompt, context, scheduled_at, "
+            "schedule_kind, interval_seconds, cron_expression, last_run_at, status, created_at "
             "FROM scheduled_tasks WHERE status IN ('pending', 'running') ORDER BY scheduled_at ASC"
         )
         rows = await cursor.fetchall()
         return [ScheduledTaskRecord.from_row(row) for row in rows]
+
+    async def get_scheduled_task(self, task_id: int) -> ScheduledTaskRecord | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT id, group_key, peer_chat_type, peer_uid, prompt, context, scheduled_at, "
+            "schedule_kind, interval_seconds, cron_expression, last_run_at, status, created_at "
+            "FROM scheduled_tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+        return ScheduledTaskRecord.from_row(row) if row else None
+
+    async def list_scheduled_tasks(
+        self,
+        *,
+        status: str | None = None,
+        group_key: str | None = None,
+        limit: int = 100,
+    ) -> list[ScheduledTaskRecord]:
+        self._ensure_initialized()
+        query = (
+            "SELECT id, group_key, peer_chat_type, peer_uid, prompt, context, scheduled_at, "
+            "schedule_kind, interval_seconds, cron_expression, last_run_at, status, created_at "
+            "FROM scheduled_tasks"
+        )
+        params: list[Any] = []
+        filters: list[str] = []
+        if status:
+            filters.append("status = ?")
+            params.append(status)
+        if group_key:
+            filters.append("group_key = ?")
+            params.append(group_key)
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        query += " ORDER BY scheduled_at ASC, id ASC LIMIT ?"
+        params.append(max(1, int(limit)))
+        cursor = await self._conn.execute(query, params)
+        return [ScheduledTaskRecord.from_row(row) for row in await cursor.fetchall()]
 
     async def mark_scheduled_task_status(self, task_id: int, status: str) -> None:
         self._ensure_initialized()
@@ -1377,6 +1983,186 @@ class MessageStore:
             (status, task_id),
         )
         await self._conn.commit()
+
+    async def claim_scheduled_task(self, task_id: int) -> bool:
+        """Atomically claim a pending task for one in-process timer."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "UPDATE scheduled_tasks SET status = 'running' "
+            "WHERE id = ? AND status = 'pending'",
+            (task_id,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount == 1
+
+    async def reschedule_running_task(
+        self,
+        task_id: int,
+        *,
+        scheduled_at: float,
+        last_run_at: float,
+    ) -> bool:
+        """Return a running task to pending without resurrecting cancellation."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "UPDATE scheduled_tasks SET status = 'pending', scheduled_at = ?, "
+            "last_run_at = ? WHERE id = ? AND status = 'running'",
+            (scheduled_at, last_run_at, task_id),
+        )
+        await self._conn.commit()
+        return cursor.rowcount == 1
+
+    async def defer_scheduled_task(self, task_id: int, *, scheduled_at: float) -> bool:
+        """Defer a pending or claimed task unless it was explicitly stopped."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "UPDATE scheduled_tasks SET status = 'pending', scheduled_at = ? "
+            "WHERE id = ? AND status IN ('pending', 'running')",
+            (scheduled_at, task_id),
+        )
+        await self._conn.commit()
+        return cursor.rowcount == 1
+
+    async def complete_running_task(self, task_id: int) -> bool:
+        """Complete only the currently claimed run."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "UPDATE scheduled_tasks SET status = 'done' "
+            "WHERE id = ? AND status = 'running'",
+            (task_id,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount == 1
+
+    async def fail_running_task(self, task_id: int) -> bool:
+        """Mark a claimed run as failed without overwriting pause/cancel."""
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "UPDATE scheduled_tasks SET status = 'error' "
+            "WHERE id = ? AND status = 'running'",
+            (task_id,),
+        )
+        await self._conn.commit()
+        return cursor.rowcount == 1
+
+    async def update_scheduled_task(
+        self,
+        task_id: int,
+        *,
+        status: str | None = None,
+        scheduled_at: float | None = None,
+        last_run_at: float | None = None,
+    ) -> None:
+        self._ensure_initialized()
+        fields: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            fields.append("status = ?")
+            params.append(status)
+        if scheduled_at is not None:
+            fields.append("scheduled_at = ?")
+            params.append(scheduled_at)
+        if last_run_at is not None:
+            fields.append("last_run_at = ?")
+            params.append(last_run_at)
+        if not fields:
+            return
+        params.append(task_id)
+        await self._conn.execute(
+            f"UPDATE scheduled_tasks SET {', '.join(fields)} WHERE id = ?",
+            params,
+        )
+        await self._conn.commit()
+
+    async def create_delegated_task(
+        self,
+        *,
+        run_id: str,
+        conversation_id: str,
+        prompt: str,
+        workspace: str,
+        report_token: str,
+    ) -> None:
+        self._ensure_initialized()
+        await self._conn.execute(
+            "INSERT INTO delegated_tasks "
+            "(run_id, conversation_id, prompt, workspace, report_token, status) "
+            "VALUES (?, ?, ?, ?, ?, 'pending')",
+            (run_id, conversation_id, prompt, workspace, report_token),
+        )
+        await self._conn.commit()
+
+    async def get_delegated_task(self, run_id: str) -> DelegatedTaskRecord | None:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM delegated_tasks WHERE run_id = ?", (run_id,)
+        )
+        row = await cursor.fetchone()
+        return DelegatedTaskRecord.from_row(row) if row else None
+
+    async def get_recoverable_delegated_tasks(self) -> list[DelegatedTaskRecord]:
+        self._ensure_initialized()
+        cursor = await self._conn.execute(
+            "SELECT * FROM delegated_tasks WHERE status IN ('pending', 'running', 'reported') "
+            "ORDER BY created_at ASC"
+        )
+        return [DelegatedTaskRecord.from_row(row) for row in await cursor.fetchall()]
+
+    async def update_delegated_task(
+        self,
+        run_id: str,
+        *,
+        status: str | None = None,
+        report: str | None = None,
+        report_event_id: str | None = None,
+        exit_code: int | None = None,
+        started_at: float | None = None,
+        finished_at: float | None = None,
+    ) -> None:
+        self._ensure_initialized()
+        fields: list[str] = []
+        params: list[Any] = []
+        for name, value in (
+            ("status", status),
+            ("report", report),
+            ("report_event_id", report_event_id),
+            ("exit_code", exit_code),
+            ("started_at", started_at),
+            ("finished_at", finished_at),
+        ):
+            if value is not None:
+                fields.append(f"{name} = ?")
+                params.append(value)
+        if not fields:
+            return
+        params.append(run_id)
+        await self._conn.execute(
+            f"UPDATE delegated_tasks SET {', '.join(fields)} WHERE run_id = ?",
+            params,
+        )
+        await self._conn.commit()
+
+    async def accept_delegated_report(
+        self,
+        run_id: str,
+        report_token: str,
+        report: str,
+        *,
+        max_chars: int = 8000,
+    ) -> bool:
+        """Atomically accept the first valid report for a delegated run."""
+        self._ensure_initialized()
+        bounded = str(report or "").strip()
+        if not bounded:
+            return False
+        bounded = bounded[:max(1, int(max_chars))]
+        cursor = await self._conn.execute(
+            "UPDATE delegated_tasks SET status = 'reported', report = ?, finished_at = strftime('%s', 'now') "
+            "WHERE run_id = ? AND report_token = ? AND status IN ('pending', 'running', 'unreported')",
+            (bounded, run_id, report_token),
+        )
+        await self._conn.commit()
+        return cursor.rowcount == 1
 
     def _ensure_initialized(self) -> None:
         if self._conn is None:

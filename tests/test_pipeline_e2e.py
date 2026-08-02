@@ -348,6 +348,7 @@ class TestPipelineE2EMultiRound:
 
         assert ctx[-2]["role"] == "user"
         assert "当前时间：" in ctx[-2]["content"]
+        assert "当前会话地址：private:struct_test" in ctx[-2]["content"]
         assert "当前来源：" not in ctx[-2]["content"]
         assert "当前聊天：" not in ctx[-2]["content"]
         assert "当前发言者：" not in ctx[-2]["content"]
@@ -527,7 +528,10 @@ class TestPipelineE2EMultiRound:
                 tool_calls=[{
                     "id": "call_markdown",
                     "name": "send",
-                    "arguments": {"markdown_image": "# Report\n\n$E=mc^2$"},
+                    "arguments": {
+                        "target": "private:123456701",
+                        "markdown_image": "# Report\n\n$E=mc^2$",
+                    },
                 }],
             ),
             LLMResult(content=""),
@@ -555,15 +559,15 @@ class TestPipelineE2EMultiRound:
         deps = PipelineDeps(
             config=config, registry=registry, sender=sender,
             store=store, window=MessageWindow(), session=SessionState(),
-            peer=Peer(chat_type=1, peer_uid="artifact_test"),
-            group_key="private:artifact_test",
+            peer=Peer(chat_type=1, peer_uid="123456701"),
+            group_key="private:123456701",
         )
 
         await pipeline("render it", MessageType.SHORT_TEXT, None, None, deps=deps)
 
-        image_records = await store.get_messages(group_key="private:artifact_test", category="image")
+        image_records = await store.get_messages(group_key="private:123456701", category="image")
         assert image_records == []
-        actions = await store.get_recent_actions("private:artifact_test")
+        actions = await store.get_recent_actions("private:123456701")
         send_action = next(action for action in actions if action["tool_name"] == "send")
         assert send_action["success"] is True
         assert send_action["artifact"]["source"] == "markdown_image"
@@ -588,7 +592,10 @@ class TestPipelineE2EMultiRound:
             LLMResult(tool_calls=[{
                 "id": "call_media",
                 "name": "send",
-                "arguments": {"media_id": media.media_id},
+                "arguments": {
+                    "target": "private:123456702",
+                    "media_id": media.media_id,
+                },
             }]),
             LLMResult(content=final_output()),
         ])
@@ -597,7 +604,7 @@ class TestPipelineE2EMultiRound:
             return next(calls)
 
         monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
-        conversation_id = "private:heartbeat-media"
+        conversation_id = "private:123456702"
         deps = PipelineDeps(
             config=config,
             registry=registry,
@@ -605,7 +612,7 @@ class TestPipelineE2EMultiRound:
             store=store,
             window=MessageWindow(),
             session=SessionState(),
-            peer=Peer(chat_type=1, peer_uid="heartbeat-media"),
+            peer=Peer(chat_type=1, peer_uid="123456702"),
             group_key=conversation_id,
             conversation_id=conversation_id,
             actor_id="qq:user:heartbeat-media",
@@ -641,6 +648,64 @@ class TestPipelineE2EMultiRound:
             content="user replied",
         ))
         assert await store.has_unanswered_proactive(conversation_id) is False
+        await store.close()
+
+    async def test_cross_conversation_send_records_only_at_destination(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        calls = iter([
+            LLMResult(tool_calls=[{
+                "id": "call_cross",
+                "name": "send",
+                "arguments": {
+                    "target": "group:777",
+                    "text": "消息发给另一个会话",
+                },
+            }]),
+            LLMResult(content=final_output(self_text="已完成跨会话发送")),
+        ])
+
+        async def fake_llm_call(messages, deps):
+            return next(calls)
+
+        monkeypatch.setattr(pipeline_module, "_do_llm_call", fake_llm_call)
+        deps = PipelineDeps(
+            config=config,
+            registry=registry,
+            sender=sender,
+            store=store,
+            window=MessageWindow(),
+            session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="source"),
+            group_key="private:source",
+            conversation_id="private:source",
+            actor_id="qq:user:source",
+        )
+
+        status = await pipeline(
+            "send to another conversation",
+            MessageType.SHORT_TEXT,
+            None,
+            None,
+            deps=deps,
+        )
+
+        assert status == "no_reply"
+        assert sender.sent[0]["peer"] == Peer(chat_type=2, peer_uid="777")
+        source_outbound = [
+            event for event in await store.get_events(conversation_id="private:source")
+            if event.event_type == EventType.OUTBOUND.value
+        ]
+        target_outbound = [
+            event for event in await store.get_events(conversation_id="group:777")
+            if event.event_type == EventType.OUTBOUND.value
+        ]
+        assert source_outbound == []
+        assert [event.content for event in target_outbound] == ["消息发给另一个会话"]
+        assert deps.window.get_context() == []
         await store.close()
 
     async def test_incoming_image_uses_vision_provider_when_enabled(self, monkeypatch):
@@ -1257,6 +1322,62 @@ class TestPipelineE2EDebounce:
         memory_actions = [item for item in actions if item["tool_name"] == "memory_save"]
         assert len(memory_actions) == 1
         assert memory_actions[0]["success"] is True
+        ledger_results = [
+            item for item in await store.get_events(
+                conversation_id="private:staged_cancel",
+                finalized_only=False,
+            )
+            if item.event_type == EventType.TOOL_RESULT.value
+            and str((item.payload or {}).get("call_id")) == "write-1"
+        ]
+        assert len(ledger_results) == 1
+        assert ledger_results[0].status == "finalized"
+        assert ledger_results[0].payload.get("committed") is True
+        await store.close()
+
+    async def test_image_cancellation_closes_the_persisted_input(self, monkeypatch):
+        config = make_config()
+        sender = CaptureSender()
+        store = MessageStore(db_path=":memory:")
+        await store.initialize()
+        registry = build_registry(config, store)
+        entered = asyncio.Event()
+
+        async def blocked_register(*_args, **_kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(pipeline_module, "_register_inbound_media", blocked_register)
+        deps = PipelineDeps(
+            config=config, registry=registry, sender=sender,
+            store=store, window=MessageWindow(), session=SessionState(),
+            peer=Peer(chat_type=1, peer_uid="image_cancel"),
+            group_key="private:image_cancel",
+        )
+
+        task = asyncio.create_task(
+            pipeline(
+                "caption",
+                MessageType.IMAGE,
+                "image.png",
+                None,
+                deps=deps,
+            )
+        )
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        inbound = [
+            item for item in await store.get_events(
+                conversation_id="private:image_cancel",
+                finalized_only=False,
+            )
+            if item.event_type == EventType.INBOUND.value
+        ]
+        assert len(inbound) == 1
+        assert inbound[0].status == "cancelled"
         await store.close()
 
     async def test_same_tool_stops_after_three_actual_failures(self, monkeypatch):
@@ -1385,7 +1506,10 @@ class TestPipelineE2EDebounce:
                 tool_calls=[{
                     "id": "call_text",
                     "name": "send",
-                    "arguments": {"text": "可以改，模型配置如下"},
+                    "arguments": {
+                        "target": "private:123456703",
+                        "text": "可以改，模型配置如下",
+                    },
                 }],
                 input_tokens=3,
                 output_tokens=2,
@@ -1395,7 +1519,10 @@ class TestPipelineE2EDebounce:
                 tool_calls=[{
                     "id": "call_markdown",
                     "name": "send",
-                    "arguments": {"markdown_image": "# 模型配置\n\n- 模型：deepseek-v4-flash"},
+                    "arguments": {
+                        "target": "private:123456703",
+                        "markdown_image": "# 模型配置\n\n- 模型：deepseek-v4-flash",
+                    },
                 }],
                 input_tokens=3,
                 output_tokens=2,
@@ -1422,8 +1549,8 @@ class TestPipelineE2EDebounce:
         deps = PipelineDeps(
             config=config, registry=registry, sender=sender,
             store=store, window=MessageWindow(), session=SessionState(),
-            peer=Peer(chat_type=1, peer_uid="send_loop_test"),
-            group_key="private:send_loop_test",
+            peer=Peer(chat_type=1, peer_uid="123456703"),
+            group_key="private:123456703",
         )
 
         await pipeline("show model config as markdown image", MessageType.SHORT_TEXT, None, None, deps=deps)

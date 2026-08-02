@@ -171,6 +171,77 @@ async def test_projection_episode_coverage_ignores_interleaved_conversations(tmp
 
 
 @pytest.mark.asyncio
+async def test_projection_does_not_emit_episode_for_excluded_pipeline(tmp_path):
+    store = MessageStore(str(tmp_path / "excluded-pipeline.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        first = await store.append_event(EventRecord(
+            conversation_id="private:alice",
+            actor_id="qq:user:alice",
+            actor_kind="human",
+            event_type=EventType.INBOUND.value,
+            content="old question",
+            pipeline_id="old-pipeline",
+            status="finalized",
+        ))
+        second = await store.append_event(EventRecord(
+            conversation_id="private:alice",
+            actor_id="bot:self",
+            actor_kind="bot",
+            event_type=EventType.OUTBOUND.value,
+            content="old answer",
+            pipeline_id="old-pipeline",
+            status="finalized",
+        ))
+        await store.add_episode(EpisodeRecord(
+            conversation_id="private:alice",
+            first_sequence=first.sequence or 0,
+            last_sequence=second.sequence or 0,
+            narrative="old episode",
+        ))
+
+        projected = await build_life_stream(
+            store,
+            exclude_pipeline_ids={"old-pipeline"},
+        )
+
+        assert projected == []
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_projection_accepts_episode_of_legacy_outbound_global_facts(tmp_path):
+    store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
+    await store.initialize()
+    try:
+        first = await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self",
+            actor_kind="bot", event_type=EventType.OUTBOUND.value,
+            content="proactive one", visibility="global",
+        ))
+        last = await store.append_event(EventRecord(
+            conversation_id="private:alice", actor_id="bot:self",
+            actor_kind="bot", event_type=EventType.OUTBOUND.value,
+            content="proactive two", visibility="global",
+        ))
+        await store.add_episode(EpisodeRecord(
+            conversation_id="private:alice",
+            first_sequence=first.sequence or 0,
+            last_sequence=last.sequence or 0,
+            narrative="Two proactive global facts.",
+        ))
+
+        context = await build_global_life_context(store, "private:bob")
+
+        assert "Two proactive global facts" in context
+        assert "proactive one" not in context
+        assert "proactive two" not in context
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_projection_selects_latest_global_events_without_private_noise(tmp_path):
     store = MessageStore(str(tmp_path / "ledger.db"), str(tmp_path / "media"))
     await store.initialize()
@@ -304,8 +375,10 @@ async def test_life_stream_keeps_interleaved_pipeline_tool_round_contiguous(tmp_
         ))
 
         stream = await build_life_stream(store)
-        assert [item["role"] for item in stream] == ["assistant", "tool", "user"]
+        # The Bob row is an unmatched legacy inbound and must not become a
+        # historical user instruction. The complete legacy native tool round
+        # remains replayable, but it must stay contiguous.
+        assert [item["role"] for item in stream] == ["assistant", "tool"]
         assert stream[1]["content"] == "查到结果"
-        assert "另一条聊天消息" in stream[2]["content"]
     finally:
         await store.close()

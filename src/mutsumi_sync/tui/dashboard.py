@@ -26,11 +26,13 @@ from prompt_toolkit.styles import Style
 
 from ..config import Config
 from ..logging import start_stream_log_store, stop_stream_log_store
+from ..main import build_registry as build_production_registry, register_scheduler_tool
 from ..memory.store import MessageStore
 from ..message.classifier import MessageType
 from ..message.receiver import MessageEvent, MessageReceiver
 from ..message.sender import MessageSender
 from ..scheduler import PipelineScheduler
+from ..token_estimate import estimate_tokens
 from ..tools.registry import Tool, ToolRegistry
 from ..tools.http_api import http_api_call, HTTP_API_SCHEMA
 from ..tools.config_manager import config_manager, CONFIG_MANAGER_SCHEMA
@@ -161,8 +163,6 @@ def _copy_text_to_system_clipboard(text: str) -> bool:
     return False
 
 
-ESTIMATE_CHARS_PER_TOKEN = 4
-
 _DIM = "\033[2m"
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
@@ -199,7 +199,7 @@ DASHBOARD_STYLE = Style.from_dict({
 
 
 def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // ESTIMATE_CHARS_PER_TOKEN)
+    return estimate_tokens(text)
 
 
 def _fmt_tokens(n: int) -> str:
@@ -250,61 +250,8 @@ def _render_split_bar(current: float, min_val: float, max_val: float,
 
 
 def _build_registry(config: Config, store: MessageStore) -> ToolRegistry:
-    registry = ToolRegistry()
-
-    registry.register(Tool(
-        name="http_api_call",
-        description="发送 HTTP 请求到任意 URL",
-        parameters=HTTP_API_SCHEMA,
-        handler=http_api_call,
-    ))
-
-    async def _cfg_mgr(args: dict) -> str:
-        return await config_manager(args, config=config)
-    registry.register(Tool(
-        name="config_manager",
-        description="读取、修改、热重载配置",
-        parameters=CONFIG_MANAGER_SCHEMA,
-        handler=_cfg_mgr,
-    ))
-
-    async def _mem_search(args: dict, **deps) -> str:
-        return await memory_search(args, store=store, group_key=deps.get("group_key", ""))
-    registry.register(Tool(
-        name="memory_search",
-        description=MEMORY_SEARCH_DESCRIPTION,
-        parameters=MEMORY_SEARCH_SCHEMA,
-        handler=_mem_search,
-    ))
-
-    async def _mem_save(args: dict, **deps) -> str:
-        return await memory_save(args, store=store, group_key=deps.get("group_key", ""))
-    registry.register(Tool(
-        name="memory_save",
-        description=MEMORY_SAVE_DESCRIPTION,
-        parameters=MEMORY_SAVE_SCHEMA,
-        handler=_mem_save,
-    ))
-
-    async def _sn(args: dict, **deps) -> str:
-        return await self_note_tool(args, store=store, group_key=deps.get("group_key", ""))
-    registry.register(Tool(
-        name="self_note",
-        description=SELF_NOTE_DESCRIPTION,
-        parameters=SELF_NOTE_SCHEMA,
-        handler=_sn,
-    ))
-
-    async def _snd(args: dict, **deps) -> str:
-        return await send_tool(args, sender=deps.get("sender"), peer=deps.get("peer"))
-    registry.register(Tool(
-        name="send",
-        description="发送消息到用户。支持 text/image/face/at/reply/forward 段类型。",
-        parameters=SEND_TOOL_SCHEMA,
-        handler=_snd,
-    ))
-
-    return registry
+    """Use the production registry so dashboard behavior matches the service."""
+    return build_production_registry(config, store)
 
 
 def _fake_event(user_id: int, group_id: int | None, text: str) -> MessageEvent:
@@ -1197,6 +1144,7 @@ def main() -> None:
         registry = _build_registry(config, store)
         sender = _FakeSender()
         scheduler = PipelineScheduler(config=config, registry=registry, sender=sender, store=store)
+        register_scheduler_tool(registry, scheduler)
 
         dashboard = Dashboard(scheduler=scheduler, store=store, config=config, receiver=None)
         await scheduler.startup()

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from .config import Config
     from .scheduler import PipelineDeps
 
+from .token_estimate import estimate_tokens
+
 logger = logging.getLogger("mutsumi.logging")
 
 _DIM = "\033[2m"
@@ -23,7 +25,6 @@ _BOLD = "\033[1m"
 _CYAN = "\033[36m"
 _UTC_PLUS_8 = timezone(timedelta(hours=8))
 
-ESTIMATE_CHARS_PER_TOKEN = 4
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _STREAM_LISTENER: QueueListener | None = None
 _STREAM_FILE_HANDLERS: list[RotatingFileHandler] = []
@@ -147,8 +148,9 @@ def stop_stream_log_store() -> None:
 def log_context(messages: list[dict], deps: PipelineDeps) -> None:
     provider = deps.config.model.provider
     model = deps.config.model.model
-    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
-    total_tokens = total_chars // ESTIMATE_CHARS_PER_TOKEN
+    total_tokens = estimate_tokens(
+        "\n".join(str(m.get("content", "")) for m in messages)
+    )
 
     lines = ["", f"{_BOLD}{_CYAN}=========[CONTEXT][{provider}][{model}]========={_RESET}"]
     for msg in messages:

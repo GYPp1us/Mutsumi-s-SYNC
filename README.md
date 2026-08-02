@@ -35,7 +35,10 @@ The project was rewritten from the legacy v2 codebase. The current v3 line focus
 - `status_update` can send one short progress message before a long tool; automatic fallback progress never enters assistant history.
 - `no_reply` tool for deliberate silent turns.
 - `send` tool support for special message segments, legacy text sends, images, face, mentions, replies, forwards, and optional Markdown-rendered images.
-- `scheduler` tool for durable one-shot scheduled pipeline triggers.
+- `scheduler` tool for durable one-shot, fixed-interval, and cron pipeline triggers with lifecycle management.
+- One constrained `file_edit` tool for listing, reading, writing, and exact-patching Skill files.
+- Optional OpenCode delegation with a bound, idempotent `report_task` callback; worker stdout is never treated as success.
+- File-based Skills with optional short `BOT.md` guidance and OpenCode-standard `SKILL.md` instructions.
 - Optional Node/Playwright Markdown renderer for LaTeX, highlighted code blocks, and Mermaid diagrams.
 
 ## Repository Layout
@@ -113,7 +116,7 @@ ingress:
   host: 127.0.0.1
   port: 8765
   token: ""
-  target_user_id: "3535616589"
+  target_user_id: "1321878226"
   max_body_bytes: 262144
   request_timeout_seconds: 10
 
@@ -156,6 +159,22 @@ heartbeat:
   private_interval_seconds: 900
   group_interval_seconds: 10800
   active_window_seconds: 86400
+  aggressive_provider_cache_retention: false
+
+file_tools:
+  enabled: true
+  root: skills
+  max_read_bytes: 262144
+  max_write_bytes: 262144
+
+opencode:
+  enabled: false
+  executable: opencode
+  workspace: .
+  run_root: data/opencode
+  timeout_seconds: 3600
+  max_report_chars: 8000
+  auto_approve: false
 
 logging:
   stream_store:
@@ -317,7 +336,7 @@ conversation window or durable assistant reply.
 
 Pipe-based multi-message framing is disabled while a replacement protocol is being designed. `a | b` and `a \| b` are both sent unchanged in one QQ message.
 
-Reasoning content is retained only in the current DeepSeek tool loop and is never sent or persisted. Tool-loop assistant content is never sent. Tools are for memory, config, queries, external APIs, special message segments, or silent control. For ordinary text replies, use `TO_USER`; do not call `send`.
+Reasoning content is retained only in the current DeepSeek tool loop and is never sent or persisted. Tool-loop assistant content is never sent. Tools are for memory, config, queries, external APIs, special message segments, or silent control. For ordinary text replies to the current conversation, use `TO_USER`; do not call `send`. A cross-conversation interaction may use `send.text` with an explicitly different target. When `send` is used, its `target` is required and must be an explicit `private:<numeric_id>` or `group:<numeric_id>` destination.
 
 Use `no_reply` when the turn should intentionally produce no visible message. The `send` tool remains available for special segments such as `markdown_image`, image, face, mention, reply, and forward.
 
@@ -325,7 +344,7 @@ Use `status_update` before a tool that is expected to take a noticeable amount o
 
 ## Context And Memory Protocol
 
-The LLM request uses one provider-native Chinese `system` message for durable platform rules and the configured persona. The remaining request is a global chronological Life Stream followed by temporary platform state and the current source message. Every human and service source uses provider role `user`; readable prefixes identify the conversation and actor. The source identity is data supplied by the platform, not something the model should infer from prose.
+The LLM request uses one provider-native Chinese `system` message for durable platform rules and the configured persona. The remaining request is an audience-filtered view of the global chronological Life Stream followed by temporary platform state and the current source message. The current conversation and explicitly global events are visible; unrelated private conversation text remains in the ledger but is not sent to the model. Every human and service source uses provider role `user`; readable prefixes identify the conversation and actor. The source identity is data supplied by the platform, not something the model should infer from prose.
 
 Completed tool rounds in the Life Stream are replayed as native provider messages: one `assistant` message with `tool_calls`, followed by matching `tool` results. Tool audit records remain durable, but are not flattened into ordinary assistant text.
 
@@ -337,7 +356,9 @@ Before the current user request, the pipeline injects a temporary platform-state
 
 Inbound user text is saved before the LLM call. If the task is cancelled, the saved record is updated to `status=cancelled` instead of being lost. Heartbeat pipelines set `remember_input=false` and `remember_output=true`: synthetic heartbeat input is not written, while verified proactive assistant output is written to the target window and event ledger.
 
-Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete record-ID turns and stores a trusted `covered_through_message_id`. Legacy `last_message_id` values are ignored during restart restoration. Only successful conversation records are restored; memory, action artifacts, cancelled/error/no-reply records are excluded.
+Per-message summaries describe only one long message and never claim database coverage. Request compaction summarizes a precise prefix of complete pipeline groups and stores a trusted coverage boundary. Legacy `last_message_id` values are ignored during restart restoration. A cancelled/error group or an unmatched tool round is never projected; a terminal failure cannot block later finalized groups from being summarized. Episodes replace their covered raw events in the projection, while raw ledger facts remain durable.
+
+For a Ledger-backed conversation, the old `messages/summaries` path is read-only compatibility data and is not written by normal pipeline cleanup. Each pipeline fixes one Ledger high-water snapshot; initial context assembly, token reclaim, and context rebuilds use that same snapshot so concurrent conversations cannot be mixed into one provider request.
 
 Memory write tools are staged during the tool loop and committed exactly once during cancellation-protected cleanup. Their immediate live tool result says `staged`; the durable native tool history and action ledger expose the final committed success or failure.
 
@@ -345,9 +366,12 @@ Memory write tools are staged during the tool loop and committed exactly once du
 
 The `events` table is the append-first global interaction ledger. It records
 actor, conversation, visibility, lifecycle, tool, turn and media provenance.
-The current context projector intentionally presents the unified life timeline
-in chronological order. Actor IDs, display names and private aliases are
-carried in readable prefixes; they are not simulated provider roles.
+The current context projector presents the unified life timeline in chronological
+order after applying the current conversation as the input audience. A private
+conversation sees its own events and global events, while unrelated private
+conversation text remains ledger-only; a group is one shared conversation
+boundary. Actor IDs, display names and private aliases are carried in readable
+prefixes; they are not simulated provider roles.
 
 A group has one shared conversation window while members retain independent
 actor identities. The global `actor_profile` tool maintains a private alias and
@@ -373,6 +397,23 @@ the persona and all operational prompts from the release.
 The prompt loader replaces the fixed bot and owner identity placeholders once at load time;
 the current speaker still comes from the event's `actor_id` and platform nickname.
 
+To run the isolated context-layout experiment, provide a valid OpenAI-compatible
+key without writing it to the repository:
+
+```powershell
+$env:PYTHONPATH = "."
+$env:DS_API_KEY = "..."
+python experiments/context_lab.py --runs 3 --output context-lab.json
+```
+
+The experiment compares the legacy packet with the current Ledger layout and
+reports response availability, tool-choice, plain-text, target, actor-boundary,
+and unknown-fact abstention pass rates. Empty model responses are reported as
+unusable separately; unknown-fact hallucination rate is conditional on a usable
+response. A missing
+or invalid key is reported as an API error; zero responses must not be interpreted
+as a zero hallucination rate.
+
 ## Heartbeat And Vision
 
 The scheduler runs a real proactive heartbeat scan every 15 minutes for private conversations and every 3 hours for groups. Only conversations with a real inbound event in the previous 24 hours are checked. Heartbeats yield to user pipelines, suppress cold-session pokes and progress notifications, and do not expose configuration, memory-write, or scheduler tools.
@@ -381,18 +422,43 @@ Incoming image messages can use a separate vision provider when `vision.enabled`
 
 ## Scheduled Tasks
 
-The built-in `scheduler` tool registers durable one-shot tasks. The LLM must provide a formatted `scheduled_time`; `prompt` is optional:
+The built-in `scheduler` tool registers durable one-shot, fixed-interval, or five-field cron tasks. A `schedule` operation requires a time rule and natural-language `prompt`; the task is bound to the current conversation and may also store optional opaque natural-language `context`:
 
 ```json
 {
+  "operation": "schedule",
   "scheduled_time": "2026-07-08 09:30:00 +08:00",
-  "prompt": "提醒用户检查服务器日志"
+  "prompt": "提醒用户检查服务器日志",
+  "context": "读取 skills/research/BOT.md；结果交给 OpenCode 处理",
+  "interval_seconds": 86400
 }
 ```
 
 Accepted time strings are ISO-like formatted datetimes such as `2026-07-08 09:30:00 +08:00` or `2026-07-08T09:30:00+08:00`. If timezone is omitted, UTC+8 is assumed. The tool returns the task id, normalized trigger time, and a readable duration from now to the trigger time.
 
-Tasks are stored in SQLite and restored on startup. When a task fires, it runs the normal pipeline with `source="schedule"` and message content prefixed as `[SCHEDULED:<id>] ...`, so the model can decide whether to send a visible reply, call tools, update memory, or call `no_reply`.
+For wall-clock recurrence, pass `cron` instead of `interval_seconds`; it uses UTC+8 and the standard five fields `minute hour day-of-month month weekday`. When both day fields are restricted, standard cron OR semantics apply. `cron` and `interval_seconds` cannot be combined.
+
+Tasks are stored in SQLite and restored on startup. Supported lifecycle operations are `list`, `pause`, `resume`, and `cancel`. A due task waits behind user input for the same conversation; if user work preempts an active scheduled pipeline, the task is requeued instead of silently lost. It runs the normal pipeline with `source="schedule"` and a platform-prefixed prompt. `context` is appended only to that trigger input and is not remembered as user history. The scheduler does not interpret it as JSON or a workflow; the model decides how to use it, whether to send a visible reply, call tools, update memory, or call `no_reply`.
+
+## Skills And OpenCode
+
+Skills are ordinary files under the configured `file_tools.root` (normally
+`skills/`):
+
+```text
+skills/<name>/BOT.md       # short, bot-facing hint
+skills/<name>/SKILL.md     # detailed worker instructions with front matter
+```
+
+The bot reads these files only when needed through `file_edit`; they are not
+registered in a backend catalog and are not injected into every request. For a
+long task, `delegate_task` passes a natural-language prompt to OpenCode. The
+worker must explicitly call the temporary `report_task` tool. Only that bounded
+report is stored and returned to the original conversation; process exit,
+stdout, and the worker transcript are diagnostics rather than completion facts.
+Each run gets isolated XDG/database paths, and a valid report is token-bound and
+idempotent across restart. OpenCode is optional; production must have the CLI
+and its plugin SDK installed before `opencode.enabled` is enabled.
 
 ## Markdown Image Sending
 
@@ -435,7 +501,10 @@ The renderer uses:
 - Mermaid
 - Playwright Chromium screenshots
 
-The generated PNG files are written to `data/generated/markdown/` by default.
+The generated PNG is written to `data/generated/markdown/` by default only for
+the duration of the send operation. A verified successful send copies it into
+the Media Ledger before deleting the temporary file; a failed send deletes the
+temporary file without recording successful outbound media.
 The 60-second default includes the first Playwright/Chromium cold start; warm
 renders normally complete much sooner.
 

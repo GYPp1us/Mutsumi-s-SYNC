@@ -4,6 +4,7 @@ context:
   compression_trigger_ratio: 0.8
   compression_target_ratio: 0.5
   reserved_output_tokens: 8192
+  ledger_event_limit: 4000
   recent_actions_max_count: 12
   summaries_max_count: 180
   summaries_min_count: 90
@@ -44,6 +45,20 @@ heartbeat:
   private_interval_seconds: 900
   group_interval_seconds: 10800
   active_window_seconds: 86400
+  aggressive_provider_cache_retention: false
+file_tools:
+  enabled: true
+  root: skills
+  max_read_bytes: 262144
+  max_write_bytes: 262144
+opencode:
+  enabled: false
+  executable: opencode
+  workspace: .
+  run_root: data/opencode
+  timeout_seconds: 3600
+  max_report_chars: 8000
+  auto_approve: false
 logging:
   stream_store:
     enabled: true

@@ -86,6 +86,28 @@ def resolve_system_prompts_path(value: str, config_dir: Path | None = None) -> P
     return candidates[0].resolve()
 
 
+def resolve_runtime_path(value: str, config_path: str | Path | None = None) -> Path:
+    """Resolve code/data-relative paths against the active release root."""
+    raw = Path(str(value or ".")).expanduser()
+    if raw.is_absolute():
+        return raw.resolve()
+
+    project_candidate = (PROJECT_ROOT / raw).resolve()
+    if str(raw) in {".", ""} or project_candidate.exists():
+        return project_candidate
+
+    if config_path is None:
+        # Preserve the historical relative-path behavior for callers that
+        # construct Config() without a file and run from their chosen cwd.
+        return raw
+
+    if config_path:
+        config_candidate = (Path(config_path).resolve().parent / raw).resolve()
+        if config_candidate.exists():
+            return config_candidate
+    return project_candidate
+
+
 class NapcatConfig(BaseModel):
     ws_url: str = "ws://localhost:3000"
     http_url: str = "http://localhost:3000"
@@ -153,6 +175,28 @@ class HeartbeatConfig(BaseModel):
     private_interval_seconds: int = 900
     group_interval_seconds: int = 10800
     active_window_seconds: int = 86400
+    aggressive_provider_cache_retention: bool = False
+
+
+class FileToolsConfig(BaseModel):
+    """Constrained root for the single model-facing file tool."""
+
+    enabled: bool = True
+    root: str = "skills"
+    max_read_bytes: int = 262_144
+    max_write_bytes: int = 262_144
+
+
+class OpenCodeConfig(BaseModel):
+    """Optional external task-agent integration."""
+
+    enabled: bool = False
+    executable: str = "opencode"
+    workspace: str = "."
+    run_root: str = "data/opencode"
+    timeout_seconds: float = 3600.0
+    max_report_chars: int = 8_000
+    auto_approve: bool = False
 
 
 class PromptsConfig(BaseModel):
@@ -171,6 +215,7 @@ class ContextConfig(BaseModel):
     compression_trigger_ratio: float = 0.8
     compression_target_ratio: float = 0.5
     reserved_output_tokens: int = 8192
+    ledger_event_limit: int = 4000
     recent_actions_max_count: int = 12
     summaries_max_count: int = 180
     summaries_min_count: int = 90
@@ -231,6 +276,8 @@ class Config(BaseModel):
     render: RenderConfig = RenderConfig()
     vision: VisionConfig = VisionConfig()
     heartbeat: HeartbeatConfig = HeartbeatConfig()
+    file_tools: FileToolsConfig = FileToolsConfig()
+    opencode: OpenCodeConfig = OpenCodeConfig()
     logging: LoggingConfig = LoggingConfig()
     prompts: PromptsConfig = PromptsConfig()
 
@@ -278,10 +325,14 @@ class Config(BaseModel):
             path = Path.cwd() / config_path
 
         if path.exists():
-            raw = yaml.safe_load(open(path, encoding="utf-8")) or {}
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if not isinstance(raw, dict):
+                raise ValueError(f"Config file must contain a YAML mapping: {path}")
 
             legacy_persona = raw.pop("system_prompt", "")
             prompts_raw = raw.get("prompts")
+            if prompts_raw is not None and not isinstance(prompts_raw, dict):
+                raise ValueError("config.prompts must be a YAML mapping")
             if isinstance(prompts_raw, dict):
                 legacy_persona = prompts_raw.pop("persona", "") or legacy_persona
 
@@ -310,13 +361,12 @@ class Config(BaseModel):
             if prompts_raw is None:
                 prompts_raw = {}
                 raw["prompts"] = prompts_raw
-            if isinstance(prompts_raw, dict):
-                system_file = str(prompts_raw.get("system_file") or DEFAULT_SYSTEM_PROMPTS_FILE)
-                prompts_path = resolve_system_prompts_path(system_file, path.parent)
-                system_prompts = load_system_prompts(prompts_path)
-                if legacy_persona:
-                    system_prompts.persona = str(legacy_persona)
-                prompts_raw["system"] = system_prompts.model_dump()
+            system_file = str(prompts_raw.get("system_file") or DEFAULT_SYSTEM_PROMPTS_FILE)
+            prompts_path = resolve_system_prompts_path(system_file, path.parent)
+            system_prompts = load_system_prompts(prompts_path)
+            if legacy_persona:
+                system_prompts.persona = str(legacy_persona)
+            prompts_raw["system"] = system_prompts.model_dump()
             instance = cls(**raw)
         else:
             instance = cls()

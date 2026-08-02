@@ -10,9 +10,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mutsumi.tools.memory")
 
 MEMORY_SAVE_DESCRIPTION = (
-    "仅在用户明确要求记住，或出现新的、稳定的长期事实时保存一条记忆。"
-    "不要保存当前查询、临时任务、memory_search 的返回结果、已经存在的事实或仅用于本轮回答的信息；"
-    "用户只是在询问或回忆时不要调用。"
+    "仅在当前用户消息明确要求记住，或当前用户消息首次提供新的、稳定的长期事实时保存一条记忆。"
+    "这里的‘新’只指当前消息新提供的内容；历史上下文、摘要、inner journal、工具结果和已经存在的事实都不算新。"
+    "不要保存当前查询、临时任务、memory_search 的返回结果或仅用于本轮回答的信息；用户只是在询问或回忆时不要调用。"
 )
 
 MEMORY_SEARCH_DESCRIPTION = (
@@ -25,7 +25,7 @@ MEMORY_SAVE_SCHEMA = {
     "properties": {
         "content": {
             "type": "string",
-            "description": "要保存的一条新的稳定长期事实，不得填写搜索结果、当前问题或重复事实。",
+            "description": "当前用户消息新提供的一条稳定长期事实；不得填写历史上下文、搜索结果、当前问题或重复事实。",
         },
     },
     "required": ["content"],

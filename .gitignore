@@ -33,6 +33,9 @@ cache/
 # Data
 data/
 
+# Generated Nature CET-4 exercises
+skills/nature-daily-cet4/output/
+
 # Worktrees
 .worktrees/
 

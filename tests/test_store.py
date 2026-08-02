@@ -145,6 +145,7 @@ class TestMessageStore:
                 peer_chat_type=1,
                 peer_uid="123",
                 prompt="remind me",
+                context="Use the research skill.",
                 scheduled_at=time.time() + 60,
             )
 
@@ -153,6 +154,7 @@ class TestMessageStore:
             assert pending[0].id == task_id
             assert pending[0].group_key == "private:123"
             assert pending[0].prompt == "remind me"
+            assert pending[0].context == "Use the research skill."
             assert pending[0].status == "pending"
 
             await store.mark_scheduled_task_status(task_id, "done")

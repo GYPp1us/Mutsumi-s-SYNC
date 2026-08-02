@@ -23,6 +23,33 @@ class FakeScheduler:
         return 42
 
 
+class CronScheduler:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def schedule_task(
+        self,
+        *,
+        scheduled_at: float,
+        prompt: str,
+        group_key: str,
+        peer: Peer,
+        interval_seconds: float | None,
+        cron_expression: str,
+        context: str = "",
+    ) -> int:
+        self.calls.append({
+            "scheduled_at": scheduled_at,
+            "prompt": prompt,
+            "group_key": group_key,
+            "peer": peer,
+            "interval_seconds": interval_seconds,
+            "cron_expression": cron_expression,
+            "context": context,
+        })
+        return 99
+
+
 def test_parse_scheduled_time_accepts_llm_formatted_time_with_timezone() -> None:
     dt = parse_scheduled_time("2026-07-08 09:30:00 +08:00")
 
@@ -67,6 +94,64 @@ async def test_scheduler_tool_requires_scheduled_time() -> None:
     assert result.startswith("[Error:")
 
 
+async def test_scheduler_tool_requires_prompt_for_future_schedule() -> None:
+    result = await scheduler_tool(
+        {"scheduled_time": "2026-07-08 10:02:03 +08:00"},
+        scheduler=FakeScheduler(),
+        group_key="private:123",
+        peer=Peer(chat_type=1, peer_uid="123"),
+        now=datetime(2026, 7, 7, 9, 0, 0, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert result == "[Error: prompt is required for schedule]"
+
+
+async def test_scheduler_tool_passes_cron_to_generic_scheduler() -> None:
+    now = datetime(2026, 7, 7, 9, 0, 0, tzinfo=timezone(timedelta(hours=8)))
+    scheduled_time = "2026-07-08 10:02:03 +08:00"
+    fake_scheduler = CronScheduler()
+    peer = Peer(chat_type=1, peer_uid="123")
+
+    result = await scheduler_tool(
+        {
+            "scheduled_time": scheduled_time,
+            "cron": "0 10 * * *",
+            "prompt": "daily work",
+        },
+        scheduler=fake_scheduler,
+        group_key="private:123",
+        peer=peer,
+        now=now,
+    )
+
+    assert "kind=cron" in result
+    assert fake_scheduler.calls[0]["cron_expression"] == "0 10 * * *"
+    assert fake_scheduler.calls[0]["interval_seconds"] is None
+
+
+async def test_scheduler_tool_passes_optional_context_unchanged() -> None:
+    now = datetime(2026, 7, 7, 9, 0, 0, tzinfo=timezone(timedelta(hours=8)))
+    fake_scheduler = CronScheduler()
+    peer = Peer(chat_type=1, peer_uid="123")
+
+    result = await scheduler_tool(
+        {
+            "scheduled_time": "2026-07-08 10:02:03 +08:00",
+            "prompt": "daily work",
+            "context": "Read skills/research/BOT.md; deliver the result as plain text.",
+        },
+        scheduler=fake_scheduler,
+        group_key="private:123",
+        peer=peer,
+        now=now,
+    )
+
+    assert "[OK]" in result
+    assert fake_scheduler.calls[0]["context"] == (
+        "Read skills/research/BOT.md; deliver the result as plain text."
+    )
+
+
 async def test_scheduler_tool_rejects_past_time() -> None:
     result = await scheduler_tool(
         {"scheduled_time": "2026-07-07 08:59:59 +08:00"},
@@ -86,5 +171,8 @@ def test_scheduler_tool_is_registered_with_required_time_schema() -> None:
     schema = registry.to_openai_schema()
     tool = next(item["function"] for item in schema if item["function"]["name"] == "scheduler")
 
-    assert tool["parameters"]["required"] == ["scheduled_time"]
+    assert tool["parameters"]["required"] == []
+    assert "operation" in tool["parameters"]["properties"]
+    assert "interval_seconds" in tool["parameters"]["properties"]
     assert "prompt" in tool["parameters"]["properties"]
+    assert "context" in tool["parameters"]["properties"]
