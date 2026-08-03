@@ -20,7 +20,8 @@
 - `bot_state` and `priority_override` are retired model capabilities. Their legacy SQLite tables may remain until production data reset, but they must not be registered or injected.
 - Text pipelines save the inbound message before LLM/tool work. If cancelled, the record must be updated to `status=cancelled`; do not allow interrupted messages to disappear silently.
 - Pipe-based reply splitting is disabled. Assistant content is sent once and `|` remains literal.
-- `send(markdown_image=...)` records verified success/failure in the structured action ledger. Successful artifacts carry the temporary file reference, message id, Markdown hash, and durable Media Ledger ID; the renderer PNG is deleted after ledger registration and artifact markers must not enter assistant history.
+- `send(target=..., markdown_image=...)` records verified success/failure in the structured action ledger. Successful artifacts carry the temporary file reference, message id, Markdown hash, and durable Media Ledger ID; the renderer PNG is deleted after ledger registration and artifact markers must not enter assistant history.
+- 跨会话 `send` 的 outbound 必须使用目标会话专属的逻辑 pipeline 分组；源 pipeline、源会话和 tool call 只作为 payload/action provenance 保留。Episode 压缩不得按目标 outbound 的分组重新拉入源私聊事件。
 - Memory writes remain staged until cancellation-protected cleanup. Immediate tool feedback must say `staged`, and each final operation is committed and ledgered exactly once.
 - Historical native tool projection must use the final committed memory-write result, not the provisional `staged` feedback.
 - Malformed final envelopes receive bounded correction. After exhaustion, send only an unambiguous complete `TO_USER` block or a flat-text protocol failure; never silently lose an ordinary user turn and never salvage `TO_SELF`.
@@ -149,6 +150,7 @@ Dashboard 常用命令：
 
 ```json
 {
+  "target": "private:123456789",
   "markdown_image": "# 标题\n\n$$E=mc^2$$\n\n```mermaid\ngraph TD; A-->B\n```"
 }
 ```

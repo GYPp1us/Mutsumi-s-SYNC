@@ -8,9 +8,15 @@ import os
 from datetime import date
 
 from src.mutsumi_sync.config import Config
-from src.mutsumi_sync.memory.store import EventRecord, EventType, MessageStore, StoredMessage
+from src.mutsumi_sync.memory.store import (
+    EpisodeRecord,
+    EventRecord,
+    EventType,
+    MessageStore,
+    StoredMessage,
+)
 from src.mutsumi_sync.memory.window import MessageWindow
-from src.mutsumi_sync.memory.projection import build_life_stream
+from src.mutsumi_sync.memory.projection import _select_valid_episodes, build_life_stream
 from src.mutsumi_sync.memory.session import SessionState
 from src.mutsumi_sync.message.sender import Peer
 from src.mutsumi_sync.message.classifier import MessageType
@@ -705,6 +711,38 @@ class TestPipelineE2EMultiRound:
         ]
         assert source_outbound == []
         assert [event.content for event in target_outbound] == ["消息发给另一个会话"]
+        target_event = target_outbound[0]
+        assert target_event.pipeline_id != deps.pipeline_id
+        assert target_event.payload == {
+            "origin_pipeline_id": deps.pipeline_id,
+            "origin_conversation_id": "private:source",
+            "tool_call_id": "call_cross",
+        }
+        target_pipeline_events = await store.get_events_by_pipeline_ids(
+            {target_event.pipeline_id}
+        )
+        assert [event.event_id for event in target_pipeline_events] == [
+            target_event.event_id
+        ]
+
+        actions = await store.get_recent_actions("private:source")
+        send_action = next(action for action in actions if action["tool_name"] == "send")
+        assert send_action["arguments"]["target"] == "group:777"
+
+        episode = EpisodeRecord(
+            conversation_id="group:777",
+            first_sequence=target_event.sequence or 0,
+            last_sequence=target_event.sequence or 0,
+            narrative="已向目标群发送消息。",
+        )
+        episode.episode_id = await store.add_episode(episode)
+        selected, _ = await _select_valid_episodes(
+            store,
+            [episode],
+            max_sequence=target_event.sequence,
+            require_complete_groups=True,
+        )
+        assert [item.episode_id for item in selected] == [episode.episode_id]
         assert deps.window.get_context() == []
         await store.close()
 

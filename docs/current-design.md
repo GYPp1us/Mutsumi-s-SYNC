@@ -74,6 +74,11 @@ future conversation window.
   `group:<numeric_id>` conversation key; nicknames are never resolved by the
   transport tool. Ordinary text for the current conversation uses `TO_USER`;
   text-only `send` is allowed only for an explicitly different target.
+- A verified cross-conversation send is stored under a destination-scoped
+  logical pipeline identity. The source pipeline, source conversation, and tool
+  call remain provenance in the outbound payload and source action ledger, but
+  they are not part of the destination Episode group. This prevents destination
+  compaction from rehydrating unrelated private source events.
 - `status_update` is a short visible progress event for long tools. It executes
   before other calls in its round, does not end the pipeline, and is not added to
   assistant history. A long registered tool without an explicit update gets

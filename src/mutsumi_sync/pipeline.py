@@ -548,6 +548,7 @@ async def _append_event(
     payload: dict[str, Any] | None = None,
     turn_id: str = "",
     conversation_id: str | None = None,
+    pipeline_id: str | None = None,
 ) -> str | None:
     if actor_kind == "human" and not deps.remember_input:
         return None
@@ -570,7 +571,7 @@ async def _append_event(
             actor_name=resolved_actor_name,
             event_type=event_type,
             content=content,
-            pipeline_id=deps.pipeline_id,
+            pipeline_id=deps.pipeline_id if pipeline_id is None else pipeline_id,
             visibility=visibility,
             audience=audience,
             status=status,
@@ -1915,8 +1916,9 @@ async def pipeline(
                     send_count += 1
                     if send_committed:
                         text_reply = str(tool_args.get("text", ""))
+                        source_conversation_id = deps.conversation_id or deps.group_key
                         is_current_target = target_conversation_id == (
-                            deps.conversation_id or deps.group_key
+                            source_conversation_id
                         )
                         if text_reply and is_current_target:
                             bot_replies.append(text_reply)
@@ -1925,6 +1927,17 @@ async def pipeline(
                             responded = True
                             final_status = "responded"
                         sent_media_ids = await _register_sent_media(deps, tool_args, artifact)
+                        outbound_pipeline_id = deps.pipeline_id
+                        outbound_payload = None
+                        if not is_current_target:
+                            outbound_pipeline_id = (
+                                f"{deps.pipeline_id}:send:{send_count}:{call_id}"
+                            )
+                            outbound_payload = {
+                                "origin_pipeline_id": deps.pipeline_id,
+                                "origin_conversation_id": source_conversation_id,
+                                "tool_call_id": call_id,
+                            }
                         await _append_event(
                             deps,
                             event_type=EventType.OUTBOUND.value,
@@ -1933,6 +1946,8 @@ async def pipeline(
                             audience=target_conversation_id,
                             media_ids=sent_media_ids or None,
                             conversation_id=target_conversation_id,
+                            pipeline_id=outbound_pipeline_id,
+                            payload=outbound_payload,
                         )
                         log_send(deps, "tool", tool_args)
                 elif tool_name in WRITE_TOOLS and not deps.allow_write_tools:

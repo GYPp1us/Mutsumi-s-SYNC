@@ -330,13 +330,15 @@ Only the final LLM round without `tool_calls` is parsed. It must contain exactly
 
 `TO_USER` is the only ordinary visible channel. It is subject to the flat-text
 gate; complex Markdown, LaTeX, code, or Mermaid must use
-`send(markdown_image=...)`. `TO_SELF` is stored globally only after a complete,
+`send(target=..., markdown_image=...)`. `TO_SELF` is stored globally only after a complete,
 successful, non-cancelled pipeline turn. Protocol tags are not written into the
 conversation window or durable assistant reply.
 
 Pipe-based multi-message framing is disabled while a replacement protocol is being designed. `a | b` and `a \| b` are both sent unchanged in one QQ message.
 
 Reasoning content is retained only in the current DeepSeek tool loop and is never sent or persisted. Tool-loop assistant content is never sent. Tools are for memory, config, queries, external APIs, special message segments, or silent control. For ordinary text replies to the current conversation, use `TO_USER`; do not call `send`. A cross-conversation interaction may use `send.text` with an explicitly different target. When `send` is used, its `target` is required and must be an explicit `private:<numeric_id>` or `group:<numeric_id>` destination.
+
+A verified cross-conversation send is recorded as a standalone logical outbound event in the destination conversation. Its source pipeline remains available only as provenance in the event payload and source action ledger, so destination Episode recovery cannot pull private source-conversation events into its summary.
 
 Use `no_reply` when the turn should intentionally produce no visible message. The `send` tool remains available for special segments such as `markdown_image`, image, face, mention, reply, and forward.
 
@@ -466,6 +468,7 @@ For rich content, the `send` tool can render Markdown source into a PNG and send
 
 ```json
 {
+  "target": "private:123456789",
   "markdown_image": "# Report\n\n$$E=mc^2$$\n\n```python\nprint('hello')\n```\n\n```mermaid\ngraph TD; A-->B\n```"
 }
 ```

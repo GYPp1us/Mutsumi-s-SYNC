@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mutsumi's SYNC v3 — 最新实现说明与术语手册</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --ink: #1f2430;
+    --muted: #5b6472;
+    --line: #d9dee8;
+    --accent: #2f6fed;
+    --accent-soft: #e8effc;
+    --green: #1a7f4b;
+    --green-soft: #e6f6ec;
+    --amber: #9a6b00;
+    --amber-soft: #fdf3d9;
+    --red: #b3382c;
+    --red-soft: #fbeae7;
+    --purple: #6a3fb5;
+    --purple-soft: #f0e9fb;
+    --mono: "Cascadia Code", Consolas, "JetBrains Mono", Menlo, monospace;
+    --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  header.hero {
+    background: linear-gradient(135deg, #1b2a4a 0%, #2f6fed 100%);
+    color: #fff;
+    padding: 48px 32px 40px;
+  }
+  header.hero h1 { margin: 0 0 8px; font-size: 28px; }
+  header.hero p.sub { margin: 0; opacity: .85; max-width: 900px; }
+  header.hero .meta { margin-top: 14px; font-size: 13px; opacity: .75; font-family: var(--mono); }
+  nav.toc {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.96);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 32px;
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+    font-size: 13px;
+  }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  main { max-width: 1060px; margin: 0 auto; padding: 28px 32px 80px; }
+  section { margin-top: 44px; }
+  h2 {
+    font-size: 22px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+    margin: 0 0 18px;
+  }
+  h3 { font-size: 17px; margin: 26px 0 10px; }
+  h4 { font-size: 15px; margin: 18px 0 8px; }
+  p { margin: 8px 0; }
+  code {
+    font-family: var(--mono);
+    font-size: .86em;
+    background: #eef1f6;
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .term {
+    font-family: var(--mono);
+    font-size: .9em;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .file { font-family: var(--mono); font-size: .8em; color: var(--muted); }
+  .file a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--line); }
+  .file a:hover { color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; background: var(--panel); }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; font-size: 14px; }
+  th { background: #f0f3f8; font-weight: 600; white-space: nowrap; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 14px 0;
+  }
+  .note { border-left: 4px solid var(--amber); background: var(--amber-soft); }
+  .warn { border-left: 4px solid var(--red); background: var(--red-soft); }
+  .ok { border-left: 4px solid var(--green); background: var(--green-soft); }
+  .note .t, .warn .t, .ok .t { font-weight: 700; display: block; margin-bottom: 4px; }
+  .pill {
+    display: inline-block; padding: 1px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; margin-right: 4px;
+  }
+  .pill.b { background: var(--accent-soft); color: var(--accent); }
+  .pill.g { background: var(--green-soft); color: var(--green); }
+  .pill.a { background: var(--amber-soft); color: var(--amber); }
+  .pill.r { background: var(--red-soft); color: var(--red); }
+  .pill.p { background: var(--purple-soft); color: var(--purple); }
+  /* ---- diagram helpers ---- */
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; margin: 16px 0; }
+  .node {
+    background: var(--panel);
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    text-align: center;
+    min-width: 120px;
+    font-size: 13px;
+  }
+  .node .en { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .node.hl { border-color: var(--accent); background: var(--accent-soft); }
+  .node.gr { border-color: var(--green); background: var(--green-soft); }
+  .node.am { border-color: var(--amber); background: var(--amber-soft); }
+  .node.rd { border-color: var(--red); background: var(--red-soft); }
+  .node.pu { border-color: var(--purple); background: var(--purple-soft); }
+  .arrow {
+    display: flex; align-items: center; padding: 0 6px;
+    color: var(--muted); font-size: 12px;
+  }
+  .arrow::after { content: "→"; font-size: 18px; }
+  .stack { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+  .layer {
+    border: 1.5px solid var(--line);
+    border-left-width: 6px;
+    border-radius: 8px;
+    padding: 10px 14px;
+    background: var(--panel);
+  }
+  .layer .head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+  .layer .head b { font-size: 14px; }
+  .layer .head .role { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .layer .desc { font-size: 13.5px; color: var(--muted); margin-top: 4px; }
+  .layer.l1 { border-left-color: var(--purple); }
+  .layer.l2 { border-left-color: var(--accent); }
+  .layer.l3 { border-left-color: var(--amber); }
+  .layer.l4 { border-left-color: var(--green); }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .glossary-term { display: block; margin: 14px 0; }
+  .glossary-term details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
+  .glossary-term summary { cursor: pointer; font-weight: 600; }
+  .glossary-term summary .en { font-family: var(--mono); color: var(--accent); }
+  .glossary-term summary .cn { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+  .glossary-term .body { margin-top: 8px; font-size: 14px; }
+  .glossary-term .loc { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .badge-reality { font-size: 12px; color: var(--red); font-weight: 600; }
+  footer { border-top: 1px solid var(--line); margin-top: 60px; padding: 20px 0 40px; color: var(--muted); font-size: 13px; }
+  @media print { nav.toc { position: static; } }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>Mutsumi's SYNC v3 — 最新实现说明与术语手册</h1>
+  <p class="sub">
+    面向维护者与 AI Agent 的<b>实现事实文档</b>：描述 <code>main</code> 分支当前真实代码（含未提交工作树变更）的行为，
+    并对设计中被创造的英文专有名词逐一解释。本文以代码为准；与
+    <code>docs/current-design.md</code> 的宣称存在差异处已用 <span class="badge-reality">实况</span> 标注。
+  </p>
+  <p class="meta">基线：commit 732cd9e + 未提交工作树 ｜ 审阅日期：2026-08-03 ｜ 源码行数：src ≈ 13.7K / tests ≈ 8.9K（350 测试全绿）</p>
+</header>
+
+<nav class="toc">
+  <a href="#overview">1 系统全景</a>
+  <a href="#journey">2 一条消息的旅程</a>
+  <a href="#glossary">3 术语表（专有名词解释）</a>
+  <a href="#context-layers">4 上下文四层结构</a>
+  <a href="#persistence">5 存储实况</a>
+  <a href="#lifecycle">6 生命周期状态机</a>
+  <a href="#subsystems">7 子系统速览</a>
+  <a href="#protocol">8 输出协议与门禁</a>
+  <a href="#discrepancies">9 与设计文档的已知差异</a>
+  <a href="#index">10 代码索引</a>
+</nav>
+
+<main>
+
+<!-- ================= 1 系统全景 ================= -->
+<section id="overview">
+  <h2>1. 系统全景</h2>
+  <p>
+    整个系统是一个<b>单一进程的 asyncio 应用</b>：NapCat（QQ 客户端网关）通过 WebSocket 推送消息，
+    <code>MessageReceiver</code> 接收入站，<code>PipelineScheduler</code> 为每个会话维护一个可取消的
+    pipeline 任务，<code>pipeline()</code> 单函数完成"持久化入站 → 拼上下文 → LLM 工具循环 → 信封解析 → 发送"的完整回合。
+    所有事实以<b>全局 Event Ledger</b> 为唯一持久事实源，其余表均为投影、缓存或审计。
+  </p>
+
+  <div class="flow">
+    <div class="node"><b>QQ / NapCat</b><span class="en">external</span></div>
+    <div class="arrow"></div>
+    <div class="node hl"><b>MessageReceiver</b><span class="en">ws_url (NapCat 协议)</span></div>
+    <div class="arrow"></div>
+    <div class="node hl"><b>PipelineScheduler</b><span class="en">每会话一个 task</span></div>
+    <div class="arrow"></div>
+    <div class="node gr"><b>pipeline()</b><span class="en">单函数回合处理</span></div>
+    <div class="arrow"></div>
+    <div class="node pu"><b>LLM Provider</b><span class="en">OpenAI-compatible</span></div>
+  </div>
+
+  <div class="flow">
+    <div class="node am"><b>ServiceIngress</b><span class="en">POST /v1/events · loopback</span></div>
+    <div class="arrow"></div>
+    <div class="node hl"><b>PipelineScheduler</b><span class="en">service FIFO worker</span></div>
+    <div class="arrow"></div>
+    <div class="node gr"><b>pipeline()</b><span class="en">source=external_service</span></div>
+    <div class="arrow"></div>
+    <div class="node pu"><b>LLM Provider</b><span class="en">回复路由到 target_user_id</span></div>
+  </div>
+
+  <div class="flow">
+    <div class="node rd"><b>MessageStore (SQLite)</b><span class="en">events · episodes · actions · media_ledger · inner_journal · messages · summaries · scheduled_tasks · delegated_tasks · actors</span></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">三个关键不变量</h3>
+    <table>
+      <tr><th>不变量</th><th>含义</th></tr>
+      <tr><td><span class="pill b">Append-first</span></td><td><code>events</code> 表只能追加；普通轮次结束后状态从 <code>received</code> 更新为终态（<code>finalized</code> / <code>cancelled</code> 等），身份与 sequence 不变。</td></tr>
+      <tr><td><span class="pill b">单函数 pipeline</span></td><td>所有回合逻辑集中在 <code>pipeline()</code> 一个异步函数中（铁律 1），通过 <code>PipelineDeps</code> 注入全部依赖，函数内部不持有跨回合状态。</td></tr>
+      <tr><td><span class="pill b">新消息取消旧任务</span></td><td>同一会话 key 的新输入到达时，Scheduler 用 <code>asyncio.Task.cancel()</code> 取消旧 pipeline 并等待其 cleanup（入站消息已先行持久化，不会消失）。</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ================= 2 旅程 ================= -->
+<section id="journey">
+  <h2>2. 一条消息的旅程</h2>
+  <p>以一次普通私聊文本消息为例（<code>source=user</code>），从 NapCat 到回复的完整路径：</p>
+  <div class="card">
+    <table>
+      <tr><th>#</th><th>阶段</th><th>发生什么</th><th>代码</th></tr>
+      <tr><td>1</td><td><b>接收</b></td><td><code>MessageReceiver</code> 收到 NapCat WebSocket 事件，构造 <code>MessageEvent</code>，调用 <code>scheduler.dispatch()</code>。</td><td class="file">message/receiver.py</td></tr>
+      <tr><td>2</td><td><b>分类与防抖</b></td><td><code>classify_message()</code> 判断文本/图片/媒体。文本消息进入 <code>_pending_events</code>，等待 <code>debounce_timeout=1.5s</code> 合并连发；图片/媒体直接派发。</td><td class="file">message/classifier.py · scheduler.py:234</td></tr>
+      <tr><td>3</td><td><b>取消旧回合</b></td><td>防抖到期后 <code>cancel_user(key)</code> 取消该会话旧的 pipeline 任务，创建新任务。</td><td class="file">scheduler.py:833</td></tr>
+      <tr><td>4</td><td><b>入站持久化</b></td><td><code>pipeline()</code> 在 LLM/工具工作前调用 <code>_ensure_initial_input_shielded()</code>：先写 <code>messages</code> 表，再写 <code>events</code>（<code>status=received</code>），用 <code>asyncio.shield</code> 防止取消中断持久化。</td><td class="file">pipeline.py:1507-1530</td></tr>
+      <tr><td>5</td><td><b>上下文构建</b></td><td><code>_build_context()</code> 按四层结构（见 §4）组装 provider 请求，从 Ledger 投影 Life Stream，必要时触发 Episode 压缩。</td><td class="file">pipeline.py:275 · memory/projection.py</td></tr>
+      <tr><td>6</td><td><b>LLM 工具循环</b></td><td>最多 10 步（<code>MAX_TOOL_STEPS</code>）：调用 LLM → 有 <code>tool_calls</code> 则执行工具（工具结果写 Ledger + Action Ledger）→ 循环；无工具调用则进入信封解析。</td><td class="file">pipeline.py:1625-2075</td></tr>
+      <tr><td>7</td><td><b>信封解析</b></td><td>最终 assistant content 必须为 <code>[TO_SELF]...[/TO_SELF][TO_USER]...[/TO_USER]</code>；解析失败或 TO_USER 含复杂 Markdown 时进入有界重写（最多 2 次）。</td><td class="file">output_protocol.py · pipeline.py:1667-1772</td></tr>
+      <tr><td>8</td><td><b>发送</b></td><td>只发送 <code>TO_USER</code> 文本（扁平纯文本门禁）；发送成功才更新状态为 <code>responded</code> 并写 <code>outbound</code> 事件。</td><td class="file">pipeline.py:1774-1801</td></tr>
+      <tr><td>9</td><td><b>Cleanup</b></td><td>冲刷暂存记忆写入（<code>memory_save</code>/<code>self_note</code>）→ 提交 <code>TO_SELF</code> 到 Inner Journal → 更新消息/事件终态 → 安排 Episode 闲时压缩定时器。</td><td class="file">pipeline.py:2164-2270</td></tr>
+      <tr><td>10</td><td><b>压缩调度</b></td><td>回合结束 30 分钟（<code>episode_idle_seconds=1800</code>）后，<code>summarize_pending_episode()</code> 把未覆盖的 finalized 事件压缩为 Episode。</td><td class="file">scheduler.py:211 · memory/episodes.py</td></tr>
+    </table>
+  </div>
+
+  <h3>图片消息的额外路径</h3>
+  <p>
+    图片消息（<code>MessageType.IMAGE</code>）在 <code>pipeline()</code> 内先持久化入站，然后：
+    下载图片到 Media Ledger（成功 → SHA 派生 <code>media_id</code>；失败 → 保留外部 URL 引用）→
+    若配置了 <code>vision</code> provider 则生成文字描述（openai-compatible 或 volcengine-ocr）→
+    构造一条合成 user 输入（caption + 描述 + media 引用）→ 进入普通 LLM 流程。
+    CQ 元数据、临时 URL 和本地路径不进入模型上下文。
+  </p>
+
+  <h3>外部服务消息的额外路径</h3>
+  <p>
+    <code>ServiceIngress</code> 接收 NapCat 形状的 <code>POST /v1/events</code>（loopback + Bearer token），
+    以 <code>uuid5(service_id + message_id)</code> 去重，先持久化为 <code>received</code> 事件再 ACK（HTTP 202）。
+    每个 <code>service:&lt;id&gt;</code> 拥有独立 FIFO worker 队列，<b>不适用普通同 key 取消规则</b>；
+    回复通过配置的 <code>ingress.target_user_id</code>（QQ 所有者）发送。重启时从 Ledger 恢复未完成事件。
+  </p>
+</section>
+
+<!-- ================= 3 术语表 ================= -->
+<section id="glossary">
+  <h2>3. 术语表（设计创造的英文专有名词）</h2>
+  <p>按领域分组。每个条目给出：英文原名、中文含义、实现解释、代码位置。条目可折叠。</p>
+
+  <h3>3.1 运行时与调度</h3>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Pipeline</span><span class="cn">流水线 / 回合处理函数</span></summary>
+    <div class="body">
+      处理<b>一个会话的一个回合</b>（一次入站消息或一次定时触发）的单一异步函数 <code>pipeline()</code>（约 2272 行）。
+      接收消息文本、消息类型、图片信息与 <code>PipelineDeps</code>，返回终态字符串
+      （<code>responded</code>/<code>no_reply</code>/<code>empty</code>/<code>error</code>/<code>cancelled</code>）。
+      注意：<b>Pipeline 是动词性的回合，不是常驻进程</b>；常驻的调度者是 Scheduler。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:1459</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">PipelineScheduler</span><span class="cn">调度器（状态持有者）</span></summary>
+    <div class="body">
+      进程级单例，持有全部共享依赖（Config、ToolRegistry、MessageStore、MessageSender）与每会话状态
+      （<code>MessageWindow</code>、<code>SessionState</code>、运行中的 Task、防抖队列、心跳批次、Episode 定时器、
+      service FIFO 队列、task-report 队列）。铁律 2：Pipeline 不持有状态，一切状态归 Scheduler。
+      约 1528 行，是全项目最大的类。
+    </div>
+    <div class="loc">src/mutsumi_sync/scheduler.py:63</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">PipelineDeps</span><span class="cn">依赖注入束</span></summary>
+    <div class="body">
+      把 pipeline 需要的全部依赖打包成一个 dataclass（25+ 字段）：config/registry/sender/store/window/session/peer/group_key，
+      以及行为开关（<code>silent</code>、<code>remember_input</code>、<code>remember_output</code>、<code>allow_visible_output</code>、
+      <code>allow_cold_poke</code>、<code>allow_status_update</code>、<code>allow_write_tools</code>、<code>allowed_tools</code>、<code>remember_inner</code>）
+      和身份/溯源（<code>source</code>、<code>conversation_id</code>、<code>actor_id</code>、<code>actor_name</code>、
+      <code>pipeline_id</code>、<code>inbound_events</code>、<code>current_event_ids</code>、<code>precreated_event_ids</code>、
+      <code>active_work</code>、<code>context_snapshot_sequence</code>）。
+      不同来源（用户/心跳/定时/服务/任务回报）用不同开关组合构造它，从而复用同一条 pipeline。
+    </div>
+    <div class="loc">src/mutsumi_sync/scheduler.py:30</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">MessageWindow（window）</span><span class="cn">窗口（运行时缓存）</span></summary>
+    <div class="body">
+      每会话的内存对话缓存（deque，默认 <code>max_size=20</code>）。<b>重要实况</b>：<code>max_size</code> 参数无效
+      （<code>add()</code> 不裁剪，测试专门断言溢出不生效）；且当会话已有 Ledger 行时，上下文构建<b>完全不读</b> window
+      —— 它退化为 UI/TUI 缓存与 legacy 兼容路径。每次成功回合仍会向它 <code>add()</code>（双维护）。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/window.py:7</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">SessionState / cold session / cold poke</span><span class="cn">会话状态 / 冷会话 / 冷启动戳一戳</span></summary>
+    <div class="body">
+      <code>SessionState</code> 记录会话最后活动时间与 pending 标记。<code>is_cold(timeout)</code> 判断距上次交互超过
+      <code>session.timeout=300s</code>（新会话即冷会话）。冷会话且允许时，pipeline 发送一次 NapCat 戳一戳（<code>send_poke</code>）。
+      心跳/定时/服务等非用户来源禁用冷戳。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/session.py · pipeline.py:1606-1611</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Debounce</span><span class="cn">防抖合并</span></summary>
+    <div class="body">
+      同一会话在 <code>context.debounce_timeout=1.5s</code> 内到达的连续文本消息被合并为一条入站
+      （多说话人时以 "Speaker 名称 (id):" 前缀保留各自身份，<code>inbound_events</code> 保留逐条事件）。
+      合并后文本 ≥50 字符视为长文本。图片消息绕过防抖直接派发。
+    </div>
+    <div class="loc">src/mutsumi_sync/scheduler.py:680-776</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Heartbeat</span><span class="cn">心跳（自主性检查）</span></summary>
+    <div class="body">
+      平台对"过去 24 小时有真实入站活动"的会话发起的<b>真实 LLM 调用</b>：私聊每 15 分钟、群每 3 小时扫描一次。
+      合成输入 <code>remember_input=False</code>（不写历史），但验证成功的主动输出可以持久化；
+      允许工具仅 <code>{sticker_search, media_search, send}</code>，禁止写工具与状态通知；
+      <code>has_unanswered_proactive()</code> 检测到心跳输出后用户未回复时，抑制再次主动输出。
+      心跳不发送冷戳、不做冷启动问候；有用户 pipeline 活动时整批让路。
+    </div>
+    <div class="loc">src/mutsumi_sync/scheduler.py:1028-1130</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Active Work</span><span class="cn">进行中的工作（跨会话进度表）</span></summary>
+    <div class="body">
+      Scheduler 持有的 <code>{pipeline_id: {summary, conversation_id, actor_id, phase}}</code> 注册表，
+      由 <code>_set_active_work</code>/<code>_clear_active_work</code> 维护；内容以摘要形式注入平台状态消息
+      （"当前正在进行的工作"），供模型在多个会话间知晓自己正在忙什么，避免人格割裂。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:65-81 · scheduler.py:91</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Token Counter / LLM Health</span><span class="cn">令牌计数 / LLM 健康位</span></summary>
+    <div class="body">
+      Scheduler 全局累计 input/output/cache_hit/cache_miss 令牌（供 TUI 展示）；
+      <code>report_llm_health(healthy)</code> 在每次 LLM 调用后更新健康位，TUI 与心跳据此判断是否可用。
+    </div>
+    <div class="loc">src/mutsumi_sync/scheduler.py:84-85 · pipeline.py:1653-1659</div>
+  </details></span>
+
+  <h3>3.2 持久化与事实源</h3>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Event Ledger（events）</span><span class="cn">事件账本（全局事实源）</span></summary>
+    <div class="body">
+      <b>整个系统的唯一持久事实源</b>：append-first 的全局时间线表 <code>events</code>。
+      每行携带全局单调 <code>sequence</code>、<code>conversation_id</code>、<code>actor_id/actor_kind/actor_name</code>、
+      <code>event_type</code>、<code>content</code>、<code>media_ids_json</code>、<code>payload_json</code>、
+      <code>turn_id</code>、<code>pipeline_id</code>、<code>visibility</code>、<code>audience</code>、<code>status</code>。
+      事件类型见 <code>EventType</code>：<code>inbound / outbound / tool_call / tool_result / media / state_change / status_update</code>。
+      行身份（event_id/sequence）不可变；只有生命周期字段（status/content/payload/media_ids）可更新。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:373-390, 586-603</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">EventType</span><span class="cn">事件类型</span></summary>
+    <div class="body">
+      六种事件：<code>inbound</code>（入站消息）、<code>outbound</code>（出站发送）、<code>tool_call</code>/<code>tool_result</code>
+      （原生工具回合两半）、<code>media</code>（媒体事实）、<code>state_change</code>（状态变化）、
+      <code>status_update</code>（进度通知）。后三类属于 <code>COVERAGE_ONLY_EVENT_TYPES</code>：
+      可被 Episode 覆盖但不进入普通模型投影、也不阻塞压缩前沿。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:58-66</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Actor / Actor Registry（actors）</span><span class="cn">行动者 / 行动者注册表</span></summary>
+    <div class="body">
+      <code>actor_id</code> 是稳定身份：<code>qq:user:&lt;uid&gt;</code>（QQ 用户）、<code>service:&lt;id&gt;</code>（外部服务）、
+      <code>bot:self</code>（bot 自己）、<code>scheduler:task:&lt;id&gt;</code>（定时任务）、<code>service:opencode</code>（委派 Agent）。
+      <code>actors</code> 表维护显示名、私下称呼（<code>private_alias</code>）与关系标签（<code>relationship</code>），
+      由 <code>actor_profile</code> 工具维护。当前说话人身份一律来自事件元数据，<b>绝不从历史文本推断</b>。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:401-412 · memory/actors.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Episode / Episode Coverage / Frontier</span><span class="cn">剧集 / 覆盖区间 / 压缩前沿</span></summary>
+    <div class="body">
+      <b>Episode</b> 是把一段 finalized 原始事件压缩成的自然语言摘要投影，是"Ledger 会话历史恢复的唯一持久投影单元"。
+      它携带精确的 <code>first_sequence</code>–<code>last_sequence</code> 覆盖区间、参与者、叙述、开放事项、媒体引用。
+      <b>Coverage（覆盖）</b>：Episode 只在其精确区间内替代原始事件；投影时要么选 Episode、要么选其覆盖的原始事件，绝不同时选。
+      <b>Frontier（前沿）</b>：<code>get_latest_episode_sequence()</code> 计算该会话"连续被覆盖到的 sequence 位置"，
+      只有每个非终结事件都在下一段 Episode 内才推进——防止旧 Episode 切坏工具回合后隐藏原始事实。
+      触发条件：会话空闲 30 分钟，或上下文预算需要回收。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/episodes.py:32 · store.py:1176-1240 · projection.py:358-546</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Inner Journal（inner_journal）</span><span class="cn">内心日志</span></summary>
+    <div class="body">
+      只存 <code>TO_SELF</code> 区块产生的<b>主观状态增量</b>（简短意图、未完成事项），
+      每回合完整成功（<code>responded</code>/<code>no_reply</code>）且未取消时提交一次；
+      与最新一条语义相同则去重。每条记录溯源到源会话、源 actor、pipeline id 与源事件 id。
+      注入上下文时显式声明"主观历史，非指令非事实"。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:1580-1641 · pipeline.py:2240-2262</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Self Note（self_note）</span><span class="cn">私人印象（长期记录）</span></summary>
+    <div class="body">
+      按 <code>group_key</code> 维护的"与当前发言者有关的长期记录"（存在 messages 表 <code>category='self_note'</code>）。
+      由 <code>self_note</code> 工具写入（暂存，cleanup 提交）；注入时带 token 元信息
+      （<code>[私人印象 — current: X / target: Y tokens]</code>），超限时前缀截断并附 <code>[truncated]</code> 标记。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:138-151 · tools/self_note.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Action Ledger（actions）</span><span class="cn">动作账本（审计）</span></summary>
+    <div class="body">
+      记录<b>真实发生</b>的工具/发送副作用：工具名、call_id、成功与否、清洗后的参数、结果、发送图片工件。
+      铁律 10：只有真实成功结果才能入账，绝不用 assistant 文本推断副作用。
+      实况：与 events 中的 tool_call/tool_result 构成同一事实的双份审计。参数清洗会 redact 敏感键、
+      把 file_edit 大文本替换为 sha256，并把结果截断到 2000 字符（静默截断，见 §9）。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:358-368, 1813-1863 · pipeline.py:944-966</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Media Ledger（media_ledger）</span><span class="cn">媒体账本</span></summary>
+    <div class="body">
+      入站/出站图片的稳定登记：<code>media_id = media_&lt;sha256[:24]&gt;</code>（外部引用为 <code>media_url_&lt;...&gt;</code>），
+      存本地文件路径、MIME、描述与短描述。<code>sticker_search</code>/<code>media_search</code> 查询、
+      <code>sticker_manage</code> 管理（描述/归档/恢复）。模型上下文只出现 media_id 与描述，不出现临时路径。
+      Markdown 渲染图发送成功后先登记再删除临时 PNG。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:433-445, 1273-1379</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">messages / summaries（legacy）</span><span class="cn">消息表 / 摘要表（兼容路径）</span></summary>
+    <div class="body">
+      旧 v2 时代的会话存储。当前实况：<b>messages 表仍在每回合被写入</b>（入站 + 回复，category=text/short_text 等），
+      同时承担三类职责：FTS5 全文检索后端（memory_search）、记忆类别（memory/self_note）存储、非 Ledger 数据库的启动恢复源。
+      summaries 表保存旧的按消息摘要与压缩摘要（<code>kind='compaction'</code> 可携带
+      <code>covered_through_message_id</code> 可信边界）。文档宣称"Ledger 会话后 messages 只读"，与实况不符（见 §9）。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:326-360, 577-584, 1476-1547</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">canonical_state（retired）</span><span class="cn">规范化状态表（已退役）</span></summary>
+    <div class="body">
+      <code>bot_state</code>/<code>priority_override</code> 时代的遗留表与方法（<code>get/upsert/clear_canonical_state</code>、
+      <code>get_current_priority_override</code> 等）。工具文件 <code>tools/bot_state.py</code>、<code>tools/priority_override.py</code>
+      保留但<b>未注册</b>；表在 DDL 中继续创建。属于应删除的死代码（见 §9）。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:450-456, 1381-1421, 1569-1650</div>
+  </details></span>
+
+  <h3>3.3 投影与上下文</h3>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Life Stream</span><span class="cn">生命流（模型面对的历史时间线）</span></summary>
+    <div class="body">
+      由 <code>build_life_stream()</code> 把 Ledger 投影为 provider 原生消息序列：真人/服务入站为 <code>user</code>
+      （带可读来源前缀），bot 出站为 <code>assistant</code>，完成的工具回合重建为 <code>assistant(tool_calls)</code> + <code>tool</code>。
+      Episode 在其覆盖区间内替代原始事件。它是"全局账本的受众视图"：只投影当前会话 + 标记 <code>global</code> 的事件。
+      这是设计中"多个对话窗口共享人格、但私聊互不可见"的实现载体。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py:702-1124</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Projection（投影）</span><span class="cn">从事实源到模型输入的派生视图</span></summary>
+    <div class="body">
+      设计术语：任何"从 raw facts 派生、供特定消费方使用"的视图都叫投影。本项目中投影有：
+      Life Stream（模型输入）、Episode（历史恢复单元）、Action Ledger（审计）、TUI 状态（调试）。
+      文档反复强调"投影不得伪装成完整覆盖"——分页上限外的更早历史必须注入 omission 标记。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py（全文件）</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Audience / Visibility</span><span class="cn">受众 / 可见性</span></summary>
+    <div class="body">
+      每条事件携带 <code>visibility</code>（private/group/global）与 <code>audience</code>（目标会话或 bot:self）。
+      <code>event_is_context_visible(event, audience_conversation_id)</code> 是模型输入的最小边界：
+      私聊会话只能看到自己的事件 + 标 global 的事件；群会话共享边界，所有成员可见该群事件。
+      隐私过滤（Alice 的私聊事实不会进入 Bob 的上下文）是当前设计中少有的、被真实模型实验验证过的行为。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py:100-116</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Snapshot Sequence / High-water Sequence / context_snapshot_sequence</span><span class="cn">快照水位 / 高水位 / 上下文快照</span></summary>
+    <div class="body">
+      <b>High-water</b>：Ledger 当前最大 sequence（<code>get_event_high_water_sequence()</code>）。
+      <b>Snapshot</b>：顶层 pipeline 在回合开始时固定一次 <code>context_snapshot_sequence</code>，
+      整个请求（初始投影、token 回收、纠错重建）都用同一水位，避免并发新事件混入造成"混合投影"。
+      这是"一回合一个世界视图"的实现机制。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:1037-1044 · pipeline.py:1471, 370-372</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">History Omission Marker / omitted-before</span><span class="cn">历史遗漏标记</span></summary>
+    <div class="body">
+      当事件分页上限（<code>ledger_event_limit=4000</code> 条）导致更早的未摘要历史无法进入投影时，
+      Life Stream 头部注入 <code>&lt;historical_context_omitted&gt;...&lt;/historical_context_omitted&gt;</code>
+      与 <code>&lt;before_sequence&gt;</code>，明示"有更早历史但被预算排除"，而不是假装完整覆盖。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py:26-31, 1049-1056</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Ephemeral Context Policy</span><span class="cn">临时上下文策略</span></summary>
+    <div class="body">
+      标记为 <code>context_policy="ephemeral"</code> 的 tool_call/tool_result（目前仅 <code>file_edit</code>，
+      其 read/list 可能包含整个 Skill 文档）：只允许在<b>当前工具循环</b>内对模型可见，
+      历史投影不重放其内容（Ledger 仍保留审计行与摘要面包屑，需要时重新读取文件）。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py:34-45, 910-935 · pipeline.py:2004-2006</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Legacy Compatibility Path（pipeline_id / turn_id / no-id）</span><span class="cn">旧数据兼容路径</span></summary>
+    <div class="body">
+      历史事件有三种身份形态，投影层分别处理：① 现行 <code>pipeline_id</code> 分组（最可靠）；
+      ② 旧原生工具回合仅有 <code>turn_id</code>；③ 更旧的无身份普通消息——按"同会话 inbound/outbound 数量配对"
+      保守猜测回合边界（<code>logical_event_groups</code>）。整套启发式（含 <code>_episode_has_complete_groups</code>
+      逐条验证）是代码复杂度的主要来源之一。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py:142-195, 447-546 · store.py:917-1011</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">NON_PROJECTABLE_EVENT_STATUSES / COVERAGE_ONLY_EVENT_TYPES</span><span class="cn">不可投影状态集 / 仅覆盖事件类型</span></summary>
+    <div class="body">
+      <code>{cancelled, error, no_reply, empty}</code> 四类终态事件保留在 Ledger 供审计，但不进入模型投影、也不被 Episode 覆盖
+      （Episode 前沿可跨过它们推进）。<code>{media, state_change, status_update}</code> 三类平台事实可被 Episode 覆盖，
+      但不产生普通模型消息。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/store.py:21-35</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Token-Aware Context Recovery / Trigger / Target Ratio</span><span class="cn">令牌感知上下文恢复 / 触发比 / 目标比</span></summary>
+    <div class="body">
+      估算完整 provider 请求（system + Life Stream + 平台状态 + 当前消息 + 工具 schema，CJK 按每字符一令牌保守估算）。
+      请求超过 <code>trigger = 0.8 × model_context_tokens − reserved_output_tokens</code> 时，
+      用同一 Ledger 投影器以更小历史预算重建，必要时从 finalized 前缀创建 Episode；
+      <code>target = 0.5 × model_context_tokens − reserved</code> 为目标尺寸。工具循环中间绝不压缩当前轮；
+      摘要输入不静默截断而是显式分块。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:1159-1165, 1187-1324 · token_estimate.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Compaction / Context Reclaim / history_boundary</span><span class="cn">压缩 / 上下文回收 / 历史边界</span></summary>
+    <div class="body">
+      <b>Compaction</b>：把旧完整回合替换为摘要（Episode 或 legacy summary）的动作统称。
+      <b>Context Reclaim</b>：<code>_reclaim_ledger_history()</code> 在请求内回收旧历史（最多 8 轮尝试，每轮为最早未覆盖会话创建一段 Episode）。
+      <b>history_boundary</b>：工具循环中"历史结束、当前轮开始"的位置；<code>_ensure_live_request_budget()</code>
+      只从历史侧整组删除旧 group，绝不切半当前 assistant/tool 消息。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:180-273, 1354-1393</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">reasoning_content</span><span class="cn">推理内容（DeepSeek 思考）</span></summary>
+    <div class="body">
+      DeepSeek 返回的私有思维链字段。规则：只在<b>当前工具循环内</b>随 assistant(tool_calls) 原样回传 provider
+      （DeepSeek 要求），绝不发送到 QQ，绝不写入未来历史。请求 payload 使用
+      <code>thinking: {"type":"enabled"}</code> + <code>reasoning_effort</code>（实测该端点接受）。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:462-464, 2061-2062</div>
+  </details></span>
+
+  <h3>3.4 输出协议与门禁</h3>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Final Envelope（TO_SELF / TO_USER）</span><span class="cn">最终信封（自我区块 / 用户区块）</span></summary>
+    <div class="body">
+      无 tool_calls 的最终 assistant content 必须恰好是 <code>[TO_SELF]...[/TO_SELF]</code> 后接
+      <code>[TO_USER]...[/TO_USER]</code> 两个区块，区块外不得有文字。<b>TO_SELF</b>：简短主观状态增量，
+      完整成功回合后写入全局 Inner Journal，不进入会话历史；<b>TO_USER</b>：唯一普通可见通道，扁平纯文本门禁，只发送一次。
+      兼容性恢复：完全无标记的正文按"空 TO_SELF + TO_USER"恢复；带标记的畸形回复进入有界重写。
+    </div>
+    <div class="loc">src/mutsumi_sync/output_protocol.py · pipeline.py:1667-1801</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Output Protocol / Output Gate</span><span class="cn">输出协议 / 输出门禁</span></summary>
+    <div class="body">
+      <b>Output Protocol</b>：信封格式规则 + 解析器（<code>parse_final_envelope</code>，strict/非 strict 双通道解析）。
+      <b>Output Gate</b>：TO_USER 发送前的扁平纯文本门禁——检测标题、表格、代码围栏、链接/图片、LaTeX，
+      命中则拒绝发送并返回纠错消息让模型重写（最多 2 次），或引导使用 <code>send(markdown_image=...)</code>。
+      被拒回复不持久化为已发送 outbound，其 TO_SELF 也不得提交 Inner Journal。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:1396-1412, 1742-1772</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">status_update</span><span class="cn">状态通知</span></summary>
+    <div class="body">
+      长工具前的短可见进度消息（不结束 pipeline、不进入 assistant 历史、不写入 working window）。
+      工具注册表按 <code>latency_class="long"</code> + <code>status_hint</code> 声明；
+      pipeline 在回合内优先执行它（每回合最多一次），未显式调用时对 long 工具自动发送一次兜底通知。
+      心跳管道抑制状态通知。成功/失败均入 Action Ledger 与 events（<code>status_update</code> 类型）。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:969-1012, 1817-1838 · tools/status_update.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">no_reply</span><span class="cn">静默工具</span></summary>
+    <div class="body">
+      调用后本回合不产生可见输出（TO_USER 保持空）。仅用于"确实没有可见内容的静默维护或自主检查"；
+      未知事实、拒答、隐私边界说明和工具完成结果<b>必须</b>写入 TO_USER，不得用 no_reply 逃避。
+      TO_SELF 非空 + no_reply 仍可提交 Inner Journal。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:2072-2075 · tools/no_reply.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Send Tool / target / markdown_image</span><span class="cn">发送工具</span></summary>
+    <div class="body">
+      特殊消息段发送：<code>media_id / image / image_url / markdown_image / face / at_user / reply_to / forward</code>。
+      <code>target</code> 必填，仅允许 <code>private:&lt;数字&gt;</code> / <code>group:&lt;数字&gt;</code>，禁止昵称解析。
+      当前会话的普通文字禁止走 send（必须用 TO_USER）；跨会话文字发送允许（target 不同）。
+      <code>markdown_image</code> 调用 Node+Playwright 渲染 PNG 后发送，成功工件登记 Media Ledger 后删除临时文件。
+      发送成功判定要求 HTTP 200 + <code>status=="ok"</code>（NapCat 形状）。
+      最新工作树变更：跨会话发送的 outbound 事件使用目标会话专属逻辑 pipeline 分组
+      （<code>&lt;源pipeline&gt;:send:&lt;计数&gt;:&lt;call_id&gt;</code>），源 pipeline/会话仅作为 payload 溯源保留。
+    </div>
+    <div class="loc">src/mutsumi_sync/tools/send.py · pipeline.py:1887-1951</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Rewrite（有界纠错）</span><span class="cn">重写（有界纠错）</span></summary>
+    <div class="body">
+      三类触发：信封格式错误、TO_SELF 超长（<code>max_entry_chars=1000</code>）、TO_USER 含复杂 Markdown。
+      每次把模型原始回复与中文纠错提示追加进消息数组再调一次 LLM；超过 2 次（共 3 次尝试）后，
+      发送一个完整无歧义的 TO_USER 区块或扁平文本协议失败消息（"这次回复格式连续校验失败了"），
+      绝不静默丢弃普通用户回合，绝不抢救 TO_SELF。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:1667-1772（三段结构相同但各自独立实现）</div>
+  </details></span>
+
+  <h3>3.5 工具系统</h3>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Tool Registry / Tool / Schema / registry.version</span><span class="cn">工具注册表 / 工具 / 参数模式 / 版本号</span></summary>
+    <div class="body">
+      <code>ToolRegistry</code> 注册全部工具，<code>to_openai_schema()</code> 生成 provider 函数 schema——
+      <b>schema 是工具能力的唯一事实源</b>（system/persona 提示词不得维护手写工具清单）。
+      变更通过 <code>registry.version</code> 单调计数追踪（铁律 3）。<code>latency_class</code>
+      （fast/long）与 <code>status_hint</code> 驱动状态通知。
+      实况：pipeline 内部对 <code>send/status_update/no_reply/memory_save/self_note/file_edit</code> 有硬编码特判，
+      与"schema 唯一事实源"的宣称部分矛盾。
+    </div>
+    <div class="loc">src/mutsumi_sync/tools/registry.py · main.py:60-268</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Staged Write / PendingWrite</span><span class="cn">暂存写入 / 待写入</span></summary>
+    <div class="body">
+      <code>memory_save</code>/<code>self_note</code> 属于 <code>WRITE_TOOLS</code>：工具循环内调用时立即向模型返回
+      "<code>[OK] staged ...</code>"（预留 Ledger 的 tool_result 行，status=<code>pending</code>），
+      真正写入推迟到 cleanup 阶段在 <code>asyncio.shield</code> 保护下逐条执行——即使回合被取消，写入也恰好发生一次，
+      历史投影只呈现最终提交结果而非暂存反馈。这是"回合级原子性"的实现。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:96-106, 1953-1968, 2169-2212</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">file_edit / Skill</span><span class="cn">文件编辑工具 / 技能文件</span></summary>
+    <div class="body">
+      <code>file_edit</code> 是唯一的受控文件工具：list/read/write/patch，仅限配置的 workspace
+      （默认 <code>skills/</code>），拒绝绝对路径与路径逃逸，保护 <code>.env/config.yaml/system-prompts.yaml/data/.git</code>，
+      原子写入（临时文件 + fsync + replace）。Skill 是"按需读取的普通文本文件"约定：
+      bot 读短指引（如 <code>skills/xxx/BOT.md</code>），外部 Agent 读详细指引（如 <code>SKILL.md</code>），
+      无注册中心、无解释器。
+    </div>
+    <div class="loc">src/mutsumi_sync/tools/file_edit.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Scheduler（tool）/ Cron / ScheduledTaskRecord</span><span class="cn">定时器工具 / 五字段 Cron / 定时任务记录</span></summary>
+    <div class="body">
+      内置持久化定时工具：一次性（<code>scheduled_time</code>）、固定间隔（<code>interval_seconds</code>）、
+      五字段 UTC+8 cron（<code>minute hour day month weekday</code>，自实现解析器，含 DOM/DOW 与/或语义），
+      外加 <code>list/pause/resume/cancel</code> 生命周期。任务存 prompt + 不解释的 opaque context，
+      绑定注册时会话；到期时向该会话 pipeline 注入平台输入（<code>source=schedule</code>），
+      在活跃用户 pipeline 之后排队而非取消它；错过的重复槽跳过不补发。记录禁止携带 skill_name/业务步骤字段。
+    </div>
+    <div class="loc">src/mutsumi_sync/tools/scheduler.py · scheduler.py:1132-1470</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">delegate_task / OpenCode Runner / report_task / report_token / DelegatedTaskRecord</span><span class="cn">委派任务 / OpenCode 运行器 / 回报工具 / 回报令牌 / 委派任务记录</span></summary>
+    <div class="body">
+      可选能力（<code>opencode.enabled</code>）：<code>delegate_task</code> 工具把自然语言任务交给
+      <code>OpenCodeRunner</code> 启动的外部 OpenCode 进程（隔离 XDG 根、独立 DB、禁止项目配置与自动更新、
+      stdin=DEVNULL 防挂起）。worker 侧注入一个受限 <code>report_task</code> 插件：报告经
+      原子 link 写入 <code>report.json</code>（附 <code>report_token</code>，防伪），平台校验令牌后
+      将任务标 <code>reported</code> 并唤醒原会话 pipeline（<code>source=task_report</code>）。
+      stdout/退出码不是成功证据；未回报则诚实保持 <code>unreported</code>/<code>timeout</code>。
+      完整 worker 上下文不进入主 Life Stream，只有验证过的紧凑报告回传。
+    </div>
+    <div class="loc">src/mutsumi_sync/opencode.py · scheduler.py:366-678 · tools/delegate.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">memory_save / memory_search / FTS</span><span class="cn">记忆写入 / 记忆搜索 / 全文检索</span></summary>
+    <div class="body">
+      <code>memory_save</code>：仅当当前消息明确要求记住、或首次提供新的稳定长期事实时调用（低频）；
+      <code>memory_search</code>：只读搜索（FTS5 虚拟表 <code>messages_fts</code>，基于 messages 表，搜索失败时降级 LIKE）。
+      <b>已知断层</b>：检索范围只有 messages 表，不覆盖 Episode 叙述与工具调用结果——被压缩的旧历史对记忆检索不可见（见 §9）。
+    </div>
+    <div class="loc">src/mutsumi_sync/tools/memory.py · store.py:472-492, 1652-1678</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">actor_profile / config_manager / http_api_call</span><span class="cn">角色档案 / 配置管理 / HTTP 调用</span></summary>
+    <div class="body">
+      <code>actor_profile</code>：维护 actor 私下称呼与关系标签（全局注册表）；
+      <code>config_manager</code>：读取/局部修改/热重载 YAML（保留注释与缩进，布尔严格解析，persona 提示词必须改外部文件后 reload）；
+      <code>http_api_call</code>：任意 URL 的通用 HTTP 工具（latency_class=long）。
+    </div>
+    <div class="loc">src/mutsumi_sync/tools/actor_profile.py · config_manager.py · http_api.py</div>
+  </details></span>
+
+  <h3>3.6 外部与平台</h3>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Ingress / Service Actor / FIFO Worker / target_user_id</span><span class="cn">入站接口 / 服务行动者 / FIFO 工作线程 / 目标用户</span></summary>
+    <div class="body">
+      可选本地 HTTP ingress（标准库 asyncio，默认关闭）：仅 loopback、仅 <code>POST /v1/events</code>、
+      Bearer token 校验（hmac.compare_digest）、正文大小限制、仅接受文本与 HTTP(S) 图片 URL 段。
+      请求中 <code>user_id</code> 是服务标识（ASCII 安全语法），映射为 <code>service:&lt;id&gt;</code>，
+      <b>永不映射为 QQ actor</b>；回复统一路由到配置的 <code>ingress.target_user_id</code>（正 QQ 号，须等于 owner）。
+      事件先持久化 <code>received</code> 再 ACK 202，按服务 id 去重（uuid5），每服务一个 FIFO worker
+      （空闲 60s 退休；<code>received</code> 事件重启后从 payload 恢复；优雅取消时在途事件还原为 <code>received</code>）。
+    </div>
+    <div class="loc">src/mutsumi_sync/ingress.py · scheduler.py:252-360</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">NapCat / MessageReceiver / MessageSender / Peer / send_succeeded</span><span class="cn">NapCat 网关 / 接收器 / 发送器 / 对端 / 发送成功判定</span></summary>
+    <div class="body">
+      NapCat 是 QQ 客户端网关（WebSocket + HTTP API）。<code>Peer</code> 是发送目标抽象
+      （<code>chat_type</code> 1=私聊/2=群 + <code>peer_uid</code>）。
+      <code>send_succeeded()</code> 要求 NapCat 返回 HTTP 200 且 <code>status=="ok"</code>；
+      超时/传输错误/非 ok 一律成为 <code>[Error: ...]</code> 工具结果。
+    </div>
+    <div class="loc">src/mutsumi_sync/message/sender.py · receiver.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Platform State（平台状态消息）</span><span class="cn">平台状态注入</span></summary>
+    <div class="body">
+      请求布局中临时 <code>user</code> 消息：当前 UTC+8 时间、当前会话地址、心跳/定时/任务回报标记、
+      Active Work 摘要、Inner Journal、Self Note。它"不是用户说的话"：不写入持久历史、
+      不进 Episode、模型不得复述其中的时间戳。它与当前消息是分离的两条 user 消息。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py:275-301</div>
+  </details></span>
+</section>
+
+<!-- ================= 4 上下文四层 ================= -->
+<section id="context-layers">
+  <h2>4. 上下文四层结构（Provider 请求布局）</h2>
+  <p>
+    每个 LLM 请求严格按以下顺序组装（<code>_build_context()</code>），这是本项目最核心的设计名词之一：
+    <b>"稳定 system → 历史 Life Stream → 临时平台状态 → 当前来源消息"</b>。
+  </p>
+
+  <div class="stack">
+    <div class="layer l1">
+      <div class="head"><b>L1 · System Message（稳定系统消息）</b><span class="role">role: system</span></div>
+      <div class="desc">
+        provider 原生中文 system 消息 = 平台稳定规则（runtime prompt）+ 人格设定（persona prompt）+
+        心跳时追加 Heartbeat Mode Override。两者都来自外部文件 <code>system-prompts.yaml</code>
+        （<code>prompts.system_file</code>），加载时一次性完成身份占位符替换（<code>{{user}}</code> 等），
+        不存进 config.yaml；<code>config_manager reload</code> 可热重载。运行时以工具 schema 为准，
+        提示词不维护工具清单。请求中唯一不被预算回收的固定层。
+      </div>
+    </div>
+    <div class="layer l2">
+      <div class="head"><b>L2 · Life Stream（历史生命流）</b><span class="role">role: user / assistant / tool 混合</span></div>
+      <div class="desc">
+        受众过滤后的全局账本投影（§3.3）：Episode 摘要与原始事件互斥出现；工具回合重建为原生
+        assistant(tool_calls)+tool；真人/服务入站带可读来源前缀（如
+        <code>私聊「123456789」｜前辈（qq:user:123456789）｜2026-08-03 20:00:00</code>）。
+        有遗漏时头部带 omission 标记。这一层同时承担"多窗口人格一致"（bot 自己的 outbound 全局可见于自身上下文）
+        与"私聊互不可见"（audience 过滤）。
+      </div>
+    </div>
+    <div class="layer l3">
+      <div class="head"><b>L3 · Platform State（临时平台状态）</b><span class="role">role: user</span></div>
+      <div class="desc">
+        当前 UTC+8 时间、会话地址（= 规范化 send target）、来源标记（心跳/定时/任务回报）、
+        Active Work、Inner Journal（主观历史声明）、Self Note（长期记录）。永不持久化；
+        与 L4 分离，防止平台信息被模型当成用户话语。
+      </div>
+    </div>
+    <div class="layer l4">
+      <div class="head"><b>L4 · Current Source Message（当前来源消息）</b><span class="role">role: user</span></div>
+      <div class="desc">
+        本轮真实输入：普通用户消息（带来源前缀）、心跳合成输入、定时任务 prompt、OpenCode 报告，
+        或图片消息的合成输入（caption + vision 描述 + media 引用）。L3/L4 永远保留在请求中，
+        预算回收只作用于 L2。
+      </div>
+    </div>
+  </div>
+
+  <h3>预算行为</h3>
+  <table>
+    <tr><th>配置</th><th>默认</th><th>行为</th></tr>
+    <tr><td><code>model_context_tokens</code></td><td>100,000</td><td>模型上下文总容量</td></tr>
+    <tr><td><code>reserved_output_tokens</code></td><td>8,192</td><td>为输出预留，请求预算上限 = 容量 − 预留</td></tr>
+    <tr><td><code>compression_trigger_ratio</code></td><td>0.8</td><td>估计超过 0.8×容量−预留 时触发压缩/回收</td></tr>
+    <tr><td><code>compression_target_ratio</code></td><td>0.5</td><td>压缩目标尺寸</td></tr>
+    <tr><td><code>ledger_event_limit</code></td><td>4,000</td><td>原始事件投影分页上限（超限 → omission 标记）</td></tr>
+    <tr><td><code>episode_idle_seconds</code> / <code>episode_max_events</code></td><td>1,800 / 160</td><td>闲时 Episode 压缩触发条件</td></tr>
+  </table>
+
+  <div class="card ok">
+    <span class="t">实验验证（DeepSeek V4 Flash，2026-08-03）</span>
+    1) 该端点接受 pipeline 实际 payload（<code>thinking</code> + <code>reasoning_effort</code> + 中文 system）；<br>
+    2) 信封协议 15 次普通轮中 14 次严格通过、1 次漏 <code>[TO_USER]</code>（正好触发有界重写路径）——协议可行但非 100% 稳定，纠错兜底是必要的；<br>
+    3) 心跳场景 2/2 正确保持 TO_USER 为空（静默）；<br>
+    4) 工具调用（memory_search）参数生成正确。
+  </div>
+</section>
+
+<!-- ================= 5 存储实况 ================= -->
+<section id="persistence">
+  <h2>5. 存储实况（一次普通对话轮写入了什么）</h2>
+  <p>这是"实现事实"与"设计宣称"差异最集中的地方，以代码为准（审查于 commit 732cd9e + 工作树）。</p>
+
+  <table>
+    <tr><th>表</th><th>角色（设计宣称）</th><th>实况写入</th></tr>
+    <tr><td><code>events</code></td><td>唯一事实源</td><td>每回合：inbound ×1、outbound（发送成功时）、每条工具调用 tool_call+tool_result、status_update、媒体。✅ 与宣称一致</td></tr>
+    <tr><td><code>messages</code></td><td>仅读兼容（文档宣称）</td><td><b>每回合仍然写入</b>入站与回复（category=text/short_text/long_text 等），同时承担 FTS 检索源、记忆类别、启动恢复源。⚠️ 与宣称矛盾</td></tr>
+    <tr><td><code>actions</code></td><td>动作审计</td><td>每条工具调用/发送/状态通知一条。⚠️ 与 events 双份审计</td></tr>
+    <tr><td><code>episodes</code></td><td>历史恢复投影</td><td>闲时 30 分钟或预算回收时创建；区间去重（BEGIN IMMEDIATE）。✅</td></tr>
+    <tr><td><code>inner_journal</code></td><td>主观状态</td><td>每完整成功回合至多一条（TO_SELF 去重）。✅</td></tr>
+    <tr><td><code>media_ledger</code></td><td>媒体登记</td><td>入站下载/外部引用、出站发送登记。✅</td></tr>
+    <tr><td><code>actors</code></td><td>全局身份注册表</td><td>事件写入时 ensure_actor。✅</td></tr>
+    <tr><td><code>summaries</code></td><td>旧版压缩</td><td>仅 legacy 路径（无 Ledger 行时会话）写入；Ledger 会话已停止写 summaries。✅ 但 messages 双写仍在</td></tr>
+    <tr><td><code>canonical_state</code></td><td>已退役</td><td>DDL 仍建表，方法仍存在，无调用方。❌ 死代码</td></tr>
+    <tr><td><code>scheduled_tasks</code> / <code>delegated_tasks</code></td><td>定时/委派持久化</td><td>正常使用。✅</td></tr>
+  </table>
+
+  <div class="card warn">
+    <span class="t">已知断层：memory_search 与 Episode 互不可见</span>
+    <code>memory_search</code> 只检索 <code>messages_fts</code>（基于 messages 表）。
+    Episode 叙述、工具调用结果、Inner Journal 均不在检索范围。意味着：对话一旦被压缩成 Episode，
+    bot 的"长期记忆检索"就找不到这段历史——与"Ledger 是记忆主干"的设计主张相悖，
+    是当前最值得修复的功能缺口（对"个人信息同步"主线是直接伤害）。
+  </div>
+
+  <div class="card">
+    <span class="t">启动恢复（startup）</span>
+    ① <code>cancel_orphaned_pipelines()</code>：把硬重启遗留的未终结非服务 pipeline 标 <code>cancelled</code>；<br>
+    ② 对<b>无 Ledger 行</b>的会话从 messages 恢复 MessageWindow（含 compaction 摘要 + 可信边界
+    <code>covered_through_message_id</code>；恢复被截断则 <code>coverage_trusted=False</code>）；<br>
+    ③ 对 Ledger 会话只创建空 window（仅作兼容/UI 缓存，上下文走投影）；<br>
+    ④ 恢复 <code>received</code> 服务事件、<code>running</code> 定时任务（先还原 pending）、未送达的委派报告。
+  </div>
+</section>
+
+<!-- ================= 6 生命周期 ================= -->
+<section id="lifecycle">
+  <h2>6. 生命周期状态机</h2>
+
+  <h3>回合状态（pipeline 返回值 / messages 表 status）</h3>
+  <table>
+    <tr><th>状态</th><th>含义</th><th>事件侧</th></tr>
+    <tr><td><code>received</code></td><td>已持久化、处理中</td><td>入站事件初始态</td></tr>
+    <tr><td><code>responded</code></td><td>可见回复已发送成功</td><td>inbound → <code>finalized</code>，追加 outbound</td></tr>
+    <tr><td><code>no_reply</code></td><td>故意静默（no_reply 工具）</td><td>inbound → <code>no_reply</code></td></tr>
+    <tr><td><code>empty</code></td><td>模型返回空内容</td><td>inbound → <code>empty</code></td></tr>
+    <tr><td><code>cancelled</code></td><td>被新消息/关闭取消</td><td>inbound → <code>cancelled</code>（不消失，record 保留）</td></tr>
+    <tr><td><code>error</code></td><td>异常/预算失败</td><td>inbound → <code>error</code>，未回复时发送"模型暂时不可用"</td></tr>
+  </table>
+
+  <h3>事件状态（events 表 status）</h3>
+  <p>
+    入站事件经历 <code>received → finalized / no_reply / empty / cancelled / error</code>；
+    暂存工具结果行先 <code>pending</code>，cleanup 提交后 <code>finalized</code>。
+    <code>NON_PROJECTABLE_EVENT_STATUSES = {cancelled, error, no_reply, empty}</code> 不进入模型投影。
+  </p>
+
+  <h3>定时任务状态</h3>
+  <p>
+    <code>pending → running（claim）→ done / error</code>；<code>paused / cancelled</code> 为人工终态。
+    运行中被用户输入取消 → <code>defer</code> 1 秒后重试；重启还原 running → pending。
+  </p>
+
+  <h3>委派任务状态</h3>
+  <p>
+    <code>pending → running → reported → delivered</code>；失败路径 <code>unreported / timeout / cancelled / failed</code>。
+    重启时未回报的 running/pending 一律诚实标记 <code>unreported</code>（绝不伪造完成）。
+  </p>
+</section>
+
+<!-- ================= 7 子系统 ================= -->
+<section id="subsystems">
+  <h2>7. 子系统速览</h2>
+
+  <div class="cols">
+    <div class="card">
+      <h4>Heartbeat（心跳）</h4>
+      <p>每 15 分钟扫私聊、每 3 小时扫群（活跃窗口 24h）。真实 LLM 调用，<code>remember_input=False</code>，
+      可持久化验证过的主动输出；等待用户回复时抑制再发；有用户 pipeline 时整批让路。允许工具仅
+      <code>{sticker_search, media_search, send}</code>。</p>
+    </div>
+    <div class="card">
+      <h4>Episode 压缩</h4>
+      <p>选择"从当前前沿开始的连续 finalized 群组"（每回合 ≥1 完整逻辑组），max 160 事件；
+      输入超预算显式分块 + 合并轮；失败保持原始事件可用且不推进边界。
+      区间写入用 <code>BEGIN IMMEDIATE</code> + 会话锁防重。</p>
+    </div>
+    <div class="card">
+      <h4>Scheduler（定时）</h4>
+      <p>持久化一次性/间隔/五字段 UTC+8 cron；到期经 <code>_wait_for_conversation_slot</code>
+      在用户管道之后排队；错过槽跳过不补发；pause/resume/cancel 全生命周期管理。
+      设计红线：任务记录不含 skill_name/target_group/业务步骤字段。</p>
+    </div>
+    <div class="card">
+      <h4>OpenCode 委派</h4>
+      <p>可选。每次运行独立目录 + 独立 XDG/DB；<code>report_task</code> 插件经原子 link 落盘
+      （token 校验）；平台轮询接受 → 更新任务行 → 唤醒原会话（重试 3 次、指数退避）。
+      stdout/退出码仅诊断，不替代回报。</p>
+    </div>
+    <div class="card">
+      <h4>Ingress（服务入口）</h4>
+      <p>标准库 asyncio HTTP/1.1：loopback 强制、Bearer 恒定时间比较、正文限长、仅文本/HTTP(S) 图片段、
+      uuid5 去重、202 先落库后应答、FIFO worker、重启恢复、优雅取消还原 <code>received</code>。</p>
+    </div>
+    <div class="card">
+      <h4>Media / Vision / Markdown 渲染</h4>
+      <p>入站图片 SHA 登记（下载失败保留外部引用）；vision 支持 openai-compatible 与
+      volcengine-ocr（HMAC-SHA256 签名表单）；Markdown → PNG 经 Node+Playwright（60s 超时），
+      发送成功先登记后删临时文件。</p>
+    </div>
+  </div>
+
+  <h3>日志与可观测性</h3>
+  <p>
+    标准 <code>mutsumi.*</code> logger 树，双写：append-only NDJSON（<code>logging.stream_store</code>）
+    与 human-readable 轮转文本（<code>logging.text_file</code>）。
+    pipeline 关键分支（INIT/MEDIA/CTX_build/LOOP/Exec_Tools/DONE/CANCELLED）经 <code>_report_state</code>
+    上报 TUI。Dashboard TUI 为调试界面（不保证与生产 registry 一致）。
+  </p>
+</section>
+
+<!-- ================= 8 输出协议 ================= -->
+<section id="protocol">
+  <h2>8. 输出协议与门禁细节</h2>
+  <p>最终回合（无 tool_calls）的完整处理链：</p>
+  <div class="card">
+    <table>
+      <tr><th>步骤</th><th>规则</th></tr>
+      <tr><td>1. 信封解析</td><td><code>parse_final_envelope(content, strict=False)</code>：无任何标记 → 恢复为 空 TO_SELF + 全文 TO_USER；带标记畸形 → 抛错进入重写。</td></tr>
+      <tr><td>2. TO_SELF 限长</td><td>&gt; <code>max_entry_chars=1000</code> → 重写（"只保留新的内在状态增量"）。</td></tr>
+      <tr><td>3. 输出门禁</td><td>TO_USER 含标题/表格/代码围栏/链接图片/LaTeX → 拒发 + 重写（可引导 <code>send(markdown_image)</code>）。</td></tr>
+      <tr><td>4. 发送</td><td>扁平纯文本经 <code>sender.send</code> 一次发出；成功 → responded + outbound 事件；失败 → error + 动作账本记录。</td></tr>
+      <tr><td>5. 重写耗尽</td><td>发送 <code>extract_unambiguous_to_user()</code> 提取的完整 TO_USER 块，或"这次回复格式连续校验失败了，请稍后再试。"——绝不静默丢回合、绝不抢救 TO_SELF。</td></tr>
+      <tr><td>6. 附加规则</td><td>管道符 <code>|</code> 为字面量不切分；中间轮 content 永不发送/解析；reasoning_content 仅当前循环内保留；被门禁拒绝的回复不入 outbound、TO_SELF 不可提交。</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ================= 9 差异 ================= -->
+<section id="discrepancies">
+  <h2>9. 与设计文档的已知差异（实现事实）</h2>
+  <p>以下为审阅时发现的"文档宣称 ≠ 代码行为"，供后续设计决策参考（不在此文档中裁决对错）。</p>
+  <div class="card warn">
+    <span class="t">1. messages 表仍在每回合写入</span>
+    AGENTS.md 与 docs/current-design.md §5 宣称"一旦会话有 Ledger 行，legacy messages/summaries 为只读兼容数据，
+    普通 cleanup 不得写入"。实现中 <code>_save_inbound_msg/_update_saved_msg</code> 无条件写 messages 表
+    （pipeline.py:665, 692），仅 summaries 写入被跳过。双写是事实。
+  </div>
+  <div class="card warn">
+    <span class="t">2. memory_search 与 Ledger/Episode 断层</span>
+    检索仅覆盖 messages 表 FTS；Episode 叙述与工具调用不可检索（store.py:1652）。设计宣称的"长期记忆主干"未贯通。
+  </div>
+  <div class="card warn">
+    <span class="t">3. 超限请求仍会被发出</span>
+    docs §5 称"live pipeline 在每次 provider 调用前做最终硬检查并诚实失败"。
+    实现中 <code>_build_context</code> 超限只打 error 日志并继续返回消息（pipeline.py:426-431），
+    真正的硬失败推迟到工具循环内 <code>_ensure_live_request_budget</code>（ContextBudgetError → 用户收到内部错误文案）。
+  </div>
+  <div class="card warn">
+    <span class="t">4. Action Ledger 静默截断</span>
+    <code>_sanitize_action_result</code> 把结果截断到 2000 字符（无标记）；file_edit 错误截断 400；
+    审计数据被静默裁剪，与"真实结果入账"主张打折。
+  </div>
+  <div class="card warn">
+    <span class="t">5. 死代码仍在</span>
+    <code>canonical_state</code> 表 + 6 个 store 方法、<code>tools/bot_state.py</code>、
+    <code>tools/priority_override.py</code>（均未注册）、<code>_recycle_window_if_needed</code>、
+    <code>MessageWindow.max_size</code>（无效参数，测试专门断言其无效）。
+  </div>
+  <div class="card warn">
+    <span class="t">6. 双套压缩机制并存</span>
+    <code>_build_context</code> 内嵌 <code>_reclaim_ledger_history</code> 与回合级
+    <code>_compact_context_for_request</code> 做同一件事（大历史请求跑两遍全量投影）；
+    legacy 窗口压缩路径（<code>_window_turn_groups</code> 等）对现行数据不可达。
+  </div>
+  <div class="card warn">
+    <span class="t">7. schema 唯一事实源被特判削弱</span>
+    pipeline 对 <code>send/status_update/no_reply/memory_save/self_note/file_edit</code>
+    有硬编码名称分支与内联逻辑，provider schema 并非事实上的唯一事实源。
+  </div>
+  <div class="card">
+    <span class="t">8. 其余一致性良好</span>
+    隐私边界（audience 过滤）、Episode 精确覆盖、暂存写入原子性、跨会话 send 溯源分组、
+    服务 FIFO、心跳让路、OpenCode 诚实回报——均有测试覆盖且与文档一致。
+  </div>
+</section>
+
+<!-- ================= 10 索引 ================= -->
+<section id="index">
+  <h2>10. 代码索引（主要实现位置）</h2>
+  <table>
+    <tr><th>主题</th><th>位置</th></tr>
+    <tr><td>入口与工具注册</td><td class="file">src/mutsumi_sync/main.py</td></tr>
+    <tr><td>回合处理核心（pipeline 单函数）</td><td class="file">src/mutsumi_sync/pipeline.py:1459</td></tr>
+    <tr><td>调度器 / PipelineDeps / 心跳 / 定时 / 服务队列 / 任务回报</td><td class="file">src/mutsumi_sync/scheduler.py</td></tr>
+    <tr><td>SQLite 存储（10 张表 + 全部查询）</td><td class="file">src/mutsumi_sync/memory/store.py</td></tr>
+    <tr><td>Life Stream 投影 / Episode 验证 / 受众过滤</td><td class="file">src/mutsumi_sync/memory/projection.py</td></tr>
+    <tr><td>Episode 生成与合并</td><td class="file">src/mutsumi_sync/memory/episodes.py</td></tr>
+    <tr><td>信封协议（TO_SELF/TO_USER 解析）</td><td class="file">src/mutsumi_sync/output_protocol.py</td></tr>
+    <tr><td>服务入口（ingress）</td><td class="file">src/mutsumi_sync/ingress.py</td></tr>
+    <tr><td>OpenCode 委派运行器</td><td class="file">src/mutsumi_sync/opencode.py</td></tr>
+    <tr><td>工具：send / scheduler / file_edit / memory / media / delegate 等</td><td class="file">src/mutsumi_sync/tools/</td></tr>
+    <tr><td>配置（Pydantic + YAML 局部编辑）</td><td class="file">src/mutsumi_sync/config.py</td></tr>
+    <tr><td>提示词（persona/runtime/摘要/心跳）</td><td class="file">system-prompts.yaml</td></tr>
+    <tr><td>真实模型实验（规则打分）</td><td class="file">experiments/context_lab.py</td></tr>
+    <tr><td>测试套件（350 个）</td><td class="file">tests/</td></tr>
+  </table>
+</section>
+
+<footer>
+  本文档描述 <code>main</code> 分支（732cd9e + 未提交工作树）的真实实现；术语解释以代码为准，引用位置可能随后续提交变化。
+  生成于 2026-08-03，作为认知同步基线；后续若修改行为，请同步更新本文件与 docs/current-design.md。
+</footer>
+
+</main>
+</body>
+</html>

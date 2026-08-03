@@ -29,4 +29,3 @@ If subscription content is genuinely required, use Springer Nature's licensed TD
 `https://www.springernature.com/gp/researchers/text-and-data-mining`
 
 For this Skill, the default is to skip a child article whose public-access status is not clear. Do not add cookie support until a separate, secret-managed fetcher and written permission/licensing decision exist.
-
