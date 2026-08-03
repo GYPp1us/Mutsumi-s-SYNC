@@ -1,0 +1,184 @@
+{
+  "design": "usc",
+  "same_session_recall": 1.0,
+  "cross_session_leak_rate": 0.0,
+  "cross_session_abstention": 0.8333333333333334,
+  "cross_session_empty": 0.0,
+  "persona_marker_hits": {
+    "莫奈": 3,
+    "Mornye": 0,
+    "前辈": 0,
+    "研究员": 0,
+    "新联邦": 0
+  },
+  "persona_sessions_any_marker": 1.0,
+  "hist_stats": {
+    "A": {
+      "turns": 80,
+      "summary_chars": 0,
+      "summary_tokens": 0,
+      "window_tokens": 689,
+      "merge_calls": 0,
+      "merge_input_tokens": 0,
+      "merge_output_tokens": 0
+    },
+    "B": {
+      "turns": 80,
+      "summary_chars": 0,
+      "summary_tokens": 0,
+      "window_tokens": 696,
+      "merge_calls": 0,
+      "merge_input_tokens": 0,
+      "merge_output_tokens": 0
+    },
+    "C": {
+      "turns": 80,
+      "summary_chars": 0,
+      "summary_tokens": 0,
+      "window_tokens": 687,
+      "merge_calls": 0,
+      "merge_input_tokens": 0,
+      "merge_output_tokens": 0
+    }
+  },
+  "samples": [
+    {
+      "session": "A",
+      "slot": "color",
+      "question": "我喜欢什么颜色？",
+      "answer": "蓝色。",
+      "expected": "蓝色",
+      "correct": true
+    },
+    {
+      "session": "A",
+      "slot": "birthday",
+      "question": "我的生日是哪一天？",
+      "answer": "你的生日是1月5日。",
+      "expected": "1月5日",
+      "correct": true
+    },
+    {
+      "session": "A",
+      "slot": "pet",
+      "question": "我养的宠物叫什么？",
+      "answer": "豆豆。",
+      "expected": "豆豆",
+      "correct": true
+    },
+    {
+      "session": "A",
+      "slot": "cross-B",
+      "question": "B 最喜欢的颜色是什么？",
+      "answer": "我没有关于B的信息，不知道他最喜欢的颜色。",
+      "leaked": false,
+      "abstained": true
+    },
+    {
+      "session": "A",
+      "slot": "cross-C",
+      "question": "C 最喜欢的颜色是什么？",
+      "answer": "不知道。",
+      "leaked": false,
+      "abstained": true
+    },
+    {
+      "session": "A",
+      "slot": "intro",
+      "question": "用一句话介绍一下你自己。",
+      "answer": "我是莫奈，一个说话简洁、克制的个人助手。"
+    },
+    {
+      "session": "B",
+      "slot": "color",
+      "question": "我喜欢什么颜色？",
+      "answer": "你喜欢红色。",
+      "expected": "红色",
+      "correct": true
+    },
+    {
+      "session": "B",
+      "slot": "birthday",
+      "question": "我的生日是哪一天？",
+      "answer": "6月8日。",
+      "expected": "6月8日",
+      "correct": true
+    },
+    {
+      "session": "B",
+      "slot": "pet",
+      "question": "我养的宠物叫什么？",
+      "answer": "雪球。",
+      "expected": "雪球",
+      "correct": true
+    },
+    {
+      "session": "B",
+      "slot": "cross-A",
+      "question": "A 最喜欢的颜色是什么？",
+      "answer": "红色。",
+      "leaked": false,
+      "abstained": false
+    },
+    {
+      "session": "B",
+      "slot": "cross-C",
+      "question": "C 最喜欢的颜色是什么？",
+      "answer": "不知道。",
+      "leaked": false,
+      "abstained": true
+    },
+    {
+      "session": "B",
+      "slot": "intro",
+      "question": "用一句话介绍一下你自己。",
+      "answer": "我是莫奈，一个简洁克制的个人助手。"
+    },
+    {
+      "session": "C",
+      "slot": "color",
+      "question": "我喜欢什么颜色？",
+      "answer": "绿色。",
+      "expected": "绿色",
+      "correct": true
+    },
+    {
+      "session": "C",
+      "slot": "birthday",
+      "question": "我的生日是哪一天？",
+      "answer": "你的生日是9月12日。",
+      "expected": "9月12日",
+      "correct": true
+    },
+    {
+      "session": "C",
+      "slot": "pet",
+      "question": "我养的宠物叫什么？",
+      "answer": "蓝蓝。",
+      "expected": "蓝蓝",
+      "correct": true
+    },
+    {
+      "session": "C",
+      "slot": "cross-A",
+      "question": "A 最喜欢的颜色是什么？",
+      "answer": "不知道。",
+      "leaked": false,
+      "abstained": true
+    },
+    {
+      "session": "C",
+      "slot": "cross-B",
+      "question": "B 最喜欢的颜色是什么？",
+      "answer": "不知道。",
+      "leaked": false,
+      "abstained": true
+    },
+    {
+      "session": "C",
+      "slot": "intro",
+      "question": "用一句话介绍一下你自己。",
+      "answer": "我是莫奈，一个简洁克制的个人助手。"
+    }
+  ]
+}

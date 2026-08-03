@@ -243,29 +243,39 @@ async def _summarize_pending_episode(
             }
 
             async def request_summary(text: str, system_prompt: str) -> str:
-                response = await client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    headers=headers,
-                    json={
-                        "model": summarizer.model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": text},
-                        ],
-                        "temperature": summarizer.temperature,
-                        "max_tokens": 500,
-                    },
-                )
-                response.raise_for_status()
-                data = response.json()
-                result = str(
-                    data.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                ).strip()
-                if not result:
-                    raise ValueError("summary provider returned empty content")
-                return result
+                # Reasoning-capable providers can spend the whole output budget
+                # on thinking and return empty visible content. Retry once with
+                # a larger budget before declaring the episode a failure.
+                attempts = (4000, 8000)
+                for attempt_index, max_tokens in enumerate(attempts):
+                    response = await client.post(
+                        f"{base_url.rstrip('/')}/chat/completions",
+                        headers=headers,
+                        json={
+                            "model": summarizer.model,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": text},
+                            ],
+                            "temperature": summarizer.temperature,
+                            "max_tokens": max_tokens,
+                        },
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    result = str(
+                        data.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                    ).strip()
+                    if result:
+                        return result
+                    logger.warning(
+                        "[EPISODE] empty summary on attempt=%d/2 chars=%d",
+                        attempt_index + 1,
+                        len(text),
+                    )
+                raise ValueError("summary provider returned empty content")
 
             partials: list[str] = []
             for chunk in source_chunks:

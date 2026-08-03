@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 import logging
+import types
 from typing import Any
 
 import httpx
 
 from src.mutsumi_sync.config import Config
+from src.mutsumi_sync.memory.actors import format_actor_source, format_outbound_source
 from src.mutsumi_sync.memory.episodes import summarize_pending_episode
 from src.mutsumi_sync.memory.projection import build_life_stream
 from src.mutsumi_sync.memory.store import EventRecord, MessageStore
@@ -23,6 +25,10 @@ from src.mutsumi_sync.token_estimate import estimate_tokens
 logger = logging.getLogger("mutsumi.exp.baseline")
 
 EPISODE_SUMMARY_TOKEN_BUDGET = 600  # approx tokens per episode narrative
+#: Production reclaims until the request estimate is below the target ratio
+#: (0.5 x capacity). We apply the same idea to the history block alone; 0.6
+#: keeps a raw suffix visible while making Episodes enter the projection.
+COMPACTION_TARGET_RATIO = 0.6
 
 
 def make_summarizer_config(base_url: str, model: str, api_key: str) -> Config:
@@ -67,6 +73,37 @@ class CountingAsyncClient:
         return resp
 
 
+async def _rendered_tokens(store: MessageStore, conversation_id: str, after_sequence: int) -> int:
+    """Estimate the token cost of the RENDERED projection for uncovered events."""
+    uncovered = await store.get_events(
+        conversation_id=conversation_id,
+        after_sequence=after_sequence,
+        limit=1_000_000,
+        finalized_only=False,
+    )
+    total = 0
+    for event in uncovered:
+        if event.event_type == "inbound":
+            text = format_actor_source(
+                conversation_id=event.conversation_id,
+                actor_id=event.actor_id,
+                actor_name=event.actor_name,
+                actor_kind=event.actor_kind,
+                content=event.content,
+                created_at=event.created_at,
+            )
+        elif event.event_type == "outbound":
+            text = format_outbound_source(
+                conversation_id=event.conversation_id,
+                content=event.content,
+                created_at=event.created_at,
+            )
+        else:
+            text = event.content
+        total += estimate_tokens(text)
+    return total
+
+
 async def build_baseline_history(
     rounds_pairs: list[tuple[str, str]],
     *,
@@ -79,8 +116,10 @@ async def build_baseline_history(
     then project the real Life Stream. Returns (history, stats)."""
     import src.mutsumi_sync.memory.episodes as episodes_module
 
-    original_client = episodes_module.httpx.AsyncClient
-    episodes_module.httpx.AsyncClient = lambda timeout=60: counter
+    original_httpx = episodes_module.httpx
+    episodes_module.httpx = types.SimpleNamespace(
+        AsyncClient=lambda timeout=60: counter
+    )
     try:
         store = MessageStore(db_path=":memory:")
         await store.initialize()
@@ -108,16 +147,11 @@ async def build_baseline_history(
             ))
 
         episodes_created = 0
+        target = int(budget_tokens * COMPACTION_TARGET_RATIO)
         for _ in range(200):
             frontier = await store.get_latest_episode_sequence(conversation_id)
-            uncovered = await store.get_events(
-                conversation_id=conversation_id,
-                after_sequence=frontier,
-                limit=1_000_000,
-                finalized_only=False,
-            )
-            remaining_tokens = sum(estimate_tokens(item.content) for item in uncovered)
-            if remaining_tokens + episodes_created * EPISODE_SUMMARY_TOKEN_BUDGET <= budget_tokens:
+            remaining_tokens = await _rendered_tokens(store, conversation_id, frontier)
+            if remaining_tokens + episodes_created * EPISODE_SUMMARY_TOKEN_BUDGET <= target:
                 break
             episode_id = await summarize_pending_episode(
                 store,
@@ -161,4 +195,4 @@ async def build_baseline_history(
         await store.close()
         return history, stats
     finally:
-        episodes_module.httpx.AsyncClient = original_client
+        episodes_module.httpx = original_httpx

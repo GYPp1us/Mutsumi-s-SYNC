@@ -1095,7 +1095,7 @@ async def _generate_and_save_summary(
                         {"role": "user", "content": chunk},
                     ],
                     "temperature": summarizer_cfg.temperature,
-                    "max_tokens": 150,
+                    "max_tokens": 1000,
                 }
                 resp = await client.post(
                     f"{base_url.rstrip('/')}/chat/completions",
@@ -1121,7 +1121,7 @@ async def _generate_and_save_summary(
                         {"role": "user", "content": summary},
                     ],
                     "temperature": summarizer_cfg.temperature,
-                    "max_tokens": 300,
+                    "max_tokens": 2000,
                 }
                 resp = await client.post(
                     f"{base_url.rstrip('/')}/chat/completions",

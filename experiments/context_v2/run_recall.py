@@ -56,6 +56,18 @@ def build_truncate_history(
     }
 
 
+async def summarize_with_retry(llm: LLM, old_summary: str, chunk_text: str) -> tuple[str, dict]:
+    """Merge with a generous output budget; retry once when reasoning tokens
+    exhaust max_tokens and leave the content empty."""
+    messages = [{"role": "user", "content": f"【已有摘要】\n{old_summary or '（无）'}\n\n{chunk_text}"}]
+    for max_tokens in (4000, 8000):
+        data = await llm.chat(messages, max_tokens=max_tokens, system=SUMMARY_SYSTEM_PROMPT)
+        content = str(data.get("choices", [{}])[0].get("message", {}).get("content", "") or "")
+        if content.strip():
+            return content, data.get("usage", {})
+    return "", data.get("usage", {})
+
+
 async def build_usc_history(
     rounds_pairs: list[tuple[str, str]],
     *,
@@ -63,13 +75,7 @@ async def build_usc_history(
     llm: LLM,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     async def summarize(old_summary: str, chunk_text: str):
-        data = await llm.chat(
-            [{"role": "user", "content": f"【已有摘要】\n{old_summary or '（无）'}\n\n{chunk_text}"}],
-            max_tokens=1200,
-            system=SUMMARY_SYSTEM_PROMPT,
-        )
-        content = str(data.get("choices", [{}])[0].get("message", {}).get("content", "") or "")
-        return content, data.get("usage", {})
+        return await summarize_with_retry(llm, old_summary, chunk_text)
 
     ctx = SimpleContext(max_window_tokens=budget_tokens, summarize=summarize, max_summary_tokens=2000)
     for user, assistant in rounds_pairs:
@@ -203,9 +209,16 @@ async def main() -> None:
         "recall_overall": overall,
         "recall_by_depth": by_depth,
         "qa_avg_input_tokens": sum(r["qa_avg_input_tokens"] for r in results) / n,
-        "summarization_calls": sum(r["history_stats"].get("summary_calls", 0) for r in results) / n,
-        "summarization_input_tokens": sum(r["history_stats"].get("summary_input_tokens", 0) for r in results) / n,
+        "summarization_calls": sum(
+            r["history_stats"].get("summary_calls", r["history_stats"].get("merge_calls", 0))
+            for r in results
+        ) / n,
+        "summarization_input_tokens": sum(
+            r["history_stats"].get("summary_input_tokens", r["history_stats"].get("merge_input_tokens", 0))
+            for r in results
+        ) / n,
         "history_tokens": sum(r["history_stats"].get("history_tokens", 0) for r in results) / n,
+        "folded_turns": sum(r["history_stats"].get("folded_turns", 0) for r in results) / n,
         "per_repeat": results,
     }
     out = args.out or f"results/recall_r{args.rounds}_{args.design}_b{args.budget}.json"

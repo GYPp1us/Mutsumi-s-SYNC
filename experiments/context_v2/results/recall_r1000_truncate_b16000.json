@@ -1,0 +1,192 @@
+{
+  "rounds": 1000,
+  "budget": 16000,
+  "design": "truncate",
+  "repeats": 2,
+  "recall_overall": 0.1875,
+  "recall_by_depth": {
+    "early": 0.0,
+    "mid": 0.0,
+    "late": 0.75
+  },
+  "qa_avg_input_tokens": 12778.5,
+  "summarization_calls": 0.0,
+  "summarization_input_tokens": 0.0,
+  "history_tokens": 25082.0,
+  "per_repeat": [
+    {
+      "rounds": 1000,
+      "budget": 16000,
+      "design": "truncate",
+      "repeat": 0,
+      "history_stats": {
+        "history_messages": 1180,
+        "history_tokens": 25103,
+        "summary_calls": 0,
+        "summary_input_tokens": 0,
+        "summary_output_tokens": 0,
+        "dropped_turns": 820
+      },
+      "qa_avg_input_tokens": 12776,
+      "recall_overall": 0.25,
+      "recall_by_depth": {
+        "early": 0.0,
+        "mid": 0.0,
+        "late": 1.0
+      },
+      "facts": [
+        {
+          "name": "job",
+          "depth": "early",
+          "question": "我的职业是什么？",
+          "answer": "不知道。",
+          "correct": false,
+          "qa_input_tokens": 12774
+        },
+        {
+          "name": "pet",
+          "depth": "early",
+          "question": "我养的宠物叫什么名字？",
+          "answer": "我不知道你养了什么宠物。",
+          "correct": false,
+          "qa_input_tokens": 12776
+        },
+        {
+          "name": "color",
+          "depth": "early",
+          "question": "我最喜欢的颜色是什么？",
+          "answer": "我不知道你最喜欢的颜色。",
+          "correct": false,
+          "qa_input_tokens": 12775
+        },
+        {
+          "name": "birthday",
+          "depth": "early",
+          "question": "我的生日是哪一天？",
+          "answer": "不知道。",
+          "correct": false,
+          "qa_input_tokens": 12775
+        },
+        {
+          "name": "travel",
+          "depth": "mid",
+          "question": "我年底的旅行计划目的地是哪里？",
+          "answer": "不清楚你的旅行计划，资料里没有记载。",
+          "correct": false,
+          "qa_input_tokens": 12779
+        },
+        {
+          "name": "coffee",
+          "depth": "mid",
+          "question": "我喝咖啡有什么习惯？",
+          "answer": "不知道，资料里没有这个信息。",
+          "correct": false,
+          "qa_input_tokens": 12776
+        },
+        {
+          "name": "reminder",
+          "depth": "late",
+          "question": "今晚几点我需要你提醒我什么？",
+          "answer": "好的，今晚九点我会提醒你吃药。",
+          "correct": true,
+          "qa_input_tokens": 12778
+        },
+        {
+          "name": "book",
+          "depth": "late",
+          "question": "我最近在读什么书？",
+          "answer": "你最近在读《百年孤独》，第二遍了。",
+          "correct": true,
+          "qa_input_tokens": 12776
+        }
+      ]
+    },
+    {
+      "rounds": 1000,
+      "budget": 16000,
+      "design": "truncate",
+      "repeat": 1,
+      "history_stats": {
+        "history_messages": 1175,
+        "history_tokens": 25061,
+        "summary_calls": 0,
+        "summary_input_tokens": 0,
+        "summary_output_tokens": 0,
+        "dropped_turns": 825
+      },
+      "qa_avg_input_tokens": 12781,
+      "recall_overall": 0.125,
+      "recall_by_depth": {
+        "early": 0.0,
+        "mid": 0.0,
+        "late": 0.5
+      },
+      "facts": [
+        {
+          "name": "job",
+          "depth": "early",
+          "question": "我的职业是什么？",
+          "answer": "我不知道你的职业。",
+          "correct": false,
+          "qa_input_tokens": 12779
+        },
+        {
+          "name": "color",
+          "depth": "early",
+          "question": "我最喜欢的颜色是什么？",
+          "answer": "我不知道你最喜欢的颜色是什么。",
+          "correct": false,
+          "qa_input_tokens": 12780
+        },
+        {
+          "name": "birthday",
+          "depth": "early",
+          "question": "我的生日是哪一天？",
+          "answer": "我不知道你的生日。",
+          "correct": false,
+          "qa_input_tokens": 12780
+        },
+        {
+          "name": "pet",
+          "depth": "early",
+          "question": "我养的宠物叫什么名字？",
+          "answer": "我不知道。",
+          "correct": false,
+          "qa_input_tokens": 12781
+        },
+        {
+          "name": "travel",
+          "depth": "mid",
+          "question": "我年底的旅行计划目的地是哪里？",
+          "answer": "我没有关于你旅行计划的信息，不清楚你的目的地。",
+          "correct": false,
+          "qa_input_tokens": 12784
+        },
+        {
+          "name": "coffee",
+          "depth": "mid",
+          "question": "我喝咖啡有什么习惯？",
+          "answer": "不清楚你喝咖啡的习惯，资料里没有相关信息。",
+          "correct": false,
+          "qa_input_tokens": 12781
+        },
+        {
+          "name": "reminder",
+          "depth": "late",
+          "question": "今晚几点我需要你提醒我什么？",
+          "answer": "好的，到九点我会提醒你。",
+          "correct": false,
+          "qa_input_tokens": 12783
+        },
+        {
+          "name": "book",
+          "depth": "late",
+          "question": "我最近在读什么书？",
+          "answer": "我不知道你最近在读什么书。不过你刚说过在读《百年孤独》第二遍。",
+          "correct": true,
+          "qa_input_tokens": 12781
+        }
+      ]
+    }
+  ]
+}

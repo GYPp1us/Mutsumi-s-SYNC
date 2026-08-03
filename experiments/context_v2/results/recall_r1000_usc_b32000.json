@@ -1,0 +1,200 @@
+{
+  "rounds": 1000,
+  "budget": 32000,
+  "design": "usc",
+  "repeats": 2,
+  "recall_overall": 0.8125,
+  "recall_by_depth": {
+    "early": 0.75,
+    "mid": 0.75,
+    "late": 1.0
+  },
+  "qa_avg_input_tokens": 21670.0,
+  "summarization_calls": 0.0,
+  "summarization_input_tokens": 0.0,
+  "history_tokens": 42746.0,
+  "per_repeat": [
+    {
+      "rounds": 1000,
+      "budget": 32000,
+      "design": "usc",
+      "repeat": 0,
+      "history_stats": {
+        "turns": 2000,
+        "summary_chars": 0,
+        "summary_tokens": 0,
+        "window_tokens": 27252,
+        "merge_calls": 0,
+        "merge_input_tokens": 0,
+        "merge_output_tokens": 0,
+        "folded_turns": 0,
+        "history_messages": 2000,
+        "history_tokens": 42670
+      },
+      "qa_avg_input_tokens": 21592,
+      "recall_overall": 0.875,
+      "recall_by_depth": {
+        "early": 1.0,
+        "mid": 0.5,
+        "late": 1.0
+      },
+      "facts": [
+        {
+          "name": "job",
+          "depth": "early",
+          "question": "我的职业是什么？",
+          "answer": "你是桥梁工程师，负责加固工程。",
+          "correct": true,
+          "qa_input_tokens": 21590
+        },
+        {
+          "name": "pet",
+          "depth": "early",
+          "question": "我养的宠物叫什么名字？",
+          "answer": "你提过养的黑猫叫煤球。",
+          "correct": true,
+          "qa_input_tokens": 21592
+        },
+        {
+          "name": "color",
+          "depth": "early",
+          "question": "我最喜欢的颜色是什么？",
+          "answer": "你之前提过喜欢靛蓝色。",
+          "correct": true,
+          "qa_input_tokens": 21591
+        },
+        {
+          "name": "birthday",
+          "depth": "early",
+          "question": "我的生日是哪一天？",
+          "answer": "你的生日是11月23日，我记得，到时候会提醒你。",
+          "correct": true,
+          "qa_input_tokens": 21591
+        },
+        {
+          "name": "travel",
+          "depth": "mid",
+          "question": "我年底的旅行计划目的地是哪里？",
+          "answer": "不清楚。你还没提过年底旅行的目的地。",
+          "correct": false,
+          "qa_input_tokens": 21595
+        },
+        {
+          "name": "coffee",
+          "depth": "mid",
+          "question": "我喝咖啡有什么习惯？",
+          "answer": "你之前说过只喝冰美式，不加糖不加奶。但关于我的咖啡习惯，资料里没有明确记载。",
+          "correct": true,
+          "qa_input_tokens": 21592
+        },
+        {
+          "name": "reminder",
+          "depth": "late",
+          "question": "今晚几点我需要你提醒我什么？",
+          "answer": "九点，提醒你吃药。",
+          "correct": true,
+          "qa_input_tokens": 21594
+        },
+        {
+          "name": "book",
+          "depth": "late",
+          "question": "我最近在读什么书？",
+          "answer": "你在读《百年孤独》。",
+          "correct": true,
+          "qa_input_tokens": 21592
+        }
+      ]
+    },
+    {
+      "rounds": 1000,
+      "budget": 32000,
+      "design": "usc",
+      "repeat": 1,
+      "history_stats": {
+        "turns": 2000,
+        "summary_chars": 0,
+        "summary_tokens": 0,
+        "window_tokens": 27386,
+        "merge_calls": 0,
+        "merge_input_tokens": 0,
+        "merge_output_tokens": 0,
+        "folded_turns": 0,
+        "history_messages": 2000,
+        "history_tokens": 42822
+      },
+      "qa_avg_input_tokens": 21748,
+      "recall_overall": 0.75,
+      "recall_by_depth": {
+        "early": 0.5,
+        "mid": 1.0,
+        "late": 1.0
+      },
+      "facts": [
+        {
+          "name": "job",
+          "depth": "early",
+          "question": "我的职业是什么？",
+          "answer": "您是桥梁工程师，之前提过在赶桥梁加固工程。",
+          "correct": true,
+          "qa_input_tokens": 21746
+        },
+        {
+          "name": "color",
+          "depth": "early",
+          "question": "我最喜欢的颜色是什么？",
+          "answer": "我不知道你最喜欢的颜色是什么。",
+          "correct": false,
+          "qa_input_tokens": 21747
+        },
+        {
+          "name": "birthday",
+          "depth": "early",
+          "question": "我的生日是哪一天？",
+          "answer": "你的生日是11月23日。",
+          "correct": true,
+          "qa_input_tokens": 21747
+        },
+        {
+          "name": "pet",
+          "depth": "early",
+          "question": "我养的宠物叫什么名字？",
+          "answer": "不知道。",
+          "correct": false,
+          "qa_input_tokens": 21748
+        },
+        {
+          "name": "travel",
+          "depth": "mid",
+          "question": "我年底的旅行计划目的地是哪里？",
+          "answer": "你之前提到过年底去布拉格两周，正在查攻略和签证材料。",
+          "correct": true,
+          "qa_input_tokens": 21751
+        },
+        {
+          "name": "coffee",
+          "depth": "mid",
+          "question": "我喝咖啡有什么习惯？",
+          "answer": "你只喝冰美式，加糖加奶的都不碰。其他习惯就不清楚了。",
+          "correct": true,
+          "qa_input_tokens": 21748
+        },
+        {
+          "name": "reminder",
+          "depth": "late",
+          "question": "今晚几点我需要你提醒我什么？",
+          "answer": "九点提醒你吃药。",
+          "correct": true,
+          "qa_input_tokens": 21750
+        },
+        {
+          "name": "book",
+          "depth": "late",
+          "question": "我最近在读什么书？",
+          "answer": "你最近在读《百年孤独》，第二遍了。",
+          "correct": true,
+          "qa_input_tokens": 21748
+        }
+      ]
+    }
+  ]
+}

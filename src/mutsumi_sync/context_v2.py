@@ -25,6 +25,7 @@ production pipeline.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -41,11 +42,12 @@ SummarizeFn = Callable[[str, str], Awaitable[SummarizeResult]]
 SUMMARY_SYSTEM_PROMPT = """你正在维护一段长期对话的累积摘要。输入由【已有摘要】和【新对话片段】两部分组成，你需要输出一条新的纯文本摘要。
 
 强制要求：
-1. 保留关于任何人（尤其是用户）的所有稳定事实：姓名、生日、偏好、习惯、职业、家人、宠物、地点、约定等；关键值尽量原文引用（例如日期、颜色、名字）。
-2. 保留关系标签、未完成事项、承诺与约定时间（例如"晚上九点提醒吃药"）。
-3. 保留对话主线与时间顺序梗概，优先压缩寒暄、闲聊和重复内容。
+1. 必须逐一保留关于任何人（尤其是用户）的所有稳定事实：姓名、生日、偏好、习惯、职业、家人、宠物、地点、约定等；关键值尽量原文引用（例如日期、颜色、名字）。输出中用"用户事实清单："开头的段落逐条列出这些事实，一条都不能丢。
+2. 保留关系标签、未完成事项、承诺与约定时间（例如"晚上九点提醒吃药"），也逐条列出。
+3. 其余部分才是对话主线梗概：保留时间顺序，优先压缩寒暄、闲聊和重复内容。
 4. 只合并输入中已有的信息，不虚构、不推断、不补充。
 5. 摘要必须自包含：即使原文不再可见，读到摘要的人也应能回答"用户是谁、有什么稳定事实、有什么未完成事项"。
+6. 输出控制在 800 字以内。
 
 只输出摘要正文，不要输出任何解释、标题或格式标记。"""
 
@@ -110,11 +112,25 @@ class SimpleContext:
 
     # ---- estimation ----------------------------------------------------
 
+    def _turn_tokens(self, turn: Turn) -> int:
+        """Estimate the RENDERED provider message cost (JSON frame included)."""
+        return estimate_tokens(json.dumps(
+            {"role": turn.role, "content": turn.content}, ensure_ascii=False, separators=(",", ":")
+        ))
+
+    def _summary_tokens(self) -> int:
+        if not self.summary:
+            return 0
+        return estimate_tokens(json.dumps(
+            {"role": "user", "content": SUMMARY_FRAME.format(summary=self.summary)},
+            ensure_ascii=False, separators=(",", ":"),
+        ))
+
     def estimate_turns(self) -> int:
-        return sum(estimate_tokens(turn.content) for turn in self.turns)
+        return sum(self._turn_tokens(turn) for turn in self.turns)
 
     def estimate_summary(self) -> int:
-        return estimate_tokens(self.summary) if self.summary else 0
+        return self._summary_tokens()
 
     def estimate_window(self) -> int:
         return self.estimate_turns() + self.estimate_summary()

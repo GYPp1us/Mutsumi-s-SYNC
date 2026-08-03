@@ -104,10 +104,17 @@ async def run_condition(design: str, llm: LLM, config, counter: CountingAsyncCli
         async def summarize(old_summary, chunk_text):
             data = await llm.chat(
                 [{"role": "user", "content": f"【已有摘要】\n{old_summary or '（无）'}\n\n{chunk_text}"}],
-                max_tokens=1200,
+                max_tokens=4000,
                 system=SUMMARY_SYSTEM_PROMPT,
             )
             content = str(data.get("choices", [{}])[0].get("message", {}).get("content", "") or "")
+            if not content.strip():
+                data = await llm.chat(
+                    [{"role": "user", "content": f"【已有摘要】\n{old_summary or '（无）'}\n\n{chunk_text}"}],
+                    max_tokens=8000,
+                    system=SUMMARY_SYSTEM_PROMPT,
+                )
+                content = str(data.get("choices", [{}])[0].get("message", {}).get("content", "") or "")
             return content, data.get("usage", {})
 
         for name, user in USERS.items():
