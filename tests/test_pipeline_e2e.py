@@ -171,10 +171,10 @@ class TestPipelineE2EMultiRound:
 
     async def test_request_compaction_archives_complete_turns_with_exact_coverage(self, monkeypatch):
         config = make_config()
-        config.context.model_context_tokens = 700
-        config.context.reserved_output_tokens = 100
-        config.context.compression_trigger_ratio = 0.8
-        config.context.compression_target_ratio = 0.45
+        config.context.model_context_tokens = 20000
+        config.context.reserved_output_tokens = 1000
+        config.context.compression_trigger_ratio = 0.5
+        config.context.compression_target_ratio = 0.1
         sender = CaptureSender()
         store = MessageStore(db_path=":memory:")
         await store.initialize()
@@ -193,8 +193,8 @@ class TestPipelineE2EMultiRound:
                 }),
             ))
             record_ids.append(record_id)
-            window.add("budget", f"question {index} " + "q" * 220, record_id=record_id)
-            window.add("budget", f"answer {index} " + "a" * 220, is_bot=True, record_id=record_id)
+            window.add("budget", f"question {index} " + "q" * 2200, record_id=record_id)
+            window.add("budget", f"answer {index} " + "a" * 2200, is_bot=True, record_id=record_id)
 
         async def fake_summary(deps, source, text, summarizer_cfg, *, kind="message", covered_through_message_id=None):
             assert kind == "compaction"

@@ -425,9 +425,13 @@ async def _build_context(message: str, deps: PipelineDeps) -> list[dict[str, Any
         request_estimate = _estimate_request_tokens(messages, tools)
     if request_estimate > hard_request_limit:
         logger.error(
-            "[CONTEXT BUDGET] provider context remains too large estimated=%d limit=%d",
+            "[CONTEXT BUDGET] provider context remains too large estimated=%d limit=%d; failing honestly",
             request_estimate,
             hard_request_limit,
+        )
+        raise ContextBudgetError(
+            f"provider request exceeds context budget: estimated={request_estimate} "
+            f"limit={hard_request_limit}"
         )
     return messages
 
@@ -1322,11 +1326,6 @@ async def _compact_context_for_request(
         covered_through,
     )
     return True
-
-
-async def _recycle_window_if_needed(deps: PipelineDeps) -> None:
-    messages = await _build_context("", deps)
-    await _compact_context_for_request("", deps, messages)
 
 
 def _oldest_history_group_end(
