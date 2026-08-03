@@ -3,16 +3,17 @@
   "budget": 16000,
   "design": "truncate",
   "repeats": 2,
-  "recall_overall": 0.875,
+  "recall_overall": 0.9375,
   "recall_by_depth": {
     "early": 0.875,
-    "mid": 0.75,
+    "mid": 1.0,
     "late": 1.0
   },
   "qa_avg_input_tokens": 6718.0,
   "summarization_calls": 0.0,
   "summarization_input_tokens": 0.0,
   "history_tokens": 12954.0,
+  "folded_turns": 0.0,
   "per_repeat": [
     {
       "rounds": 300,
@@ -28,10 +29,10 @@
         "dropped_turns": 0
       },
       "qa_avg_input_tokens": 6671,
-      "recall_overall": 0.875,
+      "recall_overall": 1.0,
       "recall_by_depth": {
         "early": 1.0,
-        "mid": 0.5,
+        "mid": 1.0,
         "late": 1.0
       },
       "facts": [
@@ -47,7 +48,7 @@
           "name": "pet",
           "depth": "early",
           "question": "我养的宠物叫什么名字？",
-          "answer": "你养的猫叫煤球，是只黏人的黑猫。",
+          "answer": "煤球。",
           "correct": true,
           "qa_input_tokens": 6671
         },
@@ -55,7 +56,7 @@
           "name": "color",
           "depth": "early",
           "question": "我最喜欢的颜色是什么？",
-          "answer": "我不清楚你最喜欢的颜色，但你之前说过喜欢靛蓝色。",
+          "answer": "我没有颜色偏好，不过你之前提过喜欢靛蓝色。",
           "correct": true,
           "qa_input_tokens": 6670
         },
@@ -71,7 +72,7 @@
           "name": "travel",
           "depth": "mid",
           "question": "我年底的旅行计划目的地是哪里？",
-          "answer": "年底旅行计划是去布拉格待两周。",
+          "answer": "布拉格。",
           "correct": true,
           "qa_input_tokens": 6674
         },
@@ -79,15 +80,15 @@
           "name": "coffee",
           "depth": "mid",
           "question": "我喝咖啡有什么习惯？",
-          "answer": "我好像没有特别的喝咖啡习惯，这方面没什么记录。",
-          "correct": false,
+          "answer": "你只喝冰美式，加糖加奶的都喝不惯。",
+          "correct": true,
           "qa_input_tokens": 6671
         },
         {
           "name": "book",
           "depth": "late",
           "question": "我最近在读什么书？",
-          "answer": "你在读《百年孤独》，第二遍了。",
+          "answer": "你最近在读《百年孤独》，而且是第二遍了。",
           "correct": true,
           "qa_input_tokens": 6671
         },
@@ -95,7 +96,7 @@
           "name": "reminder",
           "depth": "late",
           "question": "今晚几点我需要你提醒我什么？",
-          "answer": "今晚九点，提醒你吃药。",
+          "answer": "今晚九点提醒你吃药。",
           "correct": true,
           "qa_input_tokens": 6673
         }
@@ -126,7 +127,7 @@
           "name": "job",
           "depth": "early",
           "question": "我的职业是什么？",
-          "answer": "我是莫奈，你的个人助手。",
+          "answer": "不知道，资料里没有记载。",
           "correct": false,
           "qa_input_tokens": 6763
         },
@@ -134,7 +135,7 @@
           "name": "color",
           "depth": "early",
           "question": "我最喜欢的颜色是什么？",
-          "answer": "你之前提到过喜欢靛蓝色，窗帘都换成了这个颜色。",
+          "answer": "你之前说过喜欢靛蓝色。",
           "correct": true,
           "qa_input_tokens": 6764
         },
@@ -142,7 +143,7 @@
           "name": "birthday",
           "depth": "early",
           "question": "我的生日是哪一天？",
-          "answer": "你的生日是11月23日。",
+          "answer": "你的生日是11月23日，到时我会提醒你。",
           "correct": true,
           "qa_input_tokens": 6764
         },
@@ -150,7 +151,7 @@
           "name": "pet",
           "depth": "early",
           "question": "我养的宠物叫什么名字？",
-          "answer": "你养的宠物叫煤球。",
+          "answer": "煤球。",
           "correct": true,
           "qa_input_tokens": 6765
         },
@@ -158,7 +159,7 @@
           "name": "travel",
           "depth": "mid",
           "question": "我年底的旅行计划目的地是哪里？",
-          "answer": "布拉格。",
+          "answer": "你计划年底去布拉格，记得多带厚衣服。",
           "correct": true,
           "qa_input_tokens": 6768
         },
@@ -174,7 +175,7 @@
           "name": "book",
           "depth": "late",
           "question": "我最近在读什么书？",
-          "answer": "《百年孤独》。",
+          "answer": "你最近在读《百年孤独》，第二遍。",
           "correct": true,
           "qa_input_tokens": 6765
         },
@@ -182,7 +183,7 @@
           "name": "reminder",
           "depth": "late",
           "question": "今晚几点我需要你提醒我什么？",
-          "answer": "九点提醒你吃药。",
+          "answer": "今晚九点，提醒你吃药。",
           "correct": true,
           "qa_input_tokens": 6767
         }

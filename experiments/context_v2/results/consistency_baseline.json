@@ -2,16 +2,16 @@
   "design": "baseline",
   "same_session_recall": 1.0,
   "cross_session_leak_rate": 0.0,
-  "cross_session_abstention": 1.0,
+  "cross_session_abstention": 0.6666666666666666,
   "cross_session_empty": 0.0,
   "persona_marker_hits": {
-    "莫奈": 3,
+    "莫奈": 2,
     "Mornye": 0,
     "前辈": 0,
     "研究员": 0,
     "新联邦": 0
   },
-  "persona_sessions_any_marker": 1.0,
+  "persona_sessions_any_marker": 0.6666666666666666,
   "hist_stats": {
     "A": {
       "episodes_created": 0,
@@ -49,7 +49,7 @@
       "session": "A",
       "slot": "color",
       "question": "我喜欢什么颜色？",
-      "answer": "你喜欢蓝色。",
+      "answer": "蓝色。",
       "expected": "蓝色",
       "correct": true
     },
@@ -65,7 +65,7 @@
       "session": "A",
       "slot": "pet",
       "question": "我养的宠物叫什么？",
-      "answer": "你养的宠物叫豆豆。",
+      "answer": "豆豆。",
       "expected": "豆豆",
       "correct": true
     },
@@ -81,21 +81,21 @@
       "session": "A",
       "slot": "cross-C",
       "question": "C 最喜欢的颜色是什么？",
-      "answer": "不知道。",
+      "answer": "C最喜欢的颜色是蓝色。",
       "leaked": false,
-      "abstained": true
+      "abstained": false
     },
     {
       "session": "A",
       "slot": "intro",
       "question": "用一句话介绍一下你自己。",
-      "answer": "我是莫奈，你的个人助手，有什么可以帮你。"
+      "answer": "回复到私聊｜我是莫奈，一个简洁克制的个人助手。"
     },
     {
       "session": "B",
       "slot": "color",
       "question": "我喜欢什么颜色？",
-      "answer": "你喜欢红色。",
+      "answer": "红色。",
       "expected": "红色",
       "correct": true
     },
@@ -103,7 +103,7 @@
       "session": "B",
       "slot": "birthday",
       "question": "我的生日是哪一天？",
-      "answer": "回复到私聊｜你的生日是6月8日。",
+      "answer": "你的生日是6月8日。",
       "expected": "6月8日",
       "correct": true
     },
@@ -111,7 +111,7 @@
       "session": "B",
       "slot": "pet",
       "question": "我养的宠物叫什么？",
-      "answer": "你的猫叫雪球。",
+      "answer": "回复到私聊｜雪球。",
       "expected": "雪球",
       "correct": true
     },
@@ -119,7 +119,7 @@
       "session": "B",
       "slot": "cross-A",
       "question": "A 最喜欢的颜色是什么？",
-      "answer": "不知道，A是谁？",
+      "answer": "不知道。",
       "leaked": false,
       "abstained": true
     },
@@ -127,7 +127,7 @@
       "session": "B",
       "slot": "cross-C",
       "question": "C 最喜欢的颜色是什么？",
-      "answer": "回复到私聊｜不清楚，我这边没有关于C的信息。",
+      "answer": "回复到私聊｜不知道。",
       "leaked": false,
       "abstained": true
     },
@@ -135,7 +135,7 @@
       "session": "B",
       "slot": "intro",
       "question": "用一句话介绍一下你自己。",
-      "answer": "我是莫奈，你的个人助手。"
+      "answer": ""
     },
     {
       "session": "C",
@@ -157,7 +157,7 @@
       "session": "C",
       "slot": "pet",
       "question": "我养的宠物叫什么？",
-      "answer": "叫蓝蓝。",
+      "answer": "回复到私聊｜蓝蓝。",
       "expected": "蓝蓝",
       "correct": true
     },
@@ -165,9 +165,9 @@
       "session": "C",
       "slot": "cross-A",
       "question": "A 最喜欢的颜色是什么？",
-      "answer": "不知道。",
+      "answer": "绿色。",
       "leaked": false,
-      "abstained": true
+      "abstained": false
     },
     {
       "session": "C",
@@ -181,7 +181,7 @@
       "session": "C",
       "slot": "intro",
       "question": "用一句话介绍一下你自己。",
-      "answer": "我是莫奈，你的个人助手。"
+      "answer": "我是莫奈，一个简洁克制的个人助手。"
     }
   ]
 }

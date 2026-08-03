@@ -3,16 +3,17 @@
   "budget": 16000,
   "design": "truncate",
   "repeats": 2,
-  "recall_overall": 0.5,
+  "recall_overall": 0.4375,
   "recall_by_depth": {
     "early": 0.0,
-    "mid": 1.0,
+    "mid": 0.75,
     "late": 1.0
   },
   "qa_avg_input_tokens": 12768.5,
   "summarization_calls": 0.0,
   "summarization_input_tokens": 0.0,
   "history_tokens": 25038.0,
+  "folded_turns": 0.0,
   "per_repeat": [
     {
       "rounds": 600,
@@ -39,7 +40,7 @@
           "name": "job",
           "depth": "early",
           "question": "我的职业是什么？",
-          "answer": "抱歉，这个我并不知道。",
+          "answer": "不知道。",
           "correct": false,
           "qa_input_tokens": 12733
         },
@@ -47,7 +48,7 @@
           "name": "pet",
           "depth": "early",
           "question": "我养的宠物叫什么名字？",
-          "answer": "资料里没有提到你养的宠物，所以我不知道它的名字。",
+          "answer": "我没有关于你宠物名字的记录。",
           "correct": false,
           "qa_input_tokens": 12735
         },
@@ -55,7 +56,7 @@
           "name": "color",
           "depth": "early",
           "question": "我最喜欢的颜色是什么？",
-          "answer": "资料里没提过，我不知道。",
+          "answer": "我不知道。",
           "correct": false,
           "qa_input_tokens": 12734
         },
@@ -63,7 +64,7 @@
           "name": "birthday",
           "depth": "early",
           "question": "我的生日是哪一天？",
-          "answer": "你的生日我不清楚，资料里没有记录。",
+          "answer": "不知道。",
           "correct": false,
           "qa_input_tokens": 12734
         },
@@ -71,7 +72,7 @@
           "name": "travel",
           "depth": "mid",
           "question": "我年底的旅行计划目的地是哪里？",
-          "answer": "你之前提到年底打算去布拉格。",
+          "answer": "你的年底旅行计划目的地是布拉格。",
           "correct": true,
           "qa_input_tokens": 12738
         },
@@ -79,7 +80,7 @@
           "name": "coffee",
           "depth": "mid",
           "question": "我喝咖啡有什么习惯？",
-          "answer": "你习惯喝冰美式，不加糖不加奶。",
+          "answer": "你只喝冰美式，加糖加奶的都喝不惯。其他习惯我不清楚。",
           "correct": true,
           "qa_input_tokens": 12735
         },
@@ -87,7 +88,7 @@
           "name": "reminder",
           "depth": "late",
           "question": "今晚几点我需要你提醒我什么？",
-          "answer": "晚上九点，提醒你吃药。",
+          "answer": "好，我会在今晚9点提醒你吃药。",
           "correct": true,
           "qa_input_tokens": 12737
         },
@@ -95,7 +96,7 @@
           "name": "book",
           "depth": "late",
           "question": "我最近在读什么书？",
-          "answer": "你最近在读《百年孤独》。",
+          "answer": "你提到过最近在读《百年孤独》，是第二遍了。",
           "correct": true,
           "qa_input_tokens": 12735
         }
@@ -115,10 +116,10 @@
         "dropped_turns": 30
       },
       "qa_avg_input_tokens": 12802,
-      "recall_overall": 0.5,
+      "recall_overall": 0.375,
       "recall_by_depth": {
         "early": 0.0,
-        "mid": 1.0,
+        "mid": 0.5,
         "late": 1.0
       },
       "facts": [
@@ -126,7 +127,7 @@
           "name": "job",
           "depth": "early",
           "question": "我的职业是什么？",
-          "answer": "不知道。",
+          "answer": "我的职业是个人助理。",
           "correct": false,
           "qa_input_tokens": 12800
         },
@@ -134,7 +135,7 @@
           "name": "color",
           "depth": "early",
           "question": "我最喜欢的颜色是什么？",
-          "answer": "不知道。",
+          "answer": "不知道，你没有告诉过我。",
           "correct": false,
           "qa_input_tokens": 12801
         },
@@ -142,7 +143,7 @@
           "name": "birthday",
           "depth": "early",
           "question": "我的生日是哪一天？",
-          "answer": "我的资料里没有记录生日，不知道你的生日是哪一天。",
+          "answer": "我的生日设定里没有记载，所以不知道。",
           "correct": false,
           "qa_input_tokens": 12801
         },
@@ -150,7 +151,7 @@
           "name": "pet",
           "depth": "early",
           "question": "我养的宠物叫什么名字？",
-          "answer": "抱歉，我没有相关记忆，不知道你养的宠物叫什么名字。",
+          "answer": "我不知道你宠物的名字。",
           "correct": false,
           "qa_input_tokens": 12802
         },
@@ -158,15 +159,15 @@
           "name": "travel",
           "depth": "mid",
           "question": "我年底的旅行计划目的地是哪里？",
-          "answer": "你年底的目的地是布拉格。",
-          "correct": true,
+          "answer": "不知道。",
+          "correct": false,
           "qa_input_tokens": 12805
         },
         {
           "name": "coffee",
           "depth": "mid",
           "question": "我喝咖啡有什么习惯？",
-          "answer": "你只喝冰美式，不加糖不加奶。",
+          "answer": "冰美式确实清爽，习惯了就回不去了。",
           "correct": true,
           "qa_input_tokens": 12802
         },
@@ -174,7 +175,7 @@
           "name": "reminder",
           "depth": "late",
           "question": "今晚几点我需要你提醒我什么？",
-          "answer": "九点，提醒你吃药。",
+          "answer": "今晚九点提醒你吃药。",
           "correct": true,
           "qa_input_tokens": 12804
         },
@@ -182,7 +183,7 @@
           "name": "book",
           "depth": "late",
           "question": "我最近在读什么书？",
-          "answer": "你最近在读《百年孤独》，是第二遍了。",
+          "answer": "你在读《百年孤独》，第二遍了。",
           "correct": true,
           "qa_input_tokens": 12802
         }

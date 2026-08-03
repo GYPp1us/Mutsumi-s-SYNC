@@ -3,16 +3,17 @@
   "budget": 8000,
   "design": "usc",
   "repeats": 2,
-  "recall_overall": 0.9375,
+  "recall_overall": 1.0,
   "recall_by_depth": {
-    "early": 0.875,
+    "early": 1.0,
     "mid": 1.0,
     "late": 1.0
   },
-  "qa_avg_input_tokens": 21173.5,
-  "summarization_calls": 0.0,
-  "summarization_input_tokens": 0.0,
-  "history_tokens": 41731.0,
+  "qa_avg_input_tokens": 4152.0,
+  "summarization_calls": 42.0,
+  "summarization_input_tokens": 74534.0,
+  "history_tokens": 7665.0,
+  "folded_turns": 1680.0,
   "per_repeat": [
     {
       "rounds": 1000,
@@ -20,18 +21,18 @@
       "design": "usc",
       "repeat": 0,
       "history_stats": {
-        "turns": 1960,
-        "summary_chars": 261,
-        "summary_tokens": 271,
-        "window_tokens": 26906,
-        "merge_calls": 1,
-        "merge_input_tokens": 1238,
-        "merge_output_tokens": 666,
-        "folded_turns": 40,
-        "history_messages": 1961,
-        "history_tokens": 42080
+        "turns": 320,
+        "summary_chars": 597,
+        "summary_tokens": 695,
+        "window_tokens": 7668,
+        "merge_calls": 42,
+        "merge_input_tokens": 74507,
+        "merge_output_tokens": 88387,
+        "folded_turns": 1680,
+        "history_messages": 321,
+        "history_tokens": 7577
       },
-      "qa_avg_input_tokens": 21304,
+      "qa_avg_input_tokens": 4062,
       "recall_overall": 1.0,
       "recall_by_depth": {
         "early": 1.0,
@@ -43,9 +44,9 @@
           "name": "job",
           "depth": "early",
           "question": "我的职业是什么？",
-          "answer": "你是桥梁工程师。",
+          "answer": "桥梁工程师。",
           "correct": true,
-          "qa_input_tokens": 21302
+          "qa_input_tokens": 4060
         },
         {
           "name": "pet",
@@ -53,7 +54,7 @@
           "question": "我养的宠物叫什么名字？",
           "answer": "煤球。",
           "correct": true,
-          "qa_input_tokens": 21304
+          "qa_input_tokens": 4062
         },
         {
           "name": "color",
@@ -61,15 +62,15 @@
           "question": "我最喜欢的颜色是什么？",
           "answer": "靛蓝色。",
           "correct": true,
-          "qa_input_tokens": 21303
+          "qa_input_tokens": 4061
         },
         {
           "name": "birthday",
           "depth": "early",
           "question": "我的生日是哪一天？",
-          "answer": "你的生日是11月23日。",
+          "answer": "11月23日。",
           "correct": true,
-          "qa_input_tokens": 21303
+          "qa_input_tokens": 4061
         },
         {
           "name": "travel",
@@ -77,31 +78,31 @@
           "question": "我年底的旅行计划目的地是哪里？",
           "answer": "布拉格。",
           "correct": true,
-          "qa_input_tokens": 21307
+          "qa_input_tokens": 4065
         },
         {
           "name": "coffee",
           "depth": "mid",
           "question": "我喝咖啡有什么习惯？",
-          "answer": "你之前提到过，只喝冰美式，加糖加奶的都不习惯。",
+          "answer": "你只喝冰美式。",
           "correct": true,
-          "qa_input_tokens": 21304
+          "qa_input_tokens": 4062
         },
         {
           "name": "reminder",
           "depth": "late",
           "question": "今晚几点我需要你提醒我什么？",
-          "answer": "我会在今晚九点提醒你吃药。",
+          "answer": "晚上九点提醒你吃药。",
           "correct": true,
-          "qa_input_tokens": 21306
+          "qa_input_tokens": 4064
         },
         {
           "name": "book",
           "depth": "late",
           "question": "我最近在读什么书？",
-          "answer": "你在读《百年孤独》，第二遍。",
+          "answer": "最近在读《百年孤独》第二遍。",
           "correct": true,
-          "qa_input_tokens": 21304
+          "qa_input_tokens": 4062
         }
       ]
     },
@@ -111,21 +112,21 @@
       "design": "usc",
       "repeat": 1,
       "history_stats": {
-        "turns": 1920,
-        "summary_chars": 257,
-        "summary_tokens": 270,
-        "window_tokens": 26496,
-        "merge_calls": 2,
-        "merge_input_tokens": 2505,
-        "merge_output_tokens": 1400,
-        "folded_turns": 80,
-        "history_messages": 1921,
-        "history_tokens": 41382
+        "turns": 320,
+        "summary_chars": 840,
+        "summary_tokens": 927,
+        "window_tokens": 7836,
+        "merge_calls": 42,
+        "merge_input_tokens": 74561,
+        "merge_output_tokens": 76110,
+        "folded_turns": 1680,
+        "history_messages": 321,
+        "history_tokens": 7753
       },
-      "qa_avg_input_tokens": 21043,
-      "recall_overall": 0.875,
+      "qa_avg_input_tokens": 4242,
+      "recall_overall": 1.0,
       "recall_by_depth": {
-        "early": 0.75,
+        "early": 1.0,
         "mid": 1.0,
         "late": 1.0
       },
@@ -134,17 +135,17 @@
           "name": "job",
           "depth": "early",
           "question": "我的职业是什么？",
-          "answer": "我是个人助手莫奈（Mornye）。",
-          "correct": false,
-          "qa_input_tokens": 21041
+          "answer": "桥梁工程师。",
+          "correct": true,
+          "qa_input_tokens": 4240
         },
         {
           "name": "color",
           "depth": "early",
           "question": "我最喜欢的颜色是什么？",
-          "answer": "靛蓝色。",
+          "answer": "靛蓝色，你家里窗帘都换成这个颜色了。",
           "correct": true,
-          "qa_input_tokens": 21042
+          "qa_input_tokens": 4241
         },
         {
           "name": "birthday",
@@ -152,7 +153,7 @@
           "question": "我的生日是哪一天？",
           "answer": "11月23日。",
           "correct": true,
-          "qa_input_tokens": 21042
+          "qa_input_tokens": 4241
         },
         {
           "name": "pet",
@@ -160,39 +161,39 @@
           "question": "我养的宠物叫什么名字？",
           "answer": "煤球。",
           "correct": true,
-          "qa_input_tokens": 21043
+          "qa_input_tokens": 4242
         },
         {
           "name": "travel",
           "depth": "mid",
           "question": "我年底的旅行计划目的地是哪里？",
-          "answer": "布拉格，两周的行程。",
+          "answer": "布拉格。签证材料记得早点准备。",
           "correct": true,
-          "qa_input_tokens": 21046
+          "qa_input_tokens": 4245
         },
         {
           "name": "coffee",
           "depth": "mid",
           "question": "我喝咖啡有什么习惯？",
-          "answer": "你只喝冰美式，加糖加奶的都喝不惯。",
+          "answer": "你只喝冰美式，加糖加奶喝不惯。",
           "correct": true,
-          "qa_input_tokens": 21043
+          "qa_input_tokens": 4242
         },
         {
           "name": "reminder",
           "depth": "late",
           "question": "今晚几点我需要你提醒我什么？",
-          "answer": "好，晚上九点我会提醒你吃药。",
+          "answer": "今晚九点提醒你吃药。",
           "correct": true,
-          "qa_input_tokens": 21045
+          "qa_input_tokens": 4244
         },
         {
           "name": "book",
           "depth": "late",
           "question": "我最近在读什么书？",
-          "answer": "《百年孤独》。",
+          "answer": "你最近在读《百年孤独》，是第二遍。",
           "correct": true,
-          "qa_input_tokens": 21043
+          "qa_input_tokens": 4242
         }
       ]
     }

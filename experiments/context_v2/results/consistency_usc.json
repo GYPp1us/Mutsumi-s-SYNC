@@ -2,7 +2,7 @@
   "design": "usc",
   "same_session_recall": 1.0,
   "cross_session_leak_rate": 0.0,
-  "cross_session_abstention": 0.8333333333333334,
+  "cross_session_abstention": 1.0,
   "cross_session_empty": 0.0,
   "persona_marker_hits": {
     "莫奈": 3,
@@ -17,7 +17,7 @@
       "turns": 80,
       "summary_chars": 0,
       "summary_tokens": 0,
-      "window_tokens": 689,
+      "window_tokens": 1329,
       "merge_calls": 0,
       "merge_input_tokens": 0,
       "merge_output_tokens": 0
@@ -26,7 +26,7 @@
       "turns": 80,
       "summary_chars": 0,
       "summary_tokens": 0,
-      "window_tokens": 696,
+      "window_tokens": 1336,
       "merge_calls": 0,
       "merge_input_tokens": 0,
       "merge_output_tokens": 0
@@ -35,7 +35,7 @@
       "turns": 80,
       "summary_chars": 0,
       "summary_tokens": 0,
-      "window_tokens": 687,
+      "window_tokens": 1327,
       "merge_calls": 0,
       "merge_input_tokens": 0,
       "merge_output_tokens": 0
@@ -46,7 +46,7 @@
       "session": "A",
       "slot": "color",
       "question": "我喜欢什么颜色？",
-      "answer": "蓝色。",
+      "answer": "你喜欢的颜色是蓝色。",
       "expected": "蓝色",
       "correct": true
     },
@@ -70,7 +70,7 @@
       "session": "A",
       "slot": "cross-B",
       "question": "B 最喜欢的颜色是什么？",
-      "answer": "我没有关于B的信息，不知道他最喜欢的颜色。",
+      "answer": "不知道。",
       "leaked": false,
       "abstained": true
     },
@@ -86,7 +86,7 @@
       "session": "A",
       "slot": "intro",
       "question": "用一句话介绍一下你自己。",
-      "answer": "我是莫奈，一个说话简洁、克制的个人助手。"
+      "answer": "我是莫奈，一个简洁克制的个人助手。"
     },
     {
       "session": "B",
@@ -116,9 +116,9 @@
       "session": "B",
       "slot": "cross-A",
       "question": "A 最喜欢的颜色是什么？",
-      "answer": "红色。",
+      "answer": "不知道。",
       "leaked": false,
-      "abstained": false
+      "abstained": true
     },
     {
       "session": "B",
@@ -178,7 +178,7 @@
       "session": "C",
       "slot": "intro",
       "question": "用一句话介绍一下你自己。",
-      "answer": "我是莫奈，一个简洁克制的个人助手。"
+      "answer": "我是莫奈，你的个人助手。"
     }
   ]
 }
