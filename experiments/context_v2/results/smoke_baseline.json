@@ -1,0 +1,107 @@
+{
+  "rounds": 60,
+  "budget": 16000,
+  "design": "baseline",
+  "repeats": 1,
+  "recall_overall": 1.0,
+  "recall_by_depth": {
+    "early": 1.0,
+    "mid": 1.0,
+    "late": 1.0
+  },
+  "qa_avg_input_tokens": 3597.0,
+  "summarization_calls": 0.0,
+  "summarization_input_tokens": 0.0,
+  "history_tokens": 4415.0,
+  "per_repeat": [
+    {
+      "rounds": 60,
+      "budget": 16000,
+      "design": "baseline",
+      "repeat": 0,
+      "history_stats": {
+        "episodes_created": 0,
+        "episode_ranges": [],
+        "events_total": 120,
+        "history_messages": 120,
+        "history_tokens": 4415,
+        "summary_calls": 0,
+        "summary_input_tokens": 0,
+        "summary_output_tokens": 0
+      },
+      "qa_avg_input_tokens": 3597,
+      "recall_overall": 1.0,
+      "recall_by_depth": {
+        "early": 1.0,
+        "mid": 1.0,
+        "late": 1.0
+      },
+      "facts": [
+        {
+          "name": "job",
+          "depth": "early",
+          "question": "我的职业是什么？",
+          "answer": "你是桥梁工程师。",
+          "correct": true,
+          "qa_input_tokens": 3595
+        },
+        {
+          "name": "pet",
+          "depth": "early",
+          "question": "我养的宠物叫什么名字？",
+          "answer": "回复到私聊｜你养的黑猫叫煤球。",
+          "correct": true,
+          "qa_input_tokens": 3597
+        },
+        {
+          "name": "color",
+          "depth": "early",
+          "question": "我最喜欢的颜色是什么？",
+          "answer": "你喜欢靛蓝色。",
+          "correct": true,
+          "qa_input_tokens": 3596
+        },
+        {
+          "name": "birthday",
+          "depth": "early",
+          "question": "我的生日是哪一天？",
+          "answer": "你的生日是11月23日。",
+          "correct": true,
+          "qa_input_tokens": 3596
+        },
+        {
+          "name": "travel",
+          "depth": "mid",
+          "question": "我年底的旅行计划目的地是哪里？",
+          "answer": "布拉格。",
+          "correct": true,
+          "qa_input_tokens": 3600
+        },
+        {
+          "name": "coffee",
+          "depth": "mid",
+          "question": "我喝咖啡有什么习惯？",
+          "answer": "回复到私聊｜你之前说过只喝冰美式，不加糖不加奶。",
+          "correct": true,
+          "qa_input_tokens": 3597
+        },
+        {
+          "name": "book",
+          "depth": "late",
+          "question": "我最近在读什么书？",
+          "answer": "你最近在读《百年孤独》，这是第二遍了。",
+          "correct": true,
+          "qa_input_tokens": 3597
+        },
+        {
+          "name": "reminder",
+          "depth": "late",
+          "question": "今晚几点我需要你提醒我什么？",
+          "answer": "今晚九点提醒你吃药。",
+          "correct": true,
+          "qa_input_tokens": 3599
+        }
+      ]
+    }
+  ]
+}
