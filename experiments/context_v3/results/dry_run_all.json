@@ -1,0 +1,351 @@
+{
+  "experiment": "context-v3-no-compaction",
+  "dimensions": [
+    "fact_recall",
+    "boundary",
+    "instruction_following",
+    "routing"
+  ],
+  "cases": [
+    "shared_fact_recall",
+    "private_fact_recall",
+    "cross_private_boundary",
+    "group_answer_boundary",
+    "ordinary_instruction",
+    "delegate_worker",
+    "group_delivery",
+    "private_answer_delivery",
+    "schedule_registration"
+  ],
+  "dry_run": true,
+  "provider": null,
+  "designs": {
+    "ledger_projection": {
+      "design": "ledger_projection",
+      "cases": 9,
+      "pass_rate": null,
+      "category_rates": {},
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "results": [
+        {
+          "case": "shared_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 953,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "private_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 963,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "cross_private_boundary",
+          "category": "boundary",
+          "context_tokens": 956,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_boundary",
+          "category": "routing",
+          "context_tokens": 887,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ordinary_instruction",
+          "category": "instruction_following",
+          "context_tokens": 967,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "context_tokens": 917,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_delivery",
+          "category": "routing",
+          "context_tokens": 914,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "private_answer_delivery",
+          "category": "routing",
+          "context_tokens": 939,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "schedule_registration",
+          "category": "instruction_following",
+          "context_tokens": 928,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    },
+    "task_room_usc": {
+      "design": "task_room_usc",
+      "cases": 9,
+      "pass_rate": null,
+      "category_rates": {},
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "results": [
+        {
+          "case": "shared_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1043,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "private_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1054,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "cross_private_boundary",
+          "category": "boundary",
+          "context_tokens": 1046,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_boundary",
+          "category": "routing",
+          "context_tokens": 1016,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ordinary_instruction",
+          "category": "instruction_following",
+          "context_tokens": 1057,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "context_tokens": 1007,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_delivery",
+          "category": "routing",
+          "context_tokens": 1004,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "private_answer_delivery",
+          "category": "routing",
+          "context_tokens": 1030,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "schedule_registration",
+          "category": "instruction_following",
+          "context_tokens": 1019,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    },
+    "formatted_llm": {
+      "design": "formatted_llm",
+      "cases": 9,
+      "pass_rate": null,
+      "category_rates": {},
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "results": [
+        {
+          "case": "shared_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1246,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "private_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1258,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "cross_private_boundary",
+          "category": "boundary",
+          "context_tokens": 1244,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_boundary",
+          "category": "routing",
+          "context_tokens": 1252,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ordinary_instruction",
+          "category": "instruction_following",
+          "context_tokens": 1260,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "context_tokens": 1249,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_delivery",
+          "category": "routing",
+          "context_tokens": 1246,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "private_answer_delivery",
+          "category": "routing",
+          "context_tokens": 1234,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "schedule_registration",
+          "category": "instruction_following",
+          "context_tokens": 1261,
+          "score": {
+            "passed": false,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

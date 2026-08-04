@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mutsumi Context v3 Design Options</title>
+  <style>
+    :root {
+      --ink: #182326;
+      --muted: #627174;
+      --paper: #f4f6f1;
+      --panel: #ffffff;
+      --line: #d7dfda;
+      --green: #1e6b59;
+      --green-soft: #dceee7;
+      --coral: #bd5c46;
+      --coral-soft: #f6e1d9;
+      --amber: #a66b22;
+      --amber-soft: #f7ecd2;
+      --blue: #2d5e78;
+      --blue-soft: #e0edf3;
+      --shadow: 0 12px 30px rgba(24, 35, 38, .07);
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); line-height: 1.6; }
+    button { font: inherit; }
+    .shell { max-width: 1260px; margin: 0 auto; padding: 28px 22px 64px; }
+    .topbar { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-bottom: 44px; }
+    .eyebrow { color: var(--green); font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    .stamp { color: var(--muted); font-size: 13px; white-space: nowrap; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 800px; margin-bottom: 16px; font-size: clamp(32px, 5vw, 64px); line-height: 1.06; letter-spacing: -.02em; }
+    h2 { font-size: 28px; line-height: 1.15; margin-bottom: 14px; }
+    h3 { font-size: 17px; line-height: 1.25; margin-bottom: 8px; }
+    .lede { max-width: 760px; color: #425256; font-size: 18px; }
+    .hero-rule { width: 76px; height: 5px; background: var(--coral); margin: 24px 0; }
+
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--line); margin-bottom: 30px; }
+    .tab { border: 0; border-bottom: 3px solid transparent; padding: 10px 14px 12px; background: transparent; color: var(--muted); cursor: pointer; font-weight: 700; }
+    .tab:hover, .tab[aria-selected="true"] { color: var(--green); border-bottom-color: var(--green); }
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .decision { display: grid; grid-template-columns: 1.35fr .65fr; gap: 24px; background: var(--ink); color: #f7faf5; padding: 28px; box-shadow: var(--shadow); }
+    .decision h2 { color: #fff; }
+    .decision p { color: #dce7e1; }
+    .decision .kicker { color: #a8d7c7; font-weight: 800; font-size: 13px; }
+    .decision .answer { align-self: center; border-left: 3px solid var(--coral); padding-left: 22px; font-size: 22px; line-height: 1.35; }
+    .decision .answer strong { color: #ffd2bf; }
+
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 22px 0; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin: 22px 0; }
+    .panel { background: var(--panel); border: 1px solid var(--line); padding: 22px; box-shadow: 0 5px 18px rgba(24, 35, 38, .035); }
+    .panel p:last-child, .panel ul:last-child { margin-bottom: 0; }
+    .panel.green { border-top: 4px solid var(--green); }
+    .panel.coral { border-top: 4px solid var(--coral); }
+    .panel.blue { border-top: 4px solid var(--blue); }
+    .panel.amber { border-top: 4px solid var(--amber); }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    .label { display: inline-block; padding: 3px 8px; font-size: 12px; font-weight: 800; border-radius: 3px; }
+    .label.green { background: var(--green-soft); color: var(--green); }
+    .label.coral { background: var(--coral-soft); color: var(--coral); }
+    .label.amber { background: var(--amber-soft); color: var(--amber); }
+    .label.blue { background: var(--blue-soft); color: var(--blue); }
+    ul { padding-left: 20px; }
+    li + li { margin-top: 6px; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; align-items: stretch; margin: 22px 0 10px; }
+    .flow-step { position: relative; min-height: 126px; background: var(--panel); border: 1px solid var(--line); padding: 16px; }
+    .flow-step:not(:last-child)::after { content: "→"; position: absolute; right: -17px; top: 42px; z-index: 2; color: var(--coral); font-size: 24px; font-weight: 800; }
+    .flow-step .num { color: var(--coral); font-weight: 900; font-size: 13px; }
+    .flow-step strong { display: block; margin: 8px 0 4px; }
+
+    .metric-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 22px 0; background: var(--line); border: 1px solid var(--line); }
+    .metric { background: var(--panel); padding: 17px; }
+    .metric strong { display: block; font-size: 28px; line-height: 1; color: var(--green); }
+    .metric span { display: block; margin-top: 7px; color: var(--muted); font-size: 13px; }
+
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); font-size: 14px; }
+    th, td { padding: 14px 13px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #edf2ed; color: #405052; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    .recommended td:first-child { border-left: 4px solid var(--green); font-weight: 800; }
+
+    .option-list { display: grid; gap: 14px; margin-top: 18px; }
+    .option { display: grid; grid-template-columns: 110px 1fr 230px; gap: 20px; align-items: start; background: var(--panel); border: 1px solid var(--line); padding: 20px; }
+    .option-name { font-size: 17px; font-weight: 900; }
+    .option-name small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; font-weight: 600; }
+    .verdict { padding-left: 18px; border-left: 2px solid var(--line); }
+    .verdict strong { color: var(--green); }
+
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); background: var(--panel); }
+    .split > div { padding: 22px; }
+    .split > div + div { border-left: 1px solid var(--line); }
+    .shared { background: #f2f8f4; }
+    .private { background: #fff8f3; }
+    .code { overflow: auto; padding: 20px; background: #202d2f; color: #deeee5; font: 13px/1.7 Consolas, "SFMono-Regular", monospace; white-space: pre-wrap; }
+    .code .accent { color: #ffd2bf; }
+    .code .blue { color: #b8ddef; }
+    .code .green { color: #a8d7c7; }
+    .boundary { margin-top: 18px; border-left: 4px solid var(--coral); background: var(--coral-soft); padding: 15px 18px; }
+    .boundary strong { color: var(--coral); }
+
+    .timeline { display: grid; gap: 0; margin: 20px 0; }
+    .timeline-row { display: grid; grid-template-columns: 50px 150px 1fr; gap: 16px; align-items: start; padding: 17px 0; border-bottom: 1px solid var(--line); }
+    .timeline-row:last-child { border-bottom: 0; }
+    .timeline-no { display: grid; place-items: center; width: 32px; height: 32px; background: var(--green); color: #fff; font-weight: 900; }
+    .timeline-owner { color: var(--coral); font-weight: 800; font-size: 13px; }
+
+    .checklist { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .check { padding: 12px 14px; border: 1px solid var(--line); background: var(--panel); }
+    .check::before { content: "✓"; display: inline-block; width: 22px; color: var(--green); font-weight: 900; }
+    .note { padding: 16px 18px; border-left: 4px solid var(--blue); background: var(--blue-soft); }
+    .footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    .footer a { color: var(--green); }
+
+    @media (max-width: 900px) {
+      .decision, .option { grid-template-columns: 1fr; }
+      .option .verdict { padding: 14px 0 0; border-left: 0; border-top: 2px solid var(--line); }
+      .flow { grid-template-columns: 1fr; }
+      .flow-step { min-height: auto; }
+      .flow-step:not(:last-child)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -20px; }
+      .grid-3, .grid-2, .metric-strip, .checklist { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .shell { padding: 20px 14px 44px; }
+      .topbar { align-items: flex-start; flex-direction: column; gap: 7px; margin-bottom: 32px; }
+      h1 { font-size: 38px; }
+      .decision, .panel { padding: 18px; }
+      .split { grid-template-columns: 1fr; }
+      .split > div + div { border-left: 0; border-top: 1px solid var(--line); }
+      .timeline-row { grid-template-columns: 38px 1fr; gap: 10px; }
+      .timeline-row > div:last-child { grid-column: 2; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div>
+        <div class="eyebrow">Mutsumi / Context v3</div>
+        <div class="stamp">设计讨论稿 · 2026-08-04 · 基于 context-v2 实验</div>
+      </div>
+      <div class="stamp">可离线打开 · 无外部依赖</div>
+    </div>
+
+    <header>
+      <h1>共享工作记忆，不共享所有秘密。</h1>
+      <div class="hero-rule"></div>
+      <p class="lede">把“语义上下文”和“消息调度”拆开：前者可以大胆简化成一个 Task Room，后者只保留保证送达、幂等和边界所需的最小控制面。</p>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="设计稿章节">
+      <button class="tab" role="tab" aria-selected="true" data-tab="overview">先看结论</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="options">方案比较</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="room">工作房间</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="nature">CET-4 例子</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="migration">落地顺序</button>
+    </nav>
+
+    <section class="view active" id="overview" role="tabpanel">
+      <div class="decision">
+        <div>
+          <div class="kicker">推荐方向 · Room + USC++ + Minimal Control Plane</div>
+          <h2>不要把 Event Ledger 原样搬进模型，也不要让纯 prompt 负责送信。</h2>
+          <p>实验已经证明单一累积摘要加有限原始窗口在紧预算下更稳。真正需要保留的不是全局事件投影，而是三件事：当前任务的共享事实、每个角色的可见边界、跨渠道动作的送达状态。</p>
+        </div>
+        <div class="answer">语义层可以简化。<br><strong>控制层不能消失。</strong></div>
+      </div>
+
+      <div class="metric-strip">
+        <div class="metric"><strong>1.00</strong><span>USC 在 1000 轮 / 8K 预算的召回率</span></div>
+        <div class="metric"><strong>0.67 → 1.00</strong><span>多用户场景明确拒绝跨会话信息</span></div>
+        <div class="metric"><strong>4.1×</strong><span>1000 轮 / 16K 下，USC 压缩输入成本更低</span></div>
+        <div class="metric"><strong>3 层</strong><span>共享、私有、内部执行边界</span></div>
+      </div>
+
+      <div class="grid-3">
+        <article class="panel green">
+          <span class="label green">语义上下文</span>
+          <h3>Task Room</h3>
+          <p>一个复杂事项一个房间。保留目标、稳定事实、决策、未完成事项和产物索引。不要存业务 step 列表。</p>
+        </article>
+        <article class="panel coral">
+          <span class="label coral">角色边界</span>
+          <h3>Shared / Private / Ops</h3>
+          <p>群里能看到的共享事实，某个成员的私有信息，以及 Bot/Worker 内部材料分开。格式化输入负责可读性，后端筛选负责真正的隐私。</p>
+        </article>
+        <article class="panel blue">
+          <span class="label blue">调度控制</span>
+          <h3>Dispatch + Delivery</h3>
+          <p>只记录来源、目标、任务房间、状态、幂等键和产物引用。它不是全局 Life Stream，而是让跨用户 send、定时器和 worker 回报可靠闭环。</p>
+        </article>
+      </div>
+
+      <h2>建议的数据流</h2>
+      <div class="flow" aria-label="推荐架构数据流">
+        <div class="flow-step"><span class="num">01 / INPUT</span><strong>群聊、私聊、定时器、Worker 回报</strong><span class="small muted">所有来源都带 actor 和 channel</span></div>
+        <div class="flow-step"><span class="num">02 / ROUTE</span><strong>Router 找到 Task Room</strong><span class="small muted">显式绑定，避免模型猜目标</span></div>
+        <div class="flow-step"><span class="num">03 / COMPOSE</span><strong>USC++ 组装上下文</strong><span class="small muted">共享记忆 + 当前角色私有层 + 最近窗口</span></div>
+        <div class="flow-step"><span class="num">04 / RUN</span><strong>一个通用 Pipeline</strong><span class="small muted">Skill 仍然是自然语言，工具仍然通用</span></div>
+        <div class="flow-step"><span class="num">05 / DELIVER</span><strong>按 target 送达并回执</strong><span class="small muted">成功、失败、重试可判断</span></div>
+      </div>
+
+      <div class="note"><strong>核心判断：</strong>“同一个上下文窗口”应该是一个语义概念，不应该意味着所有用户的原始消息都塞进同一个可见历史。共享事项可以共享，私聊答案和账号信息必须只进入对应角色的 context lens。</div>
+    </section>
+
+    <section class="view" id="options" role="tabpanel">
+      <h2>四条路线</h2>
+      <p class="muted">USC 实验说明当前投影链路在紧预算下有真实成本，但“完全删除控制面”会把调度可靠性问题转嫁给模型。</p>
+      <table>
+        <thead><tr><th>路线</th><th>上下文</th><th>多角色边界</th><th>跨渠道调度</th><th>判断</th></tr></thead>
+        <tbody>
+          <tr><td><strong>当前 Event Ledger</strong></td><td>全局事件 + Episode + 投影</td><td>强</td><td>强</td><td>正确但过重；N+1 查询、coverage 和旧兼容路径太多。</td></tr>
+          <tr><td><strong>USC 单窗口</strong></td><td>一个累计摘要 + 最近完整 turn</td><td>结构隔离，需显式 role prompt</td><td>需要另建路由</td><td>召回和成本优秀，但只测了文本，不能单独承载真实副作用。</td></tr>
+          <tr><td><strong>Task Room</strong></td><td>每个事项一个共享上下文</td><td>共享/私有 overlay</td><td>通用 send + scheduler</td><td>适合复杂事项，但还需要可靠的投递状态。</td></tr>
+          <tr class="recommended"><td><strong>Room + USC++</strong><br><span class="label green">推荐</span></td><td>单摘要、最近窗口、产物索引、有限检索</td><td>后端筛选 + 格式化角色块</td><td>最小 dispatch/delivery 控制面</td><td>保留 USC 的简单性，同时不让模型决定隐私和送达。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="option-list">
+        <article class="option">
+          <div class="option-name">A<br><small>USC 原样</small></div>
+          <div><h3>把事件系统降级为 messages 表</h3><p>每个 conversation 只有 `summary + turns`，写入时超预算就把最老的完整 turn 合并进 summary。共享群聊天然形成一个窗口。</p></div>
+          <div class="verdict"><strong>优点：</strong>最简单、成本低。<br><strong>缺点：</strong>worker 回报、跨私聊投递和重试需要另补机制。</div>
+        </article>
+        <article class="option">
+          <div class="option-name">B<br><small>Task Room</small></div>
+          <div><h3>让“事项”成为真正的上下文边界</h3><p>群聊、私聊、OpenCode 和定时器都可以挂到同一个 room。模型读到的是事项状态，不是全局消息流水账。</p></div>
+          <div class="verdict"><strong>优点：</strong>最符合多角色协作。<br><strong>缺点：</strong>需要显式解决成员权限和 room 绑定。</div>
+        </article>
+        <article class="option">
+          <div class="option-name">C<br><small>Blackboard</small></div>
+          <div><h3>共享黑板 + 各自邮箱</h3><p>共享黑板只放任务事实和产物；每个 actor 有自己的输入邮箱和私有记忆。Pipeline 根据当前 actor 组装 lens。</p></div>
+          <div class="verdict"><strong>优点：</strong>隐私边界最清楚。<br><strong>缺点：</strong>跨角色协调需要更多显式引用。</div>
+        </article>
+        <article class="option">
+          <div class="option-name">D<br><small>保留 Ledger</small></div>
+          <div><h3>只优化现有投影和 Episode</h3><p>保留全局事件账本，只把事件结构和投影查询优化，同时把 USC 的串行摘要合并加入 recovery。</p></div>
+          <div class="verdict"><strong>优点：</strong>迁移风险最小。<br><strong>缺点：</strong>很难真正消除当前复杂度。</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="view" id="room" role="tabpanel">
+      <h2>推荐设计：Task Room</h2>
+      <p class="muted">它不是 workflow DSL，也不是业务数据库。它只是“一个事项应该让 Bot 记住什么、让谁看见什么”的最小边界。</p>
+
+      <div class="grid-2">
+        <div class="panel green">
+          <span class="label green">Room 只保存四类东西</span>
+          <ul>
+            <li><strong>Objective</strong>：事项当前要完成什么。</li>
+            <li><strong>Shared facts</strong>：所有参与者可共享的稳定事实。</li>
+            <li><strong>Decisions / open loops</strong>：已经决定什么，还有什么没完成。</li>
+            <li><strong>Artifacts</strong>：文件、答案、来源和已送达状态的引用。</li>
+          </ul>
+        </div>
+        <div class="panel coral">
+          <span class="label coral">不要放进 Room 的东西</span>
+          <ul>
+            <li>某个成员的私密回答、账号凭证、私聊原文。</li>
+            <li>OpenCode 的完整 stdout 和无关工具过程。</li>
+            <li>由 Scheduler 解释的业务步骤。</li>
+            <li>“看起来已经发送成功”的模型文字。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>Provider-facing context 的格式</h3>
+      <div class="code"><span class="green">&lt;TASK_ROOM id="nature-daily-cet4"&gt;</span>
+  <span class="accent">&lt;ROOM_CONTRACT&gt;</span>
+  当前事项：每天为目标群制作 CET-4 阅读题，并按请求向成员私聊答案。
+  共享目标：群里只出现题目，不出现答案；答案只给提出请求的成员。
+  当前事实优先级：当前输入 &gt; 已验证产物 &gt; 共享摘要 &gt; 历史叙述。
+  <span class="accent">&lt;/ROOM_CONTRACT&gt;</span>
+
+  <span class="blue">&lt;SHARED_MEMORY&gt;</span>
+  - 今日题目：2026-08-04 / exercise-2026-08-04.md
+  - 答案文件：answer-2026-08-04.md（不可注入群聊 lens）
+  - 群投递：已验证 message_id=...
+  - 未完成：等待成员请求答案
+  <span class="blue">&lt;/SHARED_MEMORY&gt;</span>
+
+  <span class="green">&lt;ACTOR_LENS actor="qq:user:123" channel="private"&gt;</span>
+  这个成员请求：2026-08-04 的答案和解析。
+  允许读取：该题答案文件；禁止读取：其他成员私有资料。
+  <span class="green">&lt;/ACTOR_LENS&gt;</span>
+
+  <span class="accent">&lt;CURRENT_INPUT source="private:123"&gt;</span>
+  把今天的答案发给我。
+  <span class="accent">&lt;/CURRENT_INPUT&gt;</span>
+<span class="green">&lt;/TASK_ROOM&gt;</span></div>
+
+      <div class="boundary"><strong>边界原则：</strong>标签是给模型看的“清晰说明”，不是安全机制。真正的安全机制是 Context Composer 在构造 room lens 时，根本不把其他私有层放进去；`send` 也必须使用后端解析出的明确 actor ID。</div>
+
+      <h3 style="margin-top:28px">最小控制面，而不是复杂事件系统</h3>
+      <div class="split">
+        <div class="shared"><span class="label green">语义层</span><h3>Room Memory</h3><p>面对模型：稳定、短、可读。摘要串行合并；最近窗口保留完整 turn；超预算时只回收完整 turn。</p><p class="small muted">失败时不推进摘要；事实清单和未完成事项必须被重复强调。</p></div>
+        <div class="private"><span class="label coral">控制层</span><h3>Dispatch Receipt</h3><p>面对后端：`dispatch_id / room_id / source / target / status / dedupe_key / artifact_ref`。</p><p class="small muted">不进入正常模型上下文，除非当前任务需要知道某个动作已经成功。</p></div>
+      </div>
+    </section>
+
+    <section class="view" id="nature" role="tabpanel">
+      <h2>nature-daily-cet4：一个事项如何闭环</h2>
+      <p class="muted">这个例子故意包含群聊、私聊、OpenCode、定时器和文件产物，覆盖当前实验没有覆盖的真实负载。</p>
+
+      <div class="timeline">
+        <div class="timeline-row"><div class="timeline-no">1</div><div class="timeline-owner">Scheduler</div><div><strong>每天早上把 prompt 注入目标群绑定的 room pipeline。</strong><br><span class="small muted">Scheduler 仍然只知道时间、prompt 和绑定会话；skill 路径、交付要求写在自然语言 prompt 中。</span></div></div>
+        <div class="timeline-row"><div class="timeline-no">2</div><div class="timeline-owner">Bot</div><div><strong>读取 BOT.md，委派给 OpenCode worker。</strong><br><span class="small muted">delegate_task 只携带自然语言任务、Skill 路径和 room/run 绑定，不携带业务 step JSON。</span></div></div>
+        <div class="timeline-row"><div class="timeline-no">3</div><div class="timeline-owner">Worker</div><div><strong>生成 exercise 和 answer 两个文件，调用 report_task。</strong><br><span class="small muted">stdout、进程退出和文件存在都不能代替显式报告。</span></div></div>
+        <div class="timeline-row"><div class="timeline-no">4</div><div class="timeline-owner">Bot</div><div><strong>验证报告和文件引用，把 group-safe exercise 发到群聊。</strong><br><span class="small muted">发送结果进入 delivery receipt；共享记忆只记录“题目已送达”和产物引用，不塞完整答案。</span></div></div>
+        <div class="timeline-row"><div class="timeline-no">5</div><div class="timeline-owner">Group member</div><div><strong>成员在群里请求“发我答案”。</strong><br><span class="small muted">当前输入元数据已经给出 actor_id；Router 将请求关联到当前 room 和对应日期的 artifact。</span></div></div>
+        <div class="timeline-row"><div class="timeline-no">6</div><div class="timeline-owner">Bot</div><div><strong>构造该成员的 private lens，只读取 answer artifact。</strong><br><span class="small muted">群聊 lens 不含答案正文；私聊 lens 也不含其他成员的私有层。</span></div></div>
+        <div class="timeline-row"><div class="timeline-no">7</div><div class="timeline-owner">Send adapter</div><div><strong>用明确 target=private:&lt;actor_id&gt; 发送并记录回执。</strong><br><span class="small muted">发送失败可重试；重复调度靠 dedupe_key 避免重复发题。</span></div></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel green"><span class="label green">群聊可见</span><h3>Shared artifact</h3><p>题目、来源链接、版权说明、题目发布日期、群投递状态。</p><p class="small muted">不包含答案文件正文、成员私聊请求或账号凭证。</p></div>
+        <div class="panel coral"><span class="label coral">私聊可见</span><h3>Private artifact</h3><p>该日期的答案和解析，以及该成员自己的请求上下文。</p><p class="small muted">如果只收到群聊消息而没有可用的 peer send 能力，必须报告能力缺口，不得假装已私聊。</p></div>
+      </div>
+    </section>
+
+    <section class="view" id="migration" role="tabpanel">
+      <h2>建议的落地顺序</h2>
+      <p class="muted">不要一次重写所有存储。先验证“简化上下文 + 真实调度负载”是否成立。</p>
+      <div class="grid-2">
+        <div class="panel blue"><span class="label blue">Phase 1 / 语义层</span><h3>把 USC++ 做成独立 Context Composer</h3><ul><li>支持 shared summary + recent complete turns。</li><li>每次摘要合并都串行带上旧 summary。</li><li>强制输出稳定事实清单、关系标签、open loops。</li><li>摘要失败不丢原始窗口，不推进 summary。</li></ul></div>
+        <div class="panel green"><span class="label green">Phase 2 / Room</span><h3>把群聊和复杂事项绑定到 Task Room</h3><ul><li>先用一个 group 作为 room 的入口。</li><li>再允许 private、service、OpenCode report 绑定到同一 room。</li><li>共享 memory 和 private overlay 分表或分区保存。</li><li>不迁移历史 Event Ledger，先让新 room 走实验路径。</li></ul></div>
+        <div class="panel coral"><span class="label coral">Phase 3 / Control</span><h3>收缩为最小 Dispatch / Delivery</h3><ul><li>保留 cancellation、dedupe、status、retry、target。</li><li>send 成功才写 delivery receipt。</li><li>worker 必须 report_task，不能以 stdout 代替完成。</li><li>所有 outbound 都带 room/run/source provenance。</li></ul></div>
+        <div class="panel amber"><span class="label amber">Phase 4 / 验证</span><h3>补齐真实场景基准</h3><ul><li>群发题目 + 成员私聊答案。</li><li>重复 scheduler 触发和 worker 重复 report。</li><li>发送失败、pipeline cancellation、服务重启恢复。</li><li>跨 room 私有信息拒答和 group lens 污染检查。</li></ul></div>
+      </div>
+
+      <h3>成功标准</h3>
+      <div class="checklist">
+        <div class="check">1000 轮 / 8K 预算下稳定召回早期事实</div>
+        <div class="check">同一 room 的群聊、私聊、worker 回报保持任务一致</div>
+        <div class="check">答案不会进入群聊 lens，其他成员私有信息不会泄露</div>
+        <div class="check">重复定时器不会重复发题，失败发送可重试</div>
+        <div class="check">取消后不会遗留“已完成”假状态</div>
+        <div class="check">不依赖 workflow step、connector 或业务专用 JSON</div>
+      </div>
+
+      <div class="note" style="margin-top:22px"><strong>最终建议：</strong>把 Event Ledger 从“模型上下文的中心”降级成“可选的审计/恢复实现”，但不要把所有控制状态也删掉。先让 Task Room + USC++ 在 nature-daily-cet4 上跑通，再决定是否退役全局投影。</div>
+    </section>
+
+    <footer class="footer">
+      <p>依据：<a href="context-v2-comparison.md">context-v2-comparison.md</a>、<a href="../current-design.md">current-design.md</a>、<a href="../../skills/nature-daily-cet4/BOT.md">nature-daily-cet4/BOT.md</a>。这是架构讨论稿，不是已经提交的实现方案。</p>
+    </footer>
+  </main>
+
+  <script>
+    const tabs = [...document.querySelectorAll("[data-tab]")];
+    const views = [...document.querySelectorAll(".view")];
+    tabs.forEach((tab) => tab.addEventListener("click", () => {
+      const id = tab.dataset.tab;
+      tabs.forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+      views.forEach((view) => view.classList.toggle("active", view.id === id));
+      history.replaceState(null, "", `#${id}`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }));
+    const initial = location.hash.slice(1);
+    const initialTab = tabs.find((tab) => tab.dataset.tab === initial);
+    if (initialTab) initialTab.click();
+  </script>
+</body>
+</html>

@@ -1,0 +1,371 @@
+{
+  "experiment": "context-v3-long-multi-conversation",
+  "noise_turns": 320,
+  "records": 346,
+  "cases": [
+    "alice_identity",
+    "alice_asks_bob_private",
+    "failed_worker_no_publish",
+    "delegate_worker",
+    "publish_exercise",
+    "ad_hoc_partner_send"
+  ],
+  "dry_run": true,
+  "provider": null,
+  "designs": {
+    "ledger_projection": {
+      "design": "ledger_projection",
+      "cases": 6,
+      "pass_rate": null,
+      "category_rates": {},
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "ledger_events": 692,
+            "history_messages": 656,
+            "history_tokens": 23687,
+            "compaction_calls": 0,
+            "visible_records": 328,
+            "context_messages": 658,
+            "context_tokens": 24044
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "alice_asks_bob_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "ledger_events": 692,
+            "history_messages": 656,
+            "history_tokens": 23687,
+            "compaction_calls": 0,
+            "visible_records": 328,
+            "context_messages": 658,
+            "context_tokens": 24044
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "failed_worker_no_publish",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "ledger_events": 692,
+            "history_messages": 614,
+            "history_tokens": 22185,
+            "compaction_calls": 0,
+            "visible_records": 307,
+            "context_messages": 616,
+            "context_tokens": 22552
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "ledger_events": 692,
+            "history_messages": 614,
+            "history_tokens": 22185,
+            "compaction_calls": 0,
+            "visible_records": 307,
+            "context_messages": 616,
+            "context_tokens": 22547
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "publish_exercise",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 692,
+            "history_messages": 614,
+            "history_tokens": 22185,
+            "compaction_calls": 0,
+            "visible_records": 307,
+            "context_messages": 616,
+            "context_tokens": 22551
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 692,
+            "history_messages": 614,
+            "history_tokens": 22185,
+            "compaction_calls": 0,
+            "visible_records": 307,
+            "context_messages": 616,
+            "context_tokens": 22549
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    },
+    "task_room_usc": {
+      "design": "task_room_usc",
+      "cases": 6,
+      "pass_rate": null,
+      "category_rates": {},
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 306,
+            "context_messages": 3,
+            "context_tokens": 12823
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "alice_asks_bob_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 306,
+            "context_messages": 3,
+            "context_tokens": 12823
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "failed_worker_no_publish",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 306,
+            "context_messages": 3,
+            "context_tokens": 12040
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 306,
+            "context_messages": 3,
+            "context_tokens": 12035
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "publish_exercise",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 306,
+            "context_messages": 3,
+            "context_tokens": 12039
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 306,
+            "context_messages": 3,
+            "context_tokens": 12037
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    },
+    "formatted_llm": {
+      "design": "formatted_llm",
+      "cases": 6,
+      "pass_rate": null,
+      "category_rates": {},
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 346,
+            "context_messages": 3,
+            "context_tokens": 17227
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "alice_asks_bob_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 346,
+            "context_messages": 3,
+            "context_tokens": 17227
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "failed_worker_no_publish",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 346,
+            "context_messages": 3,
+            "context_tokens": 17236
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 346,
+            "context_messages": 3,
+            "context_tokens": 17232
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "publish_exercise",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 346,
+            "context_messages": 3,
+            "context_tokens": 17236
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 346,
+            "context_messages": 3,
+            "context_tokens": 17233
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

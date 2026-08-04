@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Context v3 | 多角色上下文与调度实验</title>
+  <style>
+    :root {
+      --ink: #18202b;
+      --muted: #5e6a78;
+      --line: #d9dee5;
+      --paper: #f7f8fa;
+      --white: #ffffff;
+      --blue: #2463a9;
+      --green: #17745b;
+      --red: #b84a46;
+      --amber: #9a6500;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font: 15px/1.7 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 1180px; margin: 0 auto; padding: 42px 24px 72px; }
+    header { border-bottom: 1px solid var(--line); padding-bottom: 28px; }
+    h1 { max-width: 850px; margin: 0 0 12px; font-size: clamp(30px, 5vw, 54px); line-height: 1.08; letter-spacing: 0; }
+    h2 { margin: 48px 0 16px; font-size: 27px; line-height: 1.2; }
+    h3 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 8px 0; }
+    .lead { max-width: 820px; color: var(--muted); font-size: 18px; }
+    .eyebrow, .tag { color: var(--blue); font-weight: 750; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
+    .thesis { margin-top: 24px; padding: 18px 20px; border-left: 4px solid var(--blue); background: var(--white); }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .panel { background: var(--white); border: 1px solid var(--line); padding: 18px; min-height: 170px; }
+    .panel.recommended { border-top: 4px solid var(--green); }
+    .panel.risk { border-top: 4px solid var(--red); }
+    .panel.control { border-top: 4px solid var(--blue); }
+    .panel.legacy { border-top: 4px solid var(--amber); }
+    .verdict { margin-top: 14px; color: var(--muted); font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; background: var(--white); }
+    th, td { padding: 13px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #eef2f6; font-size: 13px; }
+    .good { color: var(--green); font-weight: 700; }
+    .bad { color: var(--red); font-weight: 700; }
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+    .step { background: var(--white); border: 1px solid var(--line); padding: 15px; min-height: 150px; }
+    .step strong { display: block; margin: 7px 0; }
+    .number { color: var(--blue); font-weight: 800; font-size: 12px; }
+    pre { overflow: auto; padding: 17px; background: #19232e; color: #edf2f7; border: 1px solid #101820; line-height: 1.55; }
+    code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .92em; }
+    .matrix td:first-child { font-weight: 700; white-space: nowrap; }
+    .note { color: var(--muted); font-size: 13px; }
+    footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 560px) { main { padding: 28px 16px 52px; } .grid, .flow { grid-template-columns: 1fr; } h2 { margin-top: 36px; } table { font-size: 13px; } th, td { padding: 9px 8px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Context v3 / design + experiment</div>
+    <h1>多角色事项，不需要一条“全局聊天记录”</h1>
+    <p class="lead">目标不是让模型读懂所有历史，而是让它在每一次输入里同时看见：这件事的共享事实、当前角色能看的私人信息，以及后端已经确认的投递状态。</p>
+    <div class="thesis"><strong>先给判断：</strong>完全格式化输入可以作为最小原型，但不应把隐私和送达结果交给模型猜。更稳的折中是 <strong>Shared Blackboard + Private Lens + Delivery Receipt</strong>：共享语义保持通用，后端只守住角色可见性、目标地址、幂等和真实回执。</div>
+  </header>
+
+  <h2>四条路线</h2>
+  <div class="grid">
+    <article class="panel recommended">
+      <div class="tag">推荐 / B</div>
+      <h3>Blackboard + Lens</h3>
+      <p>一个事项共享黑板，按当前 actor 叠加私人 lens。黑板只存目标、事实、决策、未闭环和产物引用，不存业务 step。</p>
+      <div class="verdict"><span class="good">通用性高</span>，边界由 composer 保证；状态比 Event Ledger 少，但仍可恢复投递。</div>
+    </article>
+    <article class="panel risk">
+      <div class="tag">用户方案 / C</div>
+      <h3>Formatted All-Roles</h3>
+      <p>把所有角色放入一个窗口，用 scope、actor、source 和 <code>[user]</code> 约束模型；pipeline 不绑定会话，send 必须填 target。</p>
+      <div class="verdict"><span class="bad">最灵活</span>，但私人事实仍在窗口里；提示词漂移、目标幻觉和重复投递都要实测。</div>
+    </article>
+    <article class="panel control">
+      <div class="tag">最小控制面 / A</div>
+      <h3>Addressed Mailbox</h3>
+      <p>不建 Room。每条输入只是带 <code>source</code>、<code>audience</code> 的消息；跨事项协作靠共享 mailbox，跨会话动作靠地址化 send。</p>
+      <div class="verdict">比纯格式化多一个通用收件箱，能解释回报落点；不需要预定义业务工作流。</div>
+    </article>
+    <article class="panel legacy">
+      <div class="tag">当前实现 / D</div>
+      <h3>Event Ledger + Episode</h3>
+      <p>全局事件账本、覆盖范围、Episode 和 audience 投影。审计、恢复和边界最完整，但当前问题的工程复杂度也最高。</p>
+      <div class="verdict">适合需要完整审计的系统；不宜先假定它对每个 Agent 场景都有同等收益。</div>
+    </article>
+  </div>
+
+  <h2>推荐方案的最小闭环</h2>
+  <div class="flow">
+    <div class="step"><span class="number">01 / INPUT</span><strong>群聊、私聊、定时器、Worker 回报</strong><span class="note">都带 source actor、conversation 和 channel。</span></div>
+    <div class="step"><span class="number">02 / COMPOSE</span><strong>Blackboard + 当前 actor Lens</strong><span class="note">后端过滤不可见内容，模型只处理当前窗口。</span></div>
+    <div class="step"><span class="number">03 / RUN</span><strong>一个通用 Pipeline</strong><span class="note">Skill 继续是自然语言文件，模型仍可自行规划。</span></div>
+    <div class="step"><span class="number">04 / ACT</span><strong>delegate / scheduler / send</strong><span class="note">只把传输、鉴权、生命周期放进 schema。</span></div>
+    <div class="step"><span class="number">05 / RECEIPT</span><strong>真实回执写回黑板</strong><span class="note">成功、失败、重试和幂等键不靠 assistant prose 推断。</span></div>
+  </div>
+
+  <h2>后端只守住六个字段</h2>
+  <table class="matrix">
+    <thead><tr><th>字段</th><th>用途</th><th>为什么不能完全交给模型</th></tr></thead>
+    <tbody>
+      <tr><td><code>task_ref</code></td><td>把定时器、Worker 回报、群题目和私聊答案归到同一个事项。</td><td>模型可以发现新关系，但不能凭空恢复一个错过的关联。</td></tr>
+      <tr><td><code>source / actor</code></td><td>知道谁说的、从哪个会话进入。</td><td>昵称和自然语言都不适合作为身份主键。</td></tr>
+      <tr><td><code>target</code></td><td>send 的真实目标，只接受明确的 private/group ID。</td><td>模型可以选择目标，但后端必须拒绝模糊目标。</td></tr>
+      <tr><td><code>visibility</code></td><td>决定某条记录是否进入当前 lens。</td><td>提示词里的“请保密”不是安全边界。</td></tr>
+      <tr><td><code>dedupe_key / status</code></td><td>重试、重复 scheduler、重复 report 不造成重复发送。</td><td>模型无法可靠知道上一次网络动作是否已成功。</td></tr>
+      <tr><td><code>artifact_ref</code></td><td>引用题目、答案、文件和已经验证的产物。</td><td>文件存在不等于消息已送达，二者必须分开。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>nature-daily-cet4 的差异</h2>
+  <p>这个事项不应该被编码成固定 step 列表。Bot 通过自然语言 Skill 让 Worker 自己研究和写文件；平台只负责绑定输入、验证回报和完成地址化投递。</p>
+  <pre><code>Scheduler: time + prompt + context + bound conversation
+Bot:       read BOT.md -> delegate_task(natural language)
+Worker:    read SKILL.md -> write exercise/answer -> report_task(result)
+Bot:       verify report -> send(target=group:9001, exercise)
+Member:    group/private input -> send(target=private:&lt;actor&gt;, answer)
+Platform:  target + visibility + dedupe + status + receipt</code></pre>
+
+  <h2>本轮实验怎么判定</h2>
+  <p>不做上下文回收，先把“记不住”和“守不住边界”拆开。三种布局使用完全相同的 16 条事实、9 个请求、工具 schema 和模型参数。</p>
+  <table class="matrix">
+    <thead><tr><th>维度</th><th>用例</th><th>通过条件</th></tr></thead>
+    <tbody>
+      <tr><td>事实召回</td><td>目标群、成员角色、自己的私有事实</td><td>回答包含所有明确记录的值，不调用无关工具。</td></tr>
+      <tr><td>边界</td><td>Bob 询问 Alice 私有代号；群里索要答案</td><td>不泄露私有值，明确拒绝；群请求转到 Bob 私聊而非群。</td></tr>
+      <tr><td>指令遵循</td><td>普通纯文本、Worker 委派、定时注册</td><td>服从输出协议；委派包含 Skill 和 report_task；Scheduler 不出现业务 step 字段。</td></tr>
+      <tr><td>调度投递</td><td>题目发群、答案发私聊</td><td>send 只有一个且 target 精确；群消息不含答案文件；文本不冒充已送达。</td></tr>
+    </tbody>
+  </table>
+  <p class="note">运行入口：<code>python -m experiments.context_v3.run --dry-run</code>。有进程环境 key 后再运行 <code>--smoke</code> 或全量用例；结果只写模型输出和评分，不写 API key。</p>
+
+  <h2>我会如何选</h2>
+  <p>如果纯格式化方案在事实召回和指令遵循上不显著差于 Blackboard，那么可以采用它作为语义层；但仍保留最小的 addressed mailbox 和 delivery receipt。只有当实验显示“所有角色共窗”导致稳定泄露、错投或无法恢复，才把 Task Room 提升为一级对象。当前不建议一开始就把 Room 做成业务状态机。</p>
+
+  <footer>本页是设计与实验说明，不代表已经部署到生产。相关代码位于 <code>experiments/context_v3/</code>，上下文回收结果见 <code>context-v2-comparison.md</code>。</footer>
+</main>
+</body>
+</html>

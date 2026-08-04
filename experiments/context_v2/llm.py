@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ import httpx
 
 BASE_URL = "https://opencode.ai/zen/go/v1"
 MODEL = "deepseek-v4-flash"
-API_KEY = "REDACTED_CONFIGURE_LOCALLY"
+API_KEY_ENV_VARS = ("MUTSUMI_EXPERIMENT_API_KEY", "DEEPSEEK_API_KEY", "DS_API_KEY")
 
 SYSTEM_QA = (
     "你是莫奈（Mornye），一个说话简洁、克制、有分寸的个人助手。"
@@ -29,12 +30,15 @@ class LLM:
         base_url: str = BASE_URL,
         model: str = MODEL,
         temperature: float = 0.3,
-        api_key: str = API_KEY,
+        api_key: str | None = None,
     ):
         self.base_url = base_url
         self.model = model
         self.temperature = temperature
-        self.api_key = api_key
+        self.api_key = api_key or next(
+            (os.environ[name] for name in API_KEY_ENV_VARS if os.environ.get(name)),
+            "",
+        )
 
     async def chat(
         self,
@@ -43,6 +47,10 @@ class LLM:
         max_tokens: int = 600,
         system: str | None = None,
     ) -> dict[str, Any]:
+        if not self.api_key:
+            raise RuntimeError(
+                "Set MUTSUMI_EXPERIMENT_API_KEY, DEEPSEEK_API_KEY, or DS_API_KEY in the process environment."
+            )
         payload_messages = list(messages)
         if system is not None:
             payload_messages.insert(0, {"role": "system", "content": system})
@@ -56,7 +64,7 @@ class LLM:
             resp = await client.post(
                 f"{self.base_url.rstrip('/')}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {API_KEY}",
+                    "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,

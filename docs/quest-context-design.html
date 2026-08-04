@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quest Context — 多角色事项上下文与输入输出调度设计</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --panel: #ffffff; --ink: #1f2430; --muted: #5b6472;
+    --line: #d9dee8; --accent: #2f6fed; --accent-soft: #e8effc;
+    --green: #1a7f4b; --green-soft: #e6f6ec; --amber: #9a6b00; --amber-soft: #fdf3d9;
+    --red: #b3382c; --red-soft: #fbeae7; --purple: #6a3fb5; --purple-soft: #f0e9fb;
+    --cyan: #0e7490; --cyan-soft: #e0f4fa;
+    --mono: "Cascadia Code", Consolas, "JetBrains Mono", Menlo, monospace;
+    --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.7; }
+  header.hero { background: linear-gradient(135deg, #12263a, #0e7490 60%, #2f6fed); color: #fff; padding: 48px 32px 40px; }
+  header.hero h1 { margin: 0 0 8px; font-size: 27px; }
+  header.hero p.sub { margin: 0; opacity: .9; max-width: 980px; }
+  header.hero .meta { margin-top: 14px; font-size: 13px; opacity: .75; font-family: var(--mono); }
+  nav.toc { position: sticky; top: 0; z-index: 50; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); padding: 10px 32px; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  main { max-width: 1080px; margin: 0 auto; padding: 28px 32px 80px; }
+  section { margin-top: 44px; }
+  h2 { font-size: 22px; border-left: 4px solid var(--cyan); padding-left: 12px; margin: 0 0 18px; }
+  h3 { font-size: 17px; margin: 26px 0 10px; }
+  h4 { font-size: 15px; margin: 18px 0 8px; }
+  p { margin: 8px 0; }
+  code { font-family: var(--mono); font-size: .86em; background: #eef1f6; padding: 1px 6px; border-radius: 4px; }
+  .term { font-family: var(--mono); font-size: .9em; color: var(--accent); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; background: var(--panel); }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; font-size: 14px; }
+  th { background: #f0f3f8; font-weight: 600; white-space: nowrap; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 14px 0; }
+  .note { border-left: 4px solid var(--amber); background: var(--amber-soft); }
+  .warn { border-left: 4px solid var(--red); background: var(--red-soft); }
+  .ok { border-left: 4px solid var(--green); background: var(--green-soft); }
+  .info { border-left: 4px solid var(--cyan); background: var(--cyan-soft); }
+  .note .t, .warn .t, .ok .t, .info .t { font-weight: 700; display: block; margin-bottom: 4px; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-right: 4px; }
+  .pill.b { background: var(--accent-soft); color: var(--accent); }
+  .pill.g { background: var(--green-soft); color: var(--green); }
+  .pill.a { background: var(--amber-soft); color: var(--amber); }
+  .pill.r { background: var(--red-soft); color: var(--red); }
+  .pill.p { background: var(--purple-soft); color: var(--purple); }
+  .pill.c { background: var(--cyan-soft); color: var(--cyan); }
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; margin: 16px 0; }
+  .node { background: var(--panel); border: 1.5px solid var(--line); border-radius: 8px; padding: 8px 12px; text-align: center; min-width: 118px; font-size: 13px; }
+  .node .en { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .node.hl { border-color: var(--accent); background: var(--accent-soft); }
+  .node.gr { border-color: var(--green); background: var(--green-soft); }
+  .node.am { border-color: var(--amber); background: var(--amber-soft); }
+  .node.rd { border-color: var(--red); background: var(--red-soft); }
+  .node.pu { border-color: var(--purple); background: var(--purple-soft); }
+  .node.cy { border-color: var(--cyan); background: var(--cyan-soft); }
+  .arrow { display: flex; align-items: center; padding: 0 6px; color: var(--muted); font-size: 12px; }
+  .arrow::after { content: "\2192"; font-size: 18px; }
+  .stack { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+  .layer { border: 1.5px solid var(--line); border-left-width: 6px; border-radius: 8px; padding: 10px 14px; background: var(--panel); }
+  .layer .head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+  .layer .head b { font-size: 14px; }
+  .layer .head .role { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .layer .desc { font-size: 13.5px; color: var(--muted); margin-top: 4px; }
+  .layer.l1 { border-left-color: var(--purple); }
+  .layer.l2 { border-left-color: var(--cyan); }
+  .layer.l3 { border-left-color: var(--amber); }
+  .layer.l4 { border-left-color: var(--green); }
+  .timeline { font-family: var(--mono); font-size: 12.5px; background: #0f1b2d; color: #d7e3f4; border-radius: 10px; padding: 16px 18px; margin: 14px 0; overflow-x: auto; line-height: 1.9; }
+  .timeline .t { color: #8fa8c8; }
+  .timeline .role-s { color: #7ee2b8; font-weight: 600; }
+  .timeline .role-g { color: #7ec3ff; font-weight: 600; }
+  .timeline .role-p { color: #f0b47e; font-weight: 600; }
+  .timeline .role-o { color: #d9a4ff; font-weight: 600; }
+  .timeline .role-b { color: #ffd97e; font-weight: 600; }
+  footer { border-top: 1px solid var(--line); margin-top: 60px; padding: 20px 0 40px; color: var(--muted); font-size: 13px; }
+  @media print { nav.toc { position: static; } }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>Quest Context — 多角色事项上下文与输入输出调度设计</h1>
+  <p class="sub">
+    为"一个复杂事项涉及多个角色"的场景（例：<code>skills/nature-daily-cet4</code> ——
+    scheduler 触发 → OpenCode 委派 → 群聊发题 → 群成员回复 → 私聊发答案）设计
+    <b>一致工作记忆 + 清晰角色边界 + 灵活的输入输出调度</b>。本文件为设计探索稿：
+    提出三个方案（A/B/C），推荐 B，并给出可实验验证的协议细节。
+  </p>
+  <p class="meta">分支：experiment/context-v2 ｜ 2026-08-04 ｜ 前置阅读：docs/experiments/context-v2-comparison.md（USC 基准）</p>
+</header>
+
+<nav class="toc">
+  <a href="#problem">1 问题定义</a>
+  <a href="#concepts">2 核心概念</a>
+  <a href="#principles">3 设计原则</a>
+  <a href="#plans">4 三个方案</a>
+  <a href="#design-b">5 推荐方案 B 详细设计</a>
+  <a href="#cet4">6 CET4 端到端时序</a>
+  <a href="#mapping">7 与现有代码映射</a>
+  <a href="#security">8 安全边界</a>
+  <a href="#experiments">9 实验验证计划</a>
+  <a href="#risks">10 风险与开放问题</a>
+</nav>
+
+<main>
+
+<!-- ============ 1 问题定义 ============ -->
+<section id="problem">
+  <h2>1. 问题定义</h2>
+
+  <h3>1.1 真实场景：nature-daily-cet4</h3>
+  <p>
+    该 Skill 的完整闭环涉及 <b>5 类角色、3 个会话窗口、2 个外部子系统</b>：
+  </p>
+  <div class="flow">
+    <div class="node cy"><b>Scheduler</b><span class="en">定时触发（绑定群会话）</span></div>
+    <div class="arrow"></div>
+    <div class="node hl"><b>Bot pipeline</b><span class="en">事项协调者</span></div>
+    <div class="arrow"></div>
+    <div class="node pu"><b>OpenCode</b><span class="en">delegate_task / report_task</span></div>
+    <div class="arrow"></div>
+    <div class="node hl"><b>Bot pipeline</b><span class="en">读题目文件</span></div>
+    <div class="arrow"></div>
+    <div class="node gr"><b>群聊 group:123</b><span class="en">发送题目</span></div>
+  </div>
+  <div class="flow">
+    <div class="node gr"><b>群成员 张三</b><span class="en">回复"选C"</span></div>
+    <div class="arrow"></div>
+    <div class="node hl"><b>Bot pipeline</b><span class="en">判定对错</span></div>
+    <div class="arrow"></div>
+    <div class="node am"><b>私聊 张三</b><span class="en">发送答案与解析</span></div>
+    <div class="arrow"></div>
+    <div class="node rd"><b>事项状态</b><span class="en">谁已答、对错、进度、去重</span></div>
+  </div>
+
+  <div class="card warn">
+    <span class="t">SKILL.md 明确标注的当前能力缺口</span>
+    <blockquote style="margin:8px 0">
+      "When a person asks for the answer in a private conversation, the Bot may read the matching answer file and
+      send it there. <b>When the question originates in a group, the current project has no generic cross-peer send
+      tool</b>: do not silently send the answer to the group or claim a private send. Report this as a runtime
+      capability gap <b>until a generic, server-bound peer-routing primitive is implemented</b>."
+    </blockquote>
+    此外 BOT.md 要求"多用户间维护一致工作记忆"（谁提交了答案、对错统计、state.json 去重、题目与答案文件配对），
+    以及跨会话的身份绑定（群成员 qq:user:X → 私聊 private:X）。
+  </div>
+
+  <h3>1.2 三个待解问题</h3>
+  <table>
+    <tr><th>#</th><th>问题</th><th>现状</th><th>目标</th></tr>
+    <tr>
+      <td>P1</td>
+      <td><b>一致工作记忆</b>：一个事项跨 5 个角色、3 个窗口，bot 必须记得"今日题目是哪篇、谁答对、答案发给了谁、state.json 去重状态"</td>
+      <td>工作记忆碎片化：self_note 按会话、文件按 output 目录、episodes 按会话；无事项级状态</td>
+      <td>事项级（Quest）单一工作记忆，任意角色输入可读写</td>
+    </tr>
+    <tr>
+      <td>P2</td>
+      <td><b>清晰角色边界</b>：同一事项中，群聊公开互动与私聊答案必须严格分离；A 的私聊对 B 不可见、不可路由</td>
+      <td>audience/visibility 投影（基线）或结构性隔离（USC）；跨会话无"事项内可见性"概念</td>
+      <td>同一上下文窗口内用<b>格式化角色头</b>规定边界（用户 idea）</td>
+    </tr>
+    <tr>
+      <td>P3</td>
+      <td><b>输入输出调度</b>：输入可来自 scheduler/opencode/群聊/私聊（fan-in）；一个回合的输出可路由到多个目标（fan-out），且必须可验证、可审计</td>
+      <td>pipeline 按会话 key 调度（单源单出）；send(target=) 支持跨会话但无白名单、无批量路由</td>
+      <td>服务端绑定的路由原语：目标白名单 + 逐目标投递验证 + action ledger</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ============ 2 核心概念 ============ -->
+<section id="concepts">
+  <h2>2. 核心概念（新术语）</h2>
+  <table>
+    <tr><th>术语</th><th>含义</th></tr>
+    <tr><td><span class="term">Quest（事项）</span></td><td>一个跨角色、跨会话的业务单元（如"2026-08-04 的 CET4 题目"）。拥有自己的 id、参与者白名单、共享工作记忆（状态 + 角色头时间线）。<b>一个事项 = 一份上下文</b>。</td></tr>
+    <tr><td><span class="term">Role / Participant（角色/参与者）</span></td><td>事项内的稳定身份：<code>group:123</code>、<code>private:456</code>、<code>opencode</code>、<code>scheduler:task:7</code>、<code>bot:self</code>。参与者白名单决定输出可路由目标。</td></tr>
+    <tr><td><span class="term">Role Header（角色头）</span></td><td>平台注入到每条事项时间线消息前的<b>格式化前缀</b>：<code>[conversation|actor|name|time]</code>。模型在同一窗口内靠它区分"谁在说话、消息属于哪个角色通道"。</td></tr>
+    <tr><td><span class="term">Quest Timeline（事项时间线）</span></td><td>事项的共享历史：全部参与者的 <b>事项级</b>事件按时间排列（题目发布、答题结果、委派回报等），带角色头。是"同一上下文窗口"的载体。</td></tr>
+    <tr><td><span class="term">Quest State（事项状态）</span></td><td>结构化工作记忆（JSON）：进度、计数、文件路径、绑定关系。由 <code>quest_status</code> 工具读写，模型可查可改，服务端持久化。</td></tr>
+    <tr><td><span class="term">Routing Whitelist（路由白名单）</span></td><td>参与者集合的投影：模型输出路由目标<b>必须</b>命中白名单 ∪ 当前源，否则平台返回 <code>[Error]</code> 且不投递。安全边界是服务端强制，不靠模型自觉。</td></tr>
+    <tr><td><span class="term">Quest Reply（事项回复原语）</span></td><td>输出侧新工具：<code>quest_reply(quest_id, targets:[{target, content}], status_update?)</code>，一次调用完成多目标 fan-out；逐目标 NapCat 验证 + 逐目标 action ledger。</td></tr>
+    <tr><td><span class="term">Quest Binding（事项绑定）</span></td><td>输入事件 → 所属事项的判定：显式（创建时声明会话集合）/ 隐式（群号+时间窗+话题关键词匹配最近活跃事项）/ 定时（任务注册会话再映射事项）。</td></tr>
+    <tr><td><span class="term">Per-Role Memory（角色私密记忆）</span></td><td>每个私聊/群聊角色保留自己的 USC 窗口（摘要+近期回合），<b>不进入</b>事项时间线；只有事项级事实进入 Quest Timeline。两层记忆 = 共享可见性 + 私密细节。</td></tr>
+  </table>
+</section>
+
+<!-- ============ 3 设计原则 ============ -->
+<section id="principles">
+  <h2>3. 设计原则</h2>
+  <div class="card info">
+    <span class="t">原则 1 — 单窗口 + 格式化角色头（用户 idea 的核心）</span>
+    一个事项的所有角色事件汇入<b>同一份上下文</b>（Quest Timeline），角色边界由格式化的角色头 + 输出路由白名单规定，
+    而不是由多套投影状态机隔离。模型看到事项全景（一致性），但输出被白名单钳制（边界）。
+  </div>
+  <div class="card info">
+    <span class="t">原则 2 — 服务端绑定的路由原语（"generic, server-bound peer-routing primitive"）</span>
+    模型永远不直接指定"发给谁"的自由目标；目标必须来自白名单。投递验证（NapCat status=ok）与审计（action ledger）
+    全部在服务端完成。这是对现有 <code>send(target=)</code> 的升级而非替代。
+  </div>
+  <div class="card info">
+    <span class="t">原则 3 — 两层记忆分离</span>
+    事项级信息（题目、进度、结果）进 Quest Timeline；角色级私密细节（张三的答题心情、个人偏好）留在各自
+    USC 私密窗口。共享与私密的边界是<b>写入时</b>决定的（平台只把事项级事件写入 Timeline），不是请求时过滤。
+  </div>
+  <div class="card info">
+    <span class="t">原则 4 — 保持调度红线</span>
+    Scheduler 仍是"时间 + prompt"，不新增 quest_id/skill 字段（事项绑定在会话层映射）；
+    Skill 仍是文件；delegate/report 仍是通用委派。Quest 层只做三件事：绑定、记忆、路由。
+  </div>
+</section>
+
+<!-- ============ 4 三个方案 ============ -->
+<section id="plans">
+  <h2>4. 三个方案</h2>
+
+  <h3>方案 A — 管道拼装（最小改动，先行可用）</h3>
+  <div class="card">
+    <p>不加新上下文结构，只用现有机制拼出 CET4 流程：</p>
+    <ul>
+      <li>新增 <code>quests</code> 表 + 隐式绑定：群聊消息按"群号 + 最近活跃事项 + 关键词"匹配。</li>
+      <li>工作记忆：沿用 <code>self_note</code>（按会话）+ 文件（state.json）双轨；跨会话一致性靠模型从上下文中拼。</li>
+      <li>输出路由：现有 <code>send(target=)</code>（工作树已有跨会话逻辑分组），增加<b>目标白名单校验</b>（复用现有 action ledger 记录）。</li>
+      <li>角色边界：无格式化头；群聊 pipeline 注入"当前群"上下文，私聊答案依赖模型从 send 目标推断。</li>
+    </ul>
+    <table>
+      <tr><th>维度</th><th>评价</th></tr>
+      <tr><td>改动量</td><td><span class="pill g">小</span> 仅 binding + 白名单校验</td></tr>
+      <tr><td>一致工作记忆</td><td><span class="pill r">弱</span> 碎片化，模型需自行拼装；多会话无共享时间线</td></tr>
+      <tr><td>角色边界</td><td><span class="pill a">中</span> 无格式化头，靠 send 目标与提示词约束</td></tr>
+      <tr><td>输出调度</td><td><span class="pill a">中</span> 单目标 send；多目标需多次调用（已有 MAX_SENDS_PER_LOOP=5）</td></tr>
+    </table>
+  </div>
+
+  <h3>方案 B — QuestContext + 角色头 + 路由白名单（推荐）</h3>
+  <div class="card">
+    <p>在 A 之上加入事项级上下文（用户 idea 的完整实现）：</p>
+    <ul>
+      <li><b>Quest Timeline</b>：一个事项一份角色头时间线（共享记忆，复用 USC 的"摘要+窗口"回收机制做长程压缩）。</li>
+      <li><b>请求组装</b>：全局 persona（L1）+ Quest Timeline + 状态（L2）+ 当前输入角色头（L3/L4）；当前源角色的私密 USC 窗口按需并入。</li>
+      <li><b>输出</b>：<code>quest_reply</code>（批量路由）+ <code>send</code>（特殊消息段），两者都过白名单。</li>
+      <li><b>状态</b>：<code>quest_status</code> 工具读写结构化 JSON 状态。</li>
+    </ul>
+    <table>
+      <tr><th>维度</th><th>评价</th></tr>
+      <tr><td>改动量</td><td><span class="pill a">中</span> 新表 + QuestContext（约 400 行）+ 路由工具</td></tr>
+      <tr><td>一致工作记忆</td><td><span class="pill g">强</span> 单一时间线 + 结构化状态；任意角色可读写</td></tr>
+      <tr><td>角色边界</td><td><span class="pill g">强</span> 格式化头 + 白名单双保险；写入时分层保证私密</td></tr>
+      <tr><td>输出调度</td><td><span class="pill g">强</span> 批量路由 + 逐目标验证审计</td></tr>
+    </table>
+  </div>
+
+  <h3>方案 C — 多 Agent 编排（远期，非推荐）</h3>
+  <div class="card">
+    <p>每个角色一个独立 agent 上下文 + 一个协调 agent 分发任务（群聊 agent、私聊 agent、事项协调 agent）。</p>
+    <table>
+      <tr><th>维度</th><th>评价</th></tr>
+      <tr><td>一致性</td><td><span class="pill a">中</span> 协调 agent 单点，需自定义同步协议</td></tr>
+      <tr><td>成本</td><td><span class="pill r">高</span> N+1 个上下文常驻，每次触发多轮 LLM</td></tr>
+      <tr><td>复杂度</td><td><span class="pill r">高</span> 违背"最小通用机制"主线；放弃</td></tr>
+    </table>
+    <p>结论：与项目"选择能闭环的最小通用机制"的章程冲突，仅作对比记录。</p>
+  </div>
+
+  <h3>方案对比总表</h3>
+  <table>
+    <tr><th>能力</th><th>A 管道拼装</th><th>B QuestContext（推荐）</th><th>C 多 Agent</th></tr>
+    <tr><td>一致工作记忆</td><td>弱（碎片）</td><td>强（时间线+状态）</td><td>中（协调点）</td></tr>
+    <tr><td>角色边界</td><td>中（提示词约束）</td><td>强（格式化头+白名单）</td><td>强（物理隔离）</td></tr>
+    <tr><td>输出调度</td><td>单目标 send</td><td>批量路由+验证</td><td>协调分发</td></tr>
+    <tr><td>改动量</td><td>小</td><td>中（约 400 行 + 2 工具）</td><td>大</td></tr>
+    <tr><td>与现有架构契合</td><td>高</td><td>高（USC 直接扩展）</td><td>低</td></tr>
+    <tr><td>LLM 成本</td><td>低</td><td>低（单窗口）</td><td>高</td></tr>
+  </table>
+</section>
+
+<!-- ============ 5 推荐方案 B 详细设计 ============ -->
+<section id="design-b">
+  <h2>5. 推荐方案 B 详细设计</h2>
+
+  <h3>5.1 数据模型</h3>
+  <div class="card">
+    <table>
+      <tr><th>表</th><th>字段</th><th>说明</th></tr>
+      <tr>
+        <td><code>quests</code></td>
+        <td><code>quest_id</code>（主键）、<code>kind</code>（cet4-daily 等）、<code>title</code>、<code>state_json</code>、<code>created_at</code>、<code>archived_at</code></td>
+        <td>事项本体；<code>state_json</code> 是模型可读写的结构化工作记忆</td>
+      </tr>
+      <tr>
+        <td><code>quest_participants</code></td>
+        <td><code>quest_id</code>、<code>conversation_id</code>、<code>actor_id</code>、<code>role_kind</code>（group/member/private/service/bot）、<code>can_route_to</code>（可路由目标列表）、<code>joined_at</code></td>
+        <td>参与者白名单；<code>can_route_to</code> 例如群成员 <code>qq:user:456</code> 声明可路由到 <code>private:456</code>（平台校验该私聊确实存在/授权）</td>
+      </tr>
+      <tr>
+        <td><code>quest_events</code></td>
+        <td><code>sequence</code>、<code>quest_id</code>、<code>role_header</code>（格式化头）、<code>content</code>、<code>event_type</code>（trigger/report/outbound/answer/status）、<code>visibility</code>（quest/private）、<code>created_at</code></td>
+        <td>Quest Timeline（append-first，复用事件思路但只有事项级信息）；<code>visibility=private</code> 的行不进入共享时间线（保留审计）</td>
+      </tr>
+    </table>
+    <p>
+      <b>关键决策</b>：<code>quest_events</code> 只记录<b>事项级</b>事件（题目已发、张三答对、答案已私发），
+      不记录张三私聊里的全部聊天内容——私密细节留在其私聊会话自己的 USC 窗口（<code>messages</code> 表）。
+      这实现了"同一窗口规定角色边界"（共享时间线可见）与"私密不泄露"（写入时分层）的统一。
+    </p>
+  </div>
+
+  <h3>5.2 输入侧：角色头格式（Role Header）</h3>
+  <p>平台在把事件写入 Quest Timeline 时生成格式化头，模型读到的每一行都是自描述的：</p>
+  <div class="timeline">
+<span class="t">[07:00:00]</span> <span class="role-s">[scheduler|task:7]</span> 平台定时触发：执行"今日 CET4 题目生成"任务<br>
+<span class="t">[07:00:02]</span> <span class="role-b">[bot:self]</span> 委派 OpenCode：读取 skills/nature-daily-cet4/SKILL.md，目标群 group:123，私答策略=提问者私聊，日期 2026-08-04<br>
+<span class="t">[07:05:41]</span> <span class="role-o">[opencode|run:oc_a1b2]</span> 回报 completed：题目 skills/nature-daily-cet4/output/exercises/2026-08-04-*.md；答案 .../answers/2026-08-04-*.md<br>
+<span class="t">[07:06:10]</span> <span class="role-b">[bot:self]</span> 已读取题目，发送至 group:123 OK（NapCat ok，message_id=...）<br>
+<span class="t">[08:12:33]</span> <span class="role-g">[group:123|qq:user:456|张三]</span> 选C<br>
+<span class="t">[08:12:35]</span> <span class="role-b">[bot:self]</span> 张三（456）回答正确；答案已私聊发送 OK<br>
+<span class="t">[09:01:02]</span> <span class="role-p">[private:456|qq:user:456|张三]</span> 第三题为什么选A？<br>
+<span class="t">[09:01:05]</span> <span class="role-b">[bot:self]</span> 已回复解析（引用题目 passage 第2段）OK
+  </div>
+  <ul>
+    <li><b>头格式</b>：<code>[conversation_id|actor_id|display_name]</code>，时间由平台前缀。</li>
+    <li><b>规则声明</b>（注入 L1 稳定规则）："时间线中每条消息属于其角色头对应的通道；向其他通道复述需经路由工具；私聊内容只属于该私聊参与者。"</li>
+    <li><b>边界测试用例</b>（写入实验计划）：同一时间线中，模型必须能回答"张三答对了吗"（共享可见），且当被要求"把张三的私聊问题转发到群里"时拒绝/只能走白名单。</li>
+  </ul>
+
+  <h3>5.3 输出侧：路由协议（quest_reply + 白名单）</h3>
+  <div class="card">
+    <h4 style="margin-top:0">工具签名</h4>
+    <pre style="background:#0f1b2d;color:#d7e3f4;border-radius:8px;padding:12px;font-family:var(--mono);font-size:12.5px;overflow-x:auto">{
+  "name": "quest_reply",
+  "parameters": {
+    "quest_id":   "string, required, 当前事项 id（来自上下文）",
+    "targets":    [{
+        "target":   "string, required, private:&lt;数字&gt; 或 group:&lt;数字&gt;（必须命中白名单）",
+        "content":  "string, required, 扁平纯文本",
+        "segment":  "可选特殊段（markdown_image 等，与 send 共用）"
+    }],
+    "status_update": "可选 {target, text}，长操作前进度通知",
+    "state_patch":   "可选 {key: value}，更新 quest state_json（服务端校验 key 白名单）"
+  }
+}</pre>
+    <h4>服务端行为</h4>
+    <ol>
+      <li><b>白名单校验</b>：每个 target 必须命中 quest_participants.can_route_to 或等于当前输入源，否则返回
+        <code>[Error: target 'private:999' is not in quest participant whitelist]</code>，不投递。</li>
+      <li><b>逐目标投递</b>：NapCat HTTP + <code>status=="ok"</code> 才算该目标成功（复用 <code>send_succeeded</code>）。</li>
+      <li><b>逐目标审计</b>：每个目标一条 action ledger 记录（成功/失败、message_id）；outbound 事件按目标会话写入
+        （复用工作树的跨会话逻辑分组，Episode 不会拉入源私聊事件）。</li>
+      <li><b>状态合并</b>：<code>state_patch</code> 与时间线写入同事务（追加 quest_events 行：<code>[bot:self] 已向 private:456 发送答案 OK</code>）。</li>
+    </ol>
+    <h4>与现有 send 的关系</h4>
+    <p>
+      不替换 <code>send</code>：<code>send</code> 保留给特殊消息段（图片/markdown_image/表情/@/reply），
+      其 target 同样过白名单（事项管道内）；非事项管道（普通私聊）行为不变。
+    </p>
+  </div>
+
+  <h3>5.4 事项绑定与生命周期</h3>
+  <table>
+    <tr><th>环节</th><th>机制</th></tr>
+    <tr><td><b>创建</b></td><td>显式：模型在任意会话调 <code>quest_start(kind, title, participants_hint)</code>（新工具）或在群聊中确认"开启今日 CET4"；服务端创建 quest + 注册参与者（当前群、当前用户）。</td></tr>
+    <tr><td><b>绑定（群聊消息 → 事项）</b></td><td>隐式：按 conversation_id 找该群最近的活跃 quest（24h 窗口）+ 可选话题关键词；唯一匹配则汇入，多候选则注入候选列表让模型选择（或回复确认）。</td></tr>
+    <tr><td><b>绑定（私聊消息 → 事项）</b></td><td>私聊可能是多个事项的参与者（CET4 + 其他）。隐式匹配规则：同会话最近活跃事项优先；模型可主动 <code>quest_list</code> 查询/选择。</td></tr>
+    <tr><td><b>定时触发</b></td><td>Scheduler 仍只存时间+prompt（红线不变）；到期注入绑定的会话，会话 → 事项映射后进入 Quest pipeline。<b>quest_id 不进 scheduler 数据模型</b>。</td></tr>
+    <tr><td><b>委派回报</b></td><td><code>report_task</code> 回报事件按"运行绑定的会话 → 事项"汇入（现有 task-report 队列已绑定会话，映射层加一层）。</td></tr>
+    <tr><td><b>归档</b></td><td>事项完成后（如当日题目全部判完/次日 0 点）<code>archived_at</code> 置位；时间线冻结，后续输入走新事项或普通管道。</td></tr>
+  </table>
+
+  <h3>5.5 请求组装（一个事项管道的完整上下文）</h3>
+  <div class="stack">
+    <div class="layer l1">
+      <div class="head"><b>L1 · System（全局稳定）</b><span class="role">persona + runtime + 角色头规则 + 路由规则</span></div>
+      <div class="desc">与现有一致；新增两段稳定规则："时间线角色头语义"与"输出必须过路由工具/白名单"。</div>
+    </div>
+    <div class="layer l2">
+      <div class="head"><b>L2 · Quest Context</b><span class="role">Quest Timeline（角色头时间线，USC 回收）+ Quest State（JSON）</span></div>
+      <div class="desc">事项级共享记忆：触发、委派、回报、发布、答题结果、答案投递。长程用"摘要+窗口"回收（复用 SimpleContext），
+      摘要提示词强制保留：参与者、题目状态、未完成事项、文件路径映射。</div>
+    </div>
+    <div class="layer l3">
+      <div class="head"><b>L3 · Per-Role Window（按需）</b><span class="role">当前输入源角色的 USC 私密窗口</span></div>
+      <div class="desc">仅当当前输入来自某私聊/群聊且该角色有私密上下文时并入（如张三私聊问"第三题为什么选A"时并入张三的私聊窗口）。
+      其他参与者的私密窗口<b>绝不</b>进入本请求。</div>
+    </div>
+    <div class="layer l4">
+      <div class="head"><b>L4 · 当前输入</b><span class="role">角色头前缀 + 消息文本（或 scheduler/opencode 输入）</span></div>
+      <div class="desc">与现有 L4 相同，但前缀使用统一角色头格式。</div>
+    </div>
+  </div>
+  <p>
+    <b>与 USC 实验结论的关系</b>：USC 的"摘要+窗口"直接复用于 Quest Timeline 的长程压缩；
+    角色头时间线 = USC 窗口 + 每行角色前缀。单窗口 + 格式化头正是上一轮实验"结构性隔离"与
+    本轮"共享工作记忆"两种诉求的统一：<b>记忆共享（时间线可见），边界强制（白名单路由）</b>。
+  </p>
+</section>
+
+<!-- ============ 6 CET4 端到端 ============ -->
+<section id="cet4">
+  <h2>6. CET4 端到端时序（方案 B）</h2>
+  <div class="card">
+    <div class="timeline" style="font-size:12px">
+<span class="t">D-1 20:00</span> <span class="role-p">[private:owner|owner]</span> "帮我建一个每天早上的 CET4 任务，发到英语学习群"<br>
+<span class="t">20:00</span> <span class="role-b">[bot:self]</span> quest_start(kind=cet4-daily, title="每日CET4", participants=[group:123, private:owner]) OK；注册 scheduler（cron 0 7 * * *，prompt 指向 SKILL）OK<br>
+<span class="t">D 07:00</span> <span class="role-s">[scheduler|task:9]</span> 触发（绑定群 group:123 → quest cet4-0001）<br>
+<span class="t">07:00</span> <span class="role-b">[bot:self]</span> delegate_task（prompt 含 SKILL 路径/TARGET_GROUP_ID/ANSWER_PRIVATE_POLICY/日期）OK<br>
+<span class="t">07:05</span> <span class="role-o">[opencode|run:oc_x]</span> 回报 completed + 文件路径 OK<br>
+<span class="t">07:06</span> <span class="role-b">[bot:self]</span> file_edit 读题目 → quest_reply(targets=[{group:123, 题目文本}]) → NapCat ok OK；state_patch {exercise: 路径, answer: 路径, status: posted}<br>
+<span class="t">08:12</span> <span class="role-g">[group:123|张三|qq:user:456]</span> 选C<br>
+<span class="t">08:12</span> <span class="role-b">[bot:self]</span> 判定正确（state 中的答案键）→ quest_reply(targets=[{private:456, "答对了！解析：..."}]) OK；state_patch {answers: {456: correct}}<br>
+<span class="t">09:01</span> <span class="role-p">[private:456|张三]</span> 第三题为什么选A？<br>
+<span class="t">09:01</span> <span class="role-b">[bot:self]</span> 读取答案文件对应解析 → TO_USER 回复 OK（普通私聊回复，无需路由）<br>
+<span class="t">次日 00:00</span> 平台归档 quest cet4-0001（时间线冻结）；state_json 保留统计
+    </div>
+    <p>
+      全程 5 个角色、3 个会话窗口、2 个外部子系统，但只有<b>一个事项上下文</b>；
+      每次请求的输入来自哪、输出去哪里，都由角色头 + 白名单确定。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 7 映射 ============ -->
+<section id="mapping">
+  <h2>7. 与现有代码的映射（复用 vs 新增）</h2>
+  <table>
+    <tr><th>现有组件</th><th>复用方式</th><th>新增</th></tr>
+    <tr><td><code>send(target=)</code> + 跨会话逻辑分组（工作树）</td><td>逐目标投递/outbound 归属/Episode 防串源——quest_reply 内部逐目标复用</td><td>—</td></tr>
+    <tr><td><code>SimpleContext</code>（USC）</td><td>Quest Timeline 的摘要+窗口回收；每角色私密窗口</td><td><code>QuestContext</code>（时间线 + 角色头 + state 绑定，约 150 行）</td></tr>
+    <tr><td><code>scheduler</code> 工具</td><td>定时触发（不改数据模型）</td><td>会话→事项映射层（绑定表）</td></tr>
+    <tr><td><code>delegate_task / report_task</code></td><td>委派与回报（不改协议）</td><td>回报事件按会话→事项汇入</td></tr>
+    <tr><td><code>action ledger</code></td><td>逐目标投递审计</td><td>—</td></tr>
+    <tr><td><code>file_edit</code>（受控根）</td><td>读写题目/答案文件</td><td>生产共享目录读桥（SKILL 提到的 secure read bridge，或放宽受控根）</td></tr>
+    <tr><td><code>self_note</code></td><td>保留（非事项类记忆）</td><td><code>quest_status</code> / <code>quest_start</code> / <code>quest_list</code> 工具</td></tr>
+    <tr><td>pipeline 入口（source 枚举）</td><td>新增 <code>source="quest"</code> 变体（现有 user/schedule/task_report/service/heartbeat 基础上）</td><td>绑定判定函数（显式/隐式）</td></tr>
+  </table>
+  <div class="card note">
+    <span class="t">注意与 AGENTS.md 红线的兼容</span>
+    Scheduler 记录不加 quest_id/skill 字段（任务 → 会话 → 事项的映射在平台侧完成）；
+    Skill 仍是文件；OpenCode 报告仍只回自然语言。Quest 层不建立"业务步骤 DSL"，
+    一切业务判断继续由模型在 prompt 中完成。
+  </div>
+</section>
+
+<!-- ============ 8 安全边界 ============ -->
+<section id="security">
+  <h2>8. 安全边界与对抗场景</h2>
+  <table>
+    <tr><th>场景</th><th>机制</th><th>失败表现（平台侧）</th></tr>
+    <tr><td>模型想把张三的私聊问题转发到群里</td><td>目标 <code>group:123</code> 在白名单内（群是参与者）——但<b>内容边界</b>：时间线内私聊角色头的内容被 L1 规则标记为"仅限该角色"；白名单只能防"发错人"，内容泄露需要提示词+示例约束</td><td>投递成功但泄露私聊内容 → 需要实验测量泄露率（见 §9 实验 2）</td></tr>
+    <tr><td>模型向非参与者发消息（如 private:999）</td><td><b>硬拦截</b>：target 不在白名单 → <code>[Error: ... not in whitelist]</code>，不投递，进 action ledger</td><td>零投递，模型收到错误可纠正</td></tr>
+    <tr><td>群成员身份伪造（张三说自己是他人的私聊）</td><td>路由目标由平台按事件元数据解析（actor_id 来自 NapCat），模型只能引用、不能发明 actor</td><td>非法 actor_id 直接拒绝</td></tr>
+    <tr><td>quest_state 被写入垃圾键</td><td><code>state_patch</code> 的 key 必须命中 <code>quest_kind</code> 声明的状态 schema（服务端校验）</td><td>返回 <code>[Error: unknown state key]</code></td></tr>
+    <tr><td>事项时间线无限增长</td><td>USC 摘要+窗口回收；<code>visibility=private</code> 行不投影</td><td>长程对话 token 恒定</td></tr>
+    <tr><td>旧事项被误匹配（绑定歧义）</td><td>多候选注入让模型选择；无匹配则按普通管道处理</td><td>不误写事项状态</td></tr>
+  </table>
+  <div class="card note">
+    <span class="t">白名单 vs 内容边界的区别（诚实说明）</span>
+    路由白名单是<b>硬安全</b>（服务端强制，防发错目标）；"把私聊内容复述到群聊"是<b>软边界</b>
+    （依赖角色头规则 + 模型判断），与当前系统"模型自觉不泄露其他私聊"的信任模型一致。
+    实验 2 专门量化这个软边界的泄露率。
+  </div>
+</section>
+
+<!-- ============ 9 实验验证计划 ============ -->
+<section id="experiments">
+  <h2>9. 实验验证计划（可复现，复用现有实验框架）</h2>
+
+  <h3>实验 1：多角色时间线召回与一致性（Quest Timeline Recall）</h3>
+  <table>
+    <tr><th>项</th><th>设计</th></tr>
+    <tr><td>数据</td><td>合成 CET4 事项时间线：50–300 条带角色头的事件（scheduler/bot/opencode/group/private），其中埋入事项级事实（题目来源、张三答对/李四答错、答案文件路径、去重状态）与私聊细节（张三的私人偏好）</td></tr>
+    <tr><td>对比</td><td>① 角色头时间线（方案 B）；② 无角色头的平铺时间线（消融：验证角色头的信息增益）；③ 分段式（当前基线：各会话各自投影，无共享时间线）</td></tr>
+    <tr><td>问题</td><td>事项级："张三答对了吗/今日题目来自哪篇/答案文件在哪"（期望正确）；私聊级："张三的私人偏好是？"（期望：仅当当前源=张三时正确，其他源应拒答）</td></tr>
+    <tr><td>度量</td><td>事项级召回率、跨源私聊泄露率、token 成本（复用 llm.py 的 usage 记账）</td></tr>
+  </table>
+
+  <h3>实验 2：输出路由正确性与白名单（Routing Fidelity）</h3>
+  <table>
+    <tr><th>项</th><th>设计</th></tr>
+    <tr><td>数据</td><td>构造"群聊成员提问"输入（CET4 场景），提供 quest_reply 工具 schema + 白名单声明</td></tr>
+    <tr><td>度量</td><td>① 正确路由率：答案发到 private:提问者（而非群聊/他人私聊）；② 白名单违反率：模型尝试非白名单目标的比例（模拟服务端拦截）；③ 空回复/错误格式率</td></tr>
+    <tr><td>对比</td><td>有白名单声明 vs 无白名单声明（验证白名单对路由正确性的提升）；3 次重复</td></tr>
+  </table>
+
+  <h3>实验 3：长程事项压缩（Quest Timeline 回收）</h3>
+  <table>
+    <tr><th>项</th><th>设计</th></tr>
+    <tr><td>数据</td><td>30 天 CET4 事项（每天 8 条事件 ≈ 240 条），预算 8K/16K 两档</td></tr>
+    <tr><td>对比</td><td>USC 摘要回收（事实保留提示词 + 角色头） vs 截断控制组；问题：7 天前的题目来源/上上周谁全对/答案文件路径</td></tr>
+    <tr><td>复用</td><td>直接复用 <code>run_recall.py</code> 的判定与记账基础设施，新增 <code>run_quest.py</code></td></tr>
+  </table>
+</section>
+
+<!-- ============ 10 风险与开放问题 ============ -->
+<section id="risks">
+  <h2>10. 风险与开放问题</h2>
+  <table>
+    <tr><th>风险/问题</th><th>分析</th><th>缓解</th></tr>
+    <tr><td>单窗口混入多角色后 token 增长快</td><td>事项级事件比全量聊天少一个数量级（只记结果不记过程），且 USC 回收保证有界</td><td>写入时只记事项级事件；预算实验验证</td></tr>
+    <tr><td>软边界（内容复述）依赖模型判断</td><td>与现状信任模型一致；但群聊+私聊同窗口使"看到了就能复述"风险上升</td><td>实验 1 测泄露率；必要时时间线中私聊角色的行仅以"角色+摘要"呈现（细节只进 L3）</td></tr>
+    <tr><td>隐式绑定误判</td><td>多事项同时活跃时（两个群各一个 CET4）可能串线</td><td>绑定注入候选列表让模型确认；绑定结果进 quest_events 可审计</td></tr>
+    <tr><td>OpenCode 回报如何携带事项身份</td><td>report_task 只回自然语言；事项映射依赖"绑定会话"</td><td>delegate_task 的 prompt 中写明 quest_id 上下文（自然语言），平台仍按会话映射；或者允许 report 携带结构化 run 元数据（不违反"报告只收自然语言"红线？——需讨论）</td></tr>
+    <tr><td>与现有 pipeline 的侵入面</td><td>quest pipeline 是 source 枚举的新变体，普通会话不受影响</td><td>以新增为主，不改现有路径；QuestContext 与 SimpleContext 同层</td></tr>
+    <tr><td>是否真的需要独立 quest_events 表</td><td>也可复用 events 表 + quest_id 列；但 events 的 projection 复杂度会传染</td><td>独立小表，只做 append + 读窗口，无投影状态机（保持 USC 哲学）</td></tr>
+  </table>
+</section>
+
+<footer>
+  本文为设计探索稿：三个方案、推荐方案 B 的协议细节、以及与现有代码/实验框架的衔接。
+  下一步：实现 §9 的实验 1–3（复用 experiments/context_v2 基础设施），用真实模型量化
+  "角色头时间线"的信息增益、白名单的路由增益与长程回收的召回保持。
+</footer>
+
+</main>
+</body>
+</html>

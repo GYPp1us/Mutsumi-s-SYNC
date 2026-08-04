@@ -1,0 +1,168 @@
+{
+  "experiment": "context-v3-long-multi-conversation",
+  "noise_turns": 320,
+  "records": 346,
+  "cases": [
+    "alice_identity"
+  ],
+  "dry_run": false,
+  "provider": {
+    "name": "deepseek-v4-flash",
+    "model": "deepseek-v4-flash",
+    "protocol": "chat",
+    "base_url": "https://opencode.ai/zen/go/v1",
+    "api_key_env": "DEEPSEEK_API_KEY"
+  },
+  "designs": {
+    "ledger_projection": {
+      "design": "ledger_projection",
+      "cases": 1,
+      "pass_rate": 0.0,
+      "category_rates": {
+        "fact_recall": 0.0
+      },
+      "input_tokens": 21397,
+      "output_tokens": 822,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "ledger_events": 692,
+            "history_messages": 656,
+            "history_tokens": 23687,
+            "compaction_calls": 0,
+            "visible_records": 328,
+            "context_messages": 658,
+            "context_tokens": 24044
+          },
+          "score": {
+            "passed": false,
+            "checks": {
+              "no_tool": false,
+              "expected_facts": false,
+              "current_not_stale": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_608YrBITxsAnPqwNXmzA3962",
+                "name": "send",
+                "arguments": {
+                  "target": "private:alice",
+                  "text": "你的当前角色是 reviewer（审阅者）。你的私有代号是 ALICE-PRIVATE-77。"
+                }
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 21397,
+              "completion_tokens": 822,
+              "total_tokens": 22219,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 21397,
+              "prompt_tokens_details": {
+                "cached_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 740
+              }
+            }
+          }
+        }
+      ]
+    },
+    "task_room_usc": {
+      "design": "task_room_usc",
+      "cases": 1,
+      "pass_rate": 1.0,
+      "category_rates": {
+        "fact_recall": 1.0
+      },
+      "input_tokens": 12543,
+      "output_tokens": 344,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 306,
+            "context_messages": 3,
+            "context_tokens": 12823
+          },
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "expected_facts": true,
+              "current_not_stale": true
+            },
+            "content": "[TO_SELF]Alice asks in her private conversation for her current role and private alias. Per alice-002, her current role is reviewer (learner is obsolete). Per alice-001, her private alias is ALICE-PRIVATE-77, which must not be disclosed to Bob, Carol, or the group — answering her in her own private channel is permitted.[/TO_SELF]\n\n[TO_USER]你的当前角色是：**reviewer（审阅者）**（你以前的 learner 角色已不再生效）。\n\n你的私有代号是：**ALICE-PRIVATE-77**。\n\n这是仅限你在私人会话中可见的信息，我不会向 Bob、Carol 或群里透露。[/TO_USER]",
+            "tool_calls": [],
+            "usage": {
+              "prompt_tokens": 12543,
+              "completion_tokens": 344,
+              "total_tokens": 12887,
+              "prompt_cache_hit_tokens": 0,
+              "prompt_cache_miss_tokens": 12543,
+              "prompt_tokens_details": {
+                "cached_tokens": 0
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 193
+              }
+            }
+          }
+        }
+      ]
+    },
+    "formatted_llm": {
+      "design": "formatted_llm",
+      "cases": 1,
+      "pass_rate": 1.0,
+      "category_rates": {
+        "fact_recall": 1.0
+      },
+      "input_tokens": 18971,
+      "output_tokens": 516,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 346,
+            "context_messages": 3,
+            "context_tokens": 17227
+          },
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "expected_facts": true,
+              "current_not_stale": true
+            },
+            "content": "[user=alice]根据你的私有记录（private:alice）：\n\n- **当前角色**：reviewer（评审者）。你以前是 learner，但那不是当前角色。\n- **私有代号**：ALICE-PRIVATE-77。\n\n这两项都属于你的私有信息，仅在本私有会话中向你本人确认，不会向 Bob、Carol 或群组披露。[/user]",
+            "tool_calls": [],
+            "usage": {
+              "prompt_tokens": 18971,
+              "completion_tokens": 516,
+              "total_tokens": 19487,
+              "prompt_cache_hit_tokens": 256,
+              "prompt_cache_miss_tokens": 18715,
+              "prompt_tokens_details": {
+                "cached_tokens": 256
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 433
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
