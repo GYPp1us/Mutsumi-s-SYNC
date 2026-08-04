@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from experiments.context_v3.client import ModelResponse
 from experiments.context_v3.context import build_messages
+from experiments.context_v3.long_scenario import build_scenario
+from experiments.context_v3.production import build_ledger_history
 from experiments.context_v3.run import score
 from experiments.context_v3.scenario import CASES
 
@@ -29,7 +35,7 @@ def test_private_delivery_requires_target_and_never_group_target() -> None:
             {
                 "name": "send",
                 "arguments": {
-                    "target": "private:alice",
+                    "target": "private:3001",
                     "text": "answers/2026-08-04-climate.md",
                 },
             },
@@ -107,3 +113,45 @@ def test_worker_and_scheduler_require_natural_language_contract() -> None:
     )
     assert score(schedule, schedule_response, "ledger_projection")["passed"]
 
+
+@pytest.mark.asyncio
+async def test_long_production_projection_keeps_current_private_lens_only() -> None:
+    records, cases = build_scenario(8)
+    history, stats = await build_ledger_history(records, cases[0])
+    rendered = json.dumps(history, ensure_ascii=False)
+
+    assert stats["compaction_calls"] == 0
+    assert "ALICE-PRIVATE-77" in rendered
+    assert "BOB-PRIVATE-29" not in rendered
+    assert "CAROL-PRIVATE-51" not in rendered
+
+
+def test_long_scenario_exposes_numeric_routing_ids_without_making_them_private_facts() -> None:
+    records, _ = build_scenario(320)
+    rendered = "\n".join(record.text for record in records)
+
+    assert len(records) > 300
+    assert "qq:user:3001" in rendered
+    assert "qq:user:3002" in rendered
+    assert "qq:user:3003" in rendered
+    assert "CAROL-PRIVATE-51" in rendered
+
+
+def test_long_group_answer_routes_to_the_current_actor_private_target() -> None:
+    records, cases = build_scenario(8)
+    case = next(item for item in cases if item.name == "group_answer_to_alice")
+    response = ModelResponse(
+        content="",
+        tool_calls=(
+            {
+                "name": "send",
+                "arguments": {
+                    "target": "private:3001",
+                    "artifact": "artifacts/atlas/2026-08-09/answer.md",
+                },
+            },
+        ),
+        usage={},
+    )
+
+    assert score(case, response, "formatted_llm")["passed"]

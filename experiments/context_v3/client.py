@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass
@@ -161,10 +162,17 @@ def _parse_responses(data: dict[str, Any]) -> ModelResponse:
 
 
 class LLMClient:
-    def __init__(self, provider: Provider, api_key: str, timeout: float = 180.0) -> None:
+    def __init__(
+        self,
+        provider: Provider,
+        api_key: str,
+        timeout: float = 180.0,
+        max_retries: int = 5,
+    ) -> None:
         self.provider = provider
         self._api_key = api_key
         self.timeout = timeout
+        self.max_retries = max_retries
 
     async def complete(
         self,
@@ -200,11 +208,33 @@ class LLMClient:
                 "model_reasoning_effort": "high",
             }
             endpoint = f"{self.provider.base_url.rstrip('/')}/responses"
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(endpoint, headers=headers, json=payload)
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"{self.provider.name} returned HTTP {response.status_code}: {response.text[:500]}"
-            )
-        data = response.json()
-        return _parse_chat(data) if self.provider.protocol == "chat" else _parse_responses(data)
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(endpoint, headers=headers, json=payload)
+                if response.status_code == 500 or response.status_code >= 500:
+                    # The experiment gateway is flaky; back off and retry.
+                    await asyncio.sleep(min(20.0, 2.0 * (attempt - 1) + 2.0))
+                    last_error = RuntimeError(
+                        f"{self.provider.name} returned HTTP {response.status_code}: {response.text[:300]}"
+                    )
+                    continue
+                if response.status_code == 429:
+                    await asyncio.sleep(min(30.0, 5.0 * attempt))
+                    last_error = RuntimeError(
+                        f"{self.provider.name} returned HTTP 429: {response.text[:300]}"
+                    )
+                    continue
+                if response.status_code >= 400:
+                    raise RuntimeError(
+                        f"{self.provider.name} returned HTTP {response.status_code}: {response.text[:500]}"
+                    )
+                data = response.json()
+                return _parse_chat(data) if self.provider.protocol == "chat" else _parse_responses(data)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_error = exc
+                await asyncio.sleep(min(30.0, 2.0 * attempt))
+        raise RuntimeError(
+            f"{self.provider.name} request failed after {self.max_retries} attempts: {last_error}"
+        )

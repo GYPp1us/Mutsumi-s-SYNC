@@ -1,0 +1,179 @@
+{
+  "experiment": "context-v3-long-multi-conversation",
+  "noise_turns": 320,
+  "records": 348,
+  "cases": [
+    "ad_hoc_partner_send"
+  ],
+  "dry_run": false,
+  "provider": {
+    "name": "deepseek-v4-flash",
+    "model": "deepseek-v4-flash",
+    "protocol": "chat",
+    "base_url": "https://opencode.ai/zen/go/v1",
+    "api_key_env": "DEEPSEEK_API_KEY"
+  },
+  "designs": {
+    "ledger_projection": {
+      "design": "ledger_projection",
+      "cases": 1,
+      "pass_rate": 0.0,
+      "category_rates": {
+        "dispatch_efficiency": 0.0
+      },
+      "input_tokens": 20259,
+      "output_tokens": 2400,
+      "results": [
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22728
+          },
+          "score": {
+            "passed": false,
+            "checks": {
+              "one_send": false,
+              "no_other_tool": true,
+              "target_and_artifact": false,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [],
+            "usage": {
+              "prompt_tokens": 20259,
+              "completion_tokens": 2400,
+              "total_tokens": 22659,
+              "prompt_cache_hit_tokens": 768,
+              "prompt_cache_miss_tokens": 19491,
+              "prompt_tokens_details": {
+                "cached_tokens": 768
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 2400
+              }
+            }
+          }
+        }
+      ]
+    },
+    "task_room_usc": {
+      "design": "task_room_usc",
+      "cases": 1,
+      "pass_rate": 1.0,
+      "category_rates": {
+        "dispatch_efficiency": 1.0
+      },
+      "input_tokens": 11914,
+      "output_tokens": 834,
+      "results": [
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12148
+          },
+          "score": {
+            "passed": true,
+            "checks": {
+              "one_send": true,
+              "no_other_tool": true,
+              "target_and_artifact": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_Eys0jjYqTwRnvZLImmqn2069",
+                "name": "send",
+                "arguments": {
+                  "target": "private:3003",
+                  "text": "ATLAS-EVIDENCE-42（新合作方专用，不经过目标群）: 已验证的证据内容位于 artifacts/atlas/2026-08-09/evidence.md，现作为私有文本工件交付给你。"
+                }
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 11914,
+              "completion_tokens": 834,
+              "total_tokens": 12748,
+              "prompt_cache_hit_tokens": 11648,
+              "prompt_cache_miss_tokens": 266,
+              "prompt_tokens_details": {
+                "cached_tokens": 11648
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 727
+              }
+            }
+          }
+        }
+      ]
+    },
+    "formatted_llm": {
+      "design": "formatted_llm",
+      "cases": 1,
+      "pass_rate": 0.0,
+      "category_rates": {
+        "dispatch_efficiency": 0.0
+      },
+      "input_tokens": 19133,
+      "output_tokens": 1438,
+      "results": [
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17367
+          },
+          "score": {
+            "passed": false,
+            "checks": {
+              "one_send": false,
+              "no_other_tool": false,
+              "target_and_artifact": false,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_knjsEbFMGjibzQ7gdFaj0529",
+                "name": "delegate_task",
+                "arguments": {
+                  "prompt": "Read the verified evidence artifact for ATLAS-EVIDENCE-42 at artifacts/atlas/2026-08-09/evidence.md and report its FULL verbatim content through report_task. Do not summarize, paraphrase, or truncate. The exact text is needed so it can be delivered verbatim as a private text artifact to an external partner. If the file is unavailable, report failure through report_task stating clearly that no content is ready."
+                }
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 19133,
+              "completion_tokens": 1438,
+              "total_tokens": 20571,
+              "prompt_cache_hit_tokens": 18944,
+              "prompt_cache_miss_tokens": 189,
+              "prompt_tokens_details": {
+                "cached_tokens": 18944
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 1304
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

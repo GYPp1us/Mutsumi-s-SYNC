@@ -61,6 +61,8 @@
     <div class="thesis"><strong>先给判断：</strong>完全格式化输入可以作为最小原型，但不应把隐私和送达结果交给模型猜。更稳的折中是 <strong>Shared Blackboard + Private Lens + Delivery Receipt</strong>：共享语义保持通用，后端只守住角色可见性、目标地址、幂等和真实回执。</div>
   </header>
 
+  <div class="thesis"><strong>实验后的修正：</strong>在真实长上下文 smoke 中，纯格式化方案的事实召回和私密边界高于本次 Room 方案；因此这里的 Blackboard/Lens 只应是可选的语义组织，不应成为模型必须依赖的业务运行时。最终仍需要最小的目标校验、幂等和送达回执。</div>
+
   <h2>四条路线</h2>
   <div class="grid">
     <article class="panel recommended">

@@ -10,7 +10,8 @@ from .scenario import COMMON_INSTRUCTIONS, Case, RECORDS, Record, visible_record
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "send",
-        "description": "Send a verified cross-channel message. The target is mandatory and must be explicit.",
+        "description": "Send a verified cross-channel message. The target is mandatory and must be explicit. "
+        "Use artifact to reference an existing file by path; the platform reads it and sends its content.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -19,8 +20,12 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "private:<numeric_id> or group:<numeric_id>",
                 },
                 "text": {"type": "string", "description": "The exact message to send."},
+                "artifact": {
+                    "type": "string",
+                    "description": "Path of an existing artifact file whose content should be sent.",
+                },
             },
-            "required": ["target", "text"],
+            "required": ["target"],
             "additionalProperties": False,
         },
     },

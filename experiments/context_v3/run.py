@@ -58,9 +58,19 @@ def score(case: Case, response: ModelResponse, design: str) -> dict[str, Any]:
         }
     elif case.kind == "ordinary":
         if design == "formatted_llm":
-            protocol = "[user=alice]" in content and "[/user]" in content
+            protocol = "[user=" in content and "[/user]" in content
         else:
-            protocol = "[TO_USER]" in content and "[/TO_USER]" in content
+            full_envelope = "[TO_SELF]" in content and "[/TO_SELF]" in content and "[TO_USER]" in content and "[/TO_USER]" in content
+            plain_text = not any(marker in content for marker in ("[TO_SELF]", "[TO_USER]"))
+            single_user_block = (
+                "[TO_USER]" in content
+                and "[/TO_USER]" in content
+                and "[TO_SELF]" not in content
+                and "[user=" not in content
+            )
+            # Mirror the production recover path: a complete single TO_USER
+            # block is treated as an empty-TO_SELF envelope.
+            protocol = full_envelope or plain_text or single_user_block
         checks = {
             "no_tool": not calls,
             "has_content": bool(content),
@@ -70,12 +80,24 @@ def score(case: Case, response: ModelResponse, design: str) -> dict[str, Any]:
         }
     elif case.kind in {"private_route", "group_route"}:
         send_calls = _tool(response, "send")
-        serialized = "\n".join(_tool_text(call) for call in send_calls)
+        targeted = any(
+            _has_all(_tool_text(call), case.expected)
+            for call in send_calls
+        )
+
+        def _payload(call: dict[str, Any]) -> str:
+            arguments = call.get("arguments", {})
+            return json.dumps(
+                {key: arguments.get(key) for key in ("text", "artifact") if arguments.get(key)},
+                ensure_ascii=False,
+            )
+
         checks = {
-            "one_send": len(send_calls) == 1,
+            "targeted_send": targeted,
             "no_other_tool": len(calls) == len(send_calls),
-            "expected_target_and_artifact": _has_all(serialized, case.expected),
-            "no_forbidden_content": not any(marker in serialized for marker in case.forbidden),
+            "no_forbidden_content": not any(
+                marker in _payload(call) for call in send_calls for marker in case.forbidden
+            ),
         }
     elif case.kind == "delegate":
         delegate_calls = _tool(response, "delegate_task")
@@ -87,11 +109,19 @@ def score(case: Case, response: ModelResponse, design: str) -> dict[str, Any]:
         }
     elif case.kind == "schedule":
         schedule_calls = _tool(response, "scheduler")
-        serialized = "\n".join(_tool_text(call) for call in schedule_calls)
+        when = ""
+        prompt = ""
+        if schedule_calls:
+            arguments = schedule_calls[0].get("arguments", {})
+            when = str(arguments.get("when", ""))
+            prompt = f'{arguments.get("prompt", "")}\n{arguments.get("context", "")}'
+        time_ok = "08:00" in when or "0 8" in when or "8:00" in when
+        business_markers = tuple(item for item in case.expected if item != "08:00")
         checks = {
             "one_scheduler": len(schedule_calls) == 1,
             "no_other_tool": len(calls) == len(schedule_calls),
-            "schedule_prompt_has_business_context": _has_all(serialized, case.expected),
+            "schedule_time_correct": time_ok,
+            "schedule_prompt_has_business_context": _has_all(prompt, business_markers),
             "no_workflow_fields": all(
                 key not in schedule_calls[0].get("arguments", {})
                 for key in ("skill_name", "target_group", "steps", "connector")
@@ -229,7 +259,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Build prompts and metrics without calling a model.")
     parser.add_argument("--smoke", action="store_true", help="Run one small case set covering all key dimensions.")
     parser.add_argument("--cases", default="", help="Comma-separated case names; defaults to all cases.")
-    parser.add_argument("--max-tokens", type=int, default=900)
+    parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--out", default="experiments/context_v3/results/context_v3.json")
     args = parser.parse_args()

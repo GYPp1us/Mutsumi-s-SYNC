@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Context v3 真实实验结果</title>
+<style>
+:root{--ink:#18202b;--muted:#5d6875;--line:#d9dee5;--paper:#f6f8fa;--white:#fff;--blue:#2463a9;--green:#17745b;--red:#b84a46}
+*{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1160px;margin:auto;padding:40px 22px 70px} h1{font-size:42px;line-height:1.1;margin:0 0 12px} h2{margin:42px 0 14px} h3{margin:0 0 7px}
+.lead,.note{color:var(--muted)} .callout{margin:22px 0;padding:18px 20px;background:var(--white);border-left:4px solid var(--blue)}
+table{width:100%;border-collapse:collapse;background:var(--white)} th,td{padding:11px 10px;border:1px solid var(--line);text-align:left;vertical-align:top} thead th{background:#eaf0f5;font-size:13px}
+th{font-weight:750} code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.9em} section{background:var(--white);border:1px solid var(--line);padding:16px;margin:10px 0} ul{margin:8px 0 0;padding-left:22px} .good{color:var(--green);font-weight:700}
+@media(max-width:760px){h1{font-size:31px} table{font-size:12px} th,td{padding:7px 6px}}
+</style></head><body><main>
+<p class="note">Context v3 / DeepSeek V4 Flash / experiments\context_v3\results\deepseek_full_regraded.json</p>
+<h1>三种上下文设计的真实对照</h1>
+<p class="lead">320 条噪声记录，28 条核心协作事实，13 个请求；不做上下文回收。每个设计使用相同模型、工具 schema、角色资料和当前输入。</p>
+<div class="callout"><strong>结果先说：</strong>在这一次实验中，纯格式化方案总通过率最高，但它仍需要最小的后端能力边界；Task Room 的确降低了上下文规模，却没有在本组复杂调度上稳定胜出。Room 不应被提升为强制的业务抽象。</div>
+<h2>汇总</h2>
+<table><thead><tr><th>设计</th><th>总体</th><th>事实召回</th><th>私密边界</th><th>指令遵循</th><th>调度投递</th><th>平均上下文</th><th>输入 tokens</th></tr></thead><tbody><tr><th>ledger_projection</th><td>38.5%</td><td>25.0%</td><td>0.0%</td><td>66.7%</td><td>50.0%</td><td>23,067</td><td>267,174</td></tr><tr><th>task_room_usc</th><td>61.5%</td><td>100.0%</td><td>50.0%</td><td>66.7%</td><td>25.0%</td><td>12,321</td><td>156,923</td></tr><tr><th>formatted_llm</th><td>76.9%</td><td>100.0%</td><td>100.0%</td><td>66.7%</td><td>50.0%</td><td>17,365</td><td>248,648</td></tr></tbody></table>
+<p class="note">平均上下文是 provider 请求的估算值；输入 tokens 是模型返回的 usage，受缓存影响，不能直接当作价格。</p>
+<h2>读法</h2>
+<p>Ledger 的主要失败不是“完全记不住”，而是长历史下把当前私聊回答误当成跨会话动作，向当前目标调用 <code>send</code>；它在 13 个用例中私密边界为 0。Task Room 的主要收益是更小的输入和稳定的基础召回，但群内拒答、私聊答案、fan-out 和新合作方动作仍会出现错选工具或重复委派。纯格式化上下文在本轮事实召回和隐私边界上最好，但在需要把“已有 artifact”转换成可发送内容时，会选择重新委派或耗尽 reasoning。</p>
+<h2>失败用例</h2><section><h3>ledger_projection</h3><ul><li><code>alice_identity</code>: no_tool, expected_facts</li><li><code>carol_identity</code>: expected_facts</li><li><code>current_decision</code>: no_tool, expected_facts</li><li><code>alice_asks_bob_private</code>: no_tool, explicit_boundary</li><li><code>group_asks_alice_private</code>: no_tool, explicit_boundary</li><li><code>delegate_worker</code>: natural_prompt_complete</li><li><code>answer_in_bob_private</code>: one_send, target_and_artifact</li><li><code>ad_hoc_partner_send</code>: one_send, no_other_tool, target_and_artifact</li></ul></section><section><h3>task_room_usc</h3><ul><li><code>group_asks_alice_private</code>: no_tool, explicit_boundary</li><li><code>delegate_worker</code>: natural_prompt_complete</li><li><code>answer_in_bob_private</code>: one_send, no_other_tool, target_and_artifact</li><li><code>ad_hoc_partner_send</code>: one_send, target_and_artifact</li><li><code>fanout_status</code>: three_sends, all_targets_exact</li></ul></section><section><h3>formatted_llm</h3><ul><li><code>delegate_worker</code>: natural_prompt_complete</li><li><code>publish_exercise</code>: one_send, no_other_tool, target_and_artifact</li><li><code>ad_hoc_partner_send</code>: one_send, target_and_artifact</li></ul></section>
+<h2>结论</h2>
+<div class="callout"><strong>建议的架构边界：</strong>让 LLM 保持自由规划，系统只做输入格式化、身份/可见性过滤、工具参数校验、目标地址、幂等和真实回执。共享黑板或 Room 可以作为 prompt 里的自然语言组织方式，但不要让模型必须先理解 Room 才能发现新任务关系。</div>
+<p class="note">限制：单模型、单次 13-case run、合成资料、未覆盖回收和重启恢复。原始脱敏结果：<code>experiments\context_v3\results\deepseek_full_regraded.json</code>。</p>
+</main></body></html>

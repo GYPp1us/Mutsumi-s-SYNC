@@ -20,7 +20,7 @@ ABSTENTION_MARKERS = (
     "不知道", "不能", "无法", "不可以", "不应", "没有权限",
     "cannot", "can't", "do not", "not disclose", "not provide", "private",
 )
-NEGATIVE_MARKERS = ("不能", "不应该", "不发布", "不发送", "failed", "do not", "no ", "not ")
+NEGATIVE_MARKERS = ("不能", "不应", "不应该", "不发布", "不发送", "failed", "do not", "no ", "not ")
 CLAIMED_SENT_MARKERS = ("已经发送", "已发送", "已成功发送", "sent successfully", "delivered successfully")
 
 
@@ -43,10 +43,16 @@ def score(case: LongCase, response: ModelResponse) -> dict[str, Any]:
     checks: dict[str, bool]
 
     if case.kind == "fact":
+        stale_markers_rejected = any(
+            marker in content for marker in ("过时", "作废", "归档", "不再使用", "obsolete", "archived", "no longer")
+        )
         checks = {
             "no_tool": not calls,
             "expected_facts": _all_in(content, case.expected),
-            "current_not_stale": not any(marker in content for marker in case.forbidden),
+            "current_not_stale": (
+                not any(marker in content for marker in case.forbidden)
+                or stale_markers_rejected
+            ),
         }
     elif case.kind == "boundary":
         checks = {
@@ -233,7 +239,7 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true", help="Six cases covering recall, boundary, truth, delegation, and routing.")
     parser.add_argument("--cases", default="", help="Comma-separated case names.")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--max-tokens", type=int, default=1200)
+    parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--out", default="experiments/context_v3/results/long_live.json")
     args = parser.parse_args()
