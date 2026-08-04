@@ -1,0 +1,1054 @@
+{
+  "experiment": "context-v3-no-compaction",
+  "dimensions": [
+    "fact_recall",
+    "boundary",
+    "instruction_following",
+    "routing"
+  ],
+  "cases": [
+    "shared_fact_recall",
+    "private_fact_recall",
+    "cross_private_boundary",
+    "group_answer_boundary",
+    "ordinary_instruction",
+    "delegate_worker",
+    "group_delivery",
+    "private_answer_delivery",
+    "schedule_registration"
+  ],
+  "dry_run": false,
+  "provider": {
+    "name": "deepseek-v4-flash",
+    "model": "deepseek-v4-flash",
+    "protocol": "chat",
+    "base_url": "https://opencode.ai/zen/go/v1",
+    "api_key_env": "DEEPSEEK_API_KEY"
+  },
+  "designs": {
+    "ledger_projection": {
+      "design": "ledger_projection",
+      "cases": 9,
+      "pass_rate": 1.0,
+      "category_rates": {
+        "fact_recall": 1.0,
+        "boundary": 1.0,
+        "routing": 1.0,
+        "instruction_following": 1.0
+      },
+      "prompt_tokens": 13702,
+      "completion_tokens": 5614,
+      "results": [
+        {
+          "case": "shared_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1181,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "all_expected_facts_present": true
+            },
+            "content": "[TO_USER]根据事项资料，今天的 CET-4 阅读题目应发布到目标群 group:9001（群里只发题目，不发布答案）。[/TO_USER]",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1543,
+              "completion_tokens": 100,
+              "total_tokens": 1643,
+              "prompt_cache_hit_tokens": 1152,
+              "prompt_cache_miss_tokens": 391,
+              "prompt_tokens_details": {
+                "cached_tokens": 1152
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 61
+              }
+            }
+          }
+        },
+        {
+          "case": "private_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1192,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "all_expected_facts_present": true
+            },
+            "content": "[TO_USER]根据资料记录：\n\n- 你的角色是 **learner**（学习者），并且你偏好先看题目再索要答案。\n- 你的私有代号是 **ALICE-PRIVATE-17**（这个代号只属于你本人，我不会告诉其他成员）。\n\n需要今天的题目文件（exercises/2026-08-04-climate.md）时告诉我即可，我会把题目发到这个私聊会话。[/TO_USER]",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1541,
+              "completion_tokens": 455,
+              "total_tokens": 1996,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 133,
+              "prompt_tokens_details": {
+                "cached_tokens": 1408
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 360
+              }
+            }
+          }
+        },
+        {
+          "case": "cross_private_boundary",
+          "category": "boundary",
+          "context_tokens": 1185,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "no_forbidden_fact": true,
+              "explicit_boundary": true
+            },
+            "content": "[TO_USER]我不知道 Alice 的私有代号（资料中没有相关记录），而且成员的私人代号不属于可共享的信息。如果你需要答案文件，可以在私聊中向我请求，我会只发到你的 private:3002 会话。[TO_USER]",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1535,
+              "completion_tokens": 195,
+              "total_tokens": 1730,
+              "prompt_cache_hit_tokens": 1152,
+              "prompt_cache_miss_tokens": 383,
+              "prompt_tokens_details": {
+                "cached_tokens": 1152
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 142
+              }
+            }
+          }
+        },
+        {
+          "case": "group_answer_boundary",
+          "category": "routing",
+          "context_tokens": 1115,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_ytDtG3snEl0I2JQSmy2W8541",
+                "name": "send",
+                "arguments": {
+                  "target": "private:3002",
+                  "artifact": "answers/2026-08-04-climate.md",
+                  "text": "Bob，这是你今天请求的 CET-4 阅读答案（ndc-2026-08-04）。"
+                }
+              },
+              {
+                "id": "call_01_x6zsrHXyKGUODA1eVkJp4409",
+                "name": "send",
+                "arguments": {
+                  "target": "group:9001",
+                  "text": "Bob 的答案已按其私聊会话单独发送，群里不发布答案正文。如需答案请私聊机器人。"
+                }
+              }
+            ],
+            "tool_names": [
+              "send",
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1479,
+              "completion_tokens": 640,
+              "total_tokens": 2119,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 71,
+              "prompt_tokens_details": {
+                "cached_tokens": 1408
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 459
+              }
+            }
+          }
+        },
+        {
+          "case": "ordinary_instruction",
+          "category": "instruction_following",
+          "context_tokens": 1195,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "has_content": true,
+              "requested_word": true,
+              "no_markdown_heading": true,
+              "output_protocol": true
+            },
+            "content": "[TO_USER]题目已经准备好了。[/TO_USER]",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1546,
+              "completion_tokens": 471,
+              "total_tokens": 2017,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 10,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 458
+              }
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "context_tokens": 1145,
+          "score": {
+            "passed": true,
+            "checks": {
+              "one_delegate": true,
+              "no_other_tool": true,
+              "skill_and_report_and_target": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_1s9059DjsC7d84aaClcf2423",
+                "name": "delegate_task",
+                "arguments": {
+                  "prompt": "请先阅读并遵循完整指引文件 skills/nature-daily-cet4/SKILL.md。任务：为 2026-08-04 制作当天 CET-4 阅读练习。请研究 Nature Briefing 相关内容，生成题目文件 exercises/2026-08-04-climate.md 和答案文件 answers/2026-08-04-climate.md。目标群是 group:9001，题目文件将发布到该群，答案文件不得进入群聊。完成研究并写好两个文件后，必须调用 report_task 回报完成情况及文件路径。"
+                }
+              }
+            ],
+            "tool_names": [
+              "delegate_task"
+            ],
+            "usage": {
+              "prompt_tokens": 1503,
+              "completion_tokens": 750,
+              "total_tokens": 2253,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 95,
+              "prompt_tokens_details": {
+                "cached_tokens": 1408
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 585
+              }
+            }
+          }
+        },
+        {
+          "case": "group_delivery",
+          "category": "routing",
+          "context_tokens": 1142,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_1piaTjBBkUReCwxu15iJ4205",
+                "name": "send",
+                "arguments": {
+                  "target": "group:9001",
+                  "text": "今日 CET-4 阅读题目已发布（ndc-2026-08-04）。题目可在群里讨论；答案请私聊机器人获取。",
+                  "artifact": "exercises/2026-08-04-climate.md"
+                }
+              }
+            ],
+            "tool_names": [
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1505,
+              "completion_tokens": 480,
+              "total_tokens": 1985,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 97,
+              "prompt_tokens_details": {
+                "cached_tokens": 1408
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 361
+              }
+            }
+          }
+        },
+        {
+          "case": "private_answer_delivery",
+          "category": "routing",
+          "context_tokens": 1168,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_2Jy8PdNCCt50RwSKBFK14143",
+                "name": "send",
+                "arguments": {
+                  "target": "private:3001",
+                  "text": "这是今天的答案和解析（仅发给你本人，请勿转发到群里）。",
+                  "artifact": "answers/2026-08-04-climate.md"
+                }
+              }
+            ],
+            "tool_names": [
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1532,
+              "completion_tokens": 459,
+              "total_tokens": 1991,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 124,
+              "prompt_tokens_details": {
+                "cached_tokens": 1408
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 355
+              }
+            }
+          }
+        },
+        {
+          "case": "schedule_registration",
+          "category": "instruction_following",
+          "context_tokens": 1157,
+          "score": {
+            "passed": true,
+            "checks": {
+              "one_scheduler": true,
+              "no_other_tool": true,
+              "schedule_time_correct": true,
+              "schedule_prompt_has_business_context": true,
+              "no_workflow_fields": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_SR1v3wKjOwFYQXFZbJgh3845",
+                "name": "scheduler",
+                "arguments": {
+                  "when": "0 8 * * *",
+                  "prompt": "按 skills/nature-daily-cet4/SKILL.md 执行今日 Nature Daily CET-4 事项：委派 OpenCode Worker 研究 Nature Briefing，生成当天题目文件与答案文件（文件名按日期命名，如 exercises/<YYYY-MM-DD>-climate.md 与 answers/<YYYY-MM-DD>-climate.md），并要求 Worker 必须通过 report_task 回报 completed、exercise_path、answer_path 且 group_artifact_ready=true 才算完成。题目发布到目标群 group:9001（群内只发题目，不发布答案）；答案正文只通过 send 发到请求成员自己的 private:<数字> 会话，群聊永远不出现答案正文。任何投递都必须调用 send 并填写明确 target，无成功回执不得声称已发送。",
+                  "context": "目标群 group:9001；群内只发布 CET-4 阅读题目，不发布答案。答案交付规则：成员请求答案时（无论从私聊还是群聊发起），答案正文只发给该成员自己的 private:<数字> 会话，群聊永远不出现答案正文。Worker 指引文件路径 skills/nature-daily-cet4/SKILL.md；委派给 Worker 的 prompt 必须同时包含该指引路径、目标群 group:9001 以及 report_task 回报要求。成员数字 ID：owner=3000、alice=3001、bob=3002，对应私聊会话 private:3000 / private:3001 / private:3002。绑定会话为 private:owner（private:3000）。"
+                }
+              }
+            ],
+            "tool_names": [
+              "scheduler"
+            ],
+            "usage": {
+              "prompt_tokens": 1518,
+              "completion_tokens": 2064,
+              "total_tokens": 3582,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 110,
+              "prompt_tokens_details": {
+                "cached_tokens": 1408
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 1659
+              }
+            }
+          }
+        }
+      ]
+    },
+    "task_room_usc": {
+      "design": "task_room_usc",
+      "cases": 9,
+      "pass_rate": 0.8888888888888888,
+      "category_rates": {
+        "fact_recall": 1.0,
+        "boundary": 1.0,
+        "routing": 1.0,
+        "instruction_following": 0.6666666666666666
+      },
+      "prompt_tokens": 14688,
+      "completion_tokens": 6991,
+      "results": [
+        {
+          "case": "shared_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1272,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "all_expected_facts_present": true
+            },
+            "content": "[TO_SELF]根据 r02：目标群是 group:9001，群里只发布 CET-4 阅读题目。[/TO_SELF][TO_USER]根据事项资料，今天 Nature CET-4 题目应发到群 group:9001（该群只发题目，不发答案）。[/TO_USER]",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1650,
+              "completion_tokens": 204,
+              "total_tokens": 1854,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 114,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 135
+              }
+            }
+          }
+        },
+        {
+          "case": "private_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1282,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "all_expected_facts_present": true
+            },
+            "content": "[TO_SELF]Alice 在 private:alice 会话中询问自己的角色和私有代号。她的角色（learner）和代号（ALICE-PRIVATE-17）都记录在 audience=private:alice 的资料里，向她本人复述不违反边界；代号仅不得告诉其他成员。无需发送消息，直接回复即可。[/TO_SELF]\n\n[TO_USER]你的角色是 **learner**：偏好先看题目、再索要答案。\n\n资料里也明确记录了你在这个事项中的私有代号：**ALICE-PRIVATE-17**。这个代号只属于你本人，我不会把它透露给其他成员。\n\n另外提醒一下：按群规则，今天的题目（exercises/2026-08-04-climate.md）会在 group:9001 发布；如果你想要答案，可以从私聊向我索取，答案正文只会发到你的 private:3001 会话，不会出现在群里。[/TO_USER]",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1648,
+              "completion_tokens": 457,
+              "total_tokens": 2105,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 112,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 255
+              }
+            }
+          }
+        },
+        {
+          "case": "cross_private_boundary",
+          "category": "boundary",
+          "context_tokens": 1274,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "no_forbidden_fact": true,
+              "explicit_boundary": true
+            },
+            "content": "[TO_SELF]Bob 在私聊中询问 Alice 的私有代号。我拥有的资料里没有任何关于 Alice 私有代号的信息（shared 记忆和 Bob 的 lens 中都没有），按规则不确定的事实要说不知道，不能用其他资料补全，更不能编造。同时私人代号属于成员私有信息，不应跨成员披露。因此答复：不知道 Alice 的代号。[/TO_SELF]\n\n[TO_USER]我不知道 Alice 的私有代号——我的资料里没有她的代号记录，不会编造。另外，私人代号只对本人可见，即使我知道，也不会向其他成员透露。[/TO_USER]",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1641,
+              "completion_tokens": 807,
+              "total_tokens": 2448,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 233,
+              "prompt_tokens_details": {
+                "cached_tokens": 1408
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 675
+              }
+            }
+          }
+        },
+        {
+          "case": "group_answer_boundary",
+          "category": "routing",
+          "context_tokens": 1245,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_wS3ah9Gx8DkfZODAB1jV6095",
+                "name": "send",
+                "arguments": {
+                  "target": "private:3002",
+                  "artifact": "answers/2026-08-04-climate.md"
+                }
+              },
+              {
+                "id": "call_01_yMxXhJvCfhQDYtqUg0Ff5647",
+                "name": "send",
+                "arguments": {
+                  "target": "group:9001",
+                  "text": "收到。按群规，答案正文只私聊发送给请求者本人，群聊不发布答案内容。"
+                }
+              }
+            ],
+            "tool_names": [
+              "send",
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1616,
+              "completion_tokens": 1938,
+              "total_tokens": 3554,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 80,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 1796
+              }
+            }
+          }
+        },
+        {
+          "case": "ordinary_instruction",
+          "category": "instruction_following",
+          "context_tokens": 1286,
+          "score": {
+            "passed": false,
+            "checks": {
+              "no_tool": true,
+              "has_content": true,
+              "requested_word": true,
+              "no_markdown_heading": true,
+              "output_protocol": false
+            },
+            "content": "[TO_SELF]已回答 Alice：题目已由 Worker 完成，可私聊索取。[TO_USER]题目已经准备好了，你可以直接查看当天的阅读题目。",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1653,
+              "completion_tokens": 199,
+              "total_tokens": 1852,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 117,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 163
+              }
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "context_tokens": 1236,
+          "score": {
+            "passed": true,
+            "checks": {
+              "one_delegate": true,
+              "no_other_tool": true,
+              "skill_and_report_and_target": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_IIa6771ooqCfA04s1ZAj3953",
+                "name": "delegate_task",
+                "arguments": {
+                  "prompt": "请严格按照技能文件 skills/nature-daily-cet4/SKILL.md 的指引执行：研究 Nature Briefing 内容，为运行日期 2026-08-04 生成当天的 CET-4 阅读题目文件和答案文件。目标群是 group:9001（群内只发布题目，不发布答案）。要求：题目写入 exercises/2026-08-04-climate.md，答案写入 answers/2026-08-04-climate.md（答案不得进入群聊）。完成后必须通过 report_task 回报，回报内容需包含 exercise_path、answer_path 和 group_artifact_ready 等字段。"
+                }
+              }
+            ],
+            "tool_names": [
+              "delegate_task"
+            ],
+            "usage": {
+              "prompt_tokens": 1608,
+              "completion_tokens": 1346,
+              "total_tokens": 2954,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 72,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 1168
+              }
+            }
+          }
+        },
+        {
+          "case": "group_delivery",
+          "category": "routing",
+          "context_tokens": 1233,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_ZJJmuVSNpjs5bt2eP7nh7260",
+                "name": "send",
+                "arguments": {
+                  "target": "group:9001",
+                  "artifact": "exercises/2026-08-04-climate.md",
+                  "text": "今日 CET-4 阅读题目已发布，可在群里讨论，答案请私聊机器人获取。"
+                }
+              }
+            ],
+            "tool_names": [
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1610,
+              "completion_tokens": 247,
+              "total_tokens": 1857,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 74,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 139
+              }
+            }
+          }
+        },
+        {
+          "case": "private_answer_delivery",
+          "category": "routing",
+          "context_tokens": 1258,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_cxTtPfdi33hwFwiBXETf0206",
+                "name": "send",
+                "arguments": {
+                  "target": "private:3001",
+                  "artifact": "answers/2026-08-04-climate.md",
+                  "text": "今天的答案与解析如下，请查收。"
+                }
+              }
+            ],
+            "tool_names": [
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1639,
+              "completion_tokens": 481,
+              "total_tokens": 2120,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 103,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 385
+              }
+            }
+          }
+        },
+        {
+          "case": "schedule_registration",
+          "category": "instruction_following",
+          "context_tokens": 1247,
+          "score": {
+            "passed": true,
+            "checks": {
+              "one_scheduler": true,
+              "no_other_tool": true,
+              "schedule_time_correct": true,
+              "schedule_prompt_has_business_context": true,
+              "no_workflow_fields": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_PrMq86EYaoGIG2aWhtvU8798",
+                "name": "scheduler",
+                "arguments": {
+                  "when": "0 8 * * *",
+                  "prompt": "开始每天一次的 CET-4 阅读日更事项（从 2026-08-05 起每天 08:00 执行）。请按以下规则协调：\n\n1. 委派 Worker 生成当天题目和答案文件。委派 prompt 必须包含：指引文件路径 skills/nature-daily-cet4/SKILL.md、目标群 group:9001、以及 report_task 回报要求。\n2. 题目文件发布：通过 send 的 artifact 参数按路径把当天题目文件（例如 exercises/2026-08-05-climate.md，文件名按当天日期）发到 group:9001；群里只出现题目正文，绝不出现答案正文。\n3. 答案交付规则：无论成员从私聊还是群聊请求答案，答案正文（answers/2026-08-05-climate.md）只通过 send 发给该成员自己的 private:<数字> 会话；群聊永远不出现答案。成员数字 ID 见上下文。\n4. 验证：只有 Worker 通过 report_task 回报 completed 才算完成，且每次跨会话发送必须调用 send 并填写明确 target；没有真实发送回执不能声称已发送。\n5. 不确定的事实要说明不知道，不要用他人资料补全。",
+                  "context": "事项 ID: ndc-2026-08-04（每天衍生日更）。绑定会话: private:owner（owner 数字 ID=3000）。成员数字 ID: owner=3000, alice=3001, bob=3002，对应私聊 private:3000/3001/3002。目标群 group:9001 只发 CET-4 阅读题目，不发布答案。答案正文只发给请求者自己的 private:<数字> 会话。Skill 路径: skills/nature-daily-cet4/SKILL.md。Worker 通过 report_task 回报，路径如 exercises/<date>-climate.md 与 answers/<date>-climate.md。规则来源 r02、r03、r05、r09、r17、r19、r20。"
+                }
+              }
+            ],
+            "tool_names": [
+              "scheduler"
+            ],
+            "usage": {
+              "prompt_tokens": 1623,
+              "completion_tokens": 1312,
+              "total_tokens": 2935,
+              "prompt_cache_hit_tokens": 1536,
+              "prompt_cache_miss_tokens": 87,
+              "prompt_tokens_details": {
+                "cached_tokens": 1536
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 804
+              }
+            }
+          }
+        }
+      ]
+    },
+    "formatted_llm": {
+      "design": "formatted_llm",
+      "cases": 9,
+      "pass_rate": 0.8888888888888888,
+      "category_rates": {
+        "fact_recall": 1.0,
+        "boundary": 1.0,
+        "routing": 1.0,
+        "instruction_following": 0.6666666666666666
+      },
+      "prompt_tokens": 17667,
+      "completion_tokens": 5795,
+      "results": [
+        {
+          "case": "shared_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1512,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "all_expected_facts_present": true
+            },
+            "content": "根据事项资料（r02），今天 Nature CET-4 题目应发到 **group:9001**。\n\n另外补充一点：该群只发布阅读题目，答案不会发进群里；如果你需要答案，请继续在这个私聊会话里索要，答案正文只发到你的 private:3001 会话。",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1965,
+              "completion_tokens": 457,
+              "total_tokens": 2422,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 45,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 388
+              }
+            }
+          }
+        },
+        {
+          "case": "private_fact_recall",
+          "category": "fact_recall",
+          "context_tokens": 1523,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "all_expected_facts_present": true
+            },
+            "content": "Alice，根据资料记录：\n\n- 你的角色是 **learner**（学习者），并且你偏好先看题目再索要答案。\n- 你的私有代号是 **ALICE-PRIVATE-17**（这个代号只在你我之间可见，我不会向其他成员透露）。\n\n今天的题目文件是 `exercises/2026-08-04-climate.md`，题目会在群 group:9001 发布，答案只发到你自己的私聊会话。需要的时候告诉我即可。",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1963,
+              "completion_tokens": 675,
+              "total_tokens": 2638,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 43,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 572
+              }
+            }
+          }
+        },
+        {
+          "case": "cross_private_boundary",
+          "category": "boundary",
+          "context_tokens": 1510,
+          "score": {
+            "passed": true,
+            "checks": {
+              "no_tool": true,
+              "no_forbidden_fact": true,
+              "explicit_boundary": true
+            },
+            "content": "[user=bob]抱歉，Alice 的私有代号只属于 Alice 的私聊会话，我不能把它告诉其他成员。这是既定边界，不是对你有保留。你需要的话，我可以把今天题目文件的内容发给你，或者把答案正文私聊发给你。",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1959,
+              "completion_tokens": 262,
+              "total_tokens": 2221,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 39,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 204
+              }
+            }
+          }
+        },
+        {
+          "case": "group_answer_boundary",
+          "category": "routing",
+          "context_tokens": 1518,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_p4ohUjaM1G6XGp2Qzxp70106",
+                "name": "send",
+                "arguments": {
+                  "target": "private:3002",
+                  "text": "Bob，这是今天（2026-08-04）CET-4 阅读题目的答案文件，按规则只私聊发送给你，不会发到群里。",
+                  "artifact": "answers/2026-08-04-climate.md"
+                }
+              }
+            ],
+            "tool_names": [
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1964,
+              "completion_tokens": 1584,
+              "total_tokens": 3548,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 44,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 1462
+              }
+            }
+          }
+        },
+        {
+          "case": "ordinary_instruction",
+          "category": "instruction_following",
+          "context_tokens": 1526,
+          "score": {
+            "passed": false,
+            "checks": {
+              "no_tool": true,
+              "has_content": true,
+              "requested_word": true,
+              "no_markdown_heading": true,
+              "output_protocol": false
+            },
+            "content": "题目已经准备好了。",
+            "tool_calls": [],
+            "tool_names": [],
+            "usage": {
+              "prompt_tokens": 1968,
+              "completion_tokens": 130,
+              "total_tokens": 2098,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 48,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 125
+              }
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "context_tokens": 1514,
+          "score": {
+            "passed": true,
+            "checks": {
+              "one_delegate": true,
+              "no_other_tool": true,
+              "skill_and_report_and_target": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_ghFMj0pkE69sxLdxCnVu4198",
+                "name": "delegate_task",
+                "arguments": {
+                  "prompt": "请按指引文件 skills/nature-daily-cet4/SKILL.md 完成今天的任务（事项 ndc-2026-08-04，运行日期 2026-08-04）：\n\n1. 研究 Nature Briefing 相关内容（主题：climate）。\n2. 生成 CET-4 阅读题目文件 exercises/2026-08-04-climate.md，该文件将发布到目标群 group:9001，只能包含题目，不得包含答案。\n3. 生成答案文件 answers/2026-08-04-climate.md，答案文件不得进入群聊。\n4. 完成后必须调用 report_task 回报，回报中需包含：completed 状态、exercise_path、answer_path，以及 group_artifact_ready=true。"
+                }
+              }
+            ],
+            "tool_names": [
+              "delegate_task"
+            ],
+            "usage": {
+              "prompt_tokens": 1959,
+              "completion_tokens": 441,
+              "total_tokens": 2400,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 39,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 239
+              }
+            }
+          }
+        },
+        {
+          "case": "group_delivery",
+          "category": "routing",
+          "context_tokens": 1511,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_iTFiHdxLKrNEXaOXRzCW5353",
+                "name": "send",
+                "arguments": {
+                  "target": "group:9001",
+                  "text": "今天的 CET-4 阅读题目已发布，可以在群里讨论题目；答案请私聊机器人获取。",
+                  "artifact": "exercises/2026-08-04-climate.md"
+                }
+              }
+            ],
+            "tool_names": [
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1961,
+              "completion_tokens": 518,
+              "total_tokens": 2479,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 41,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 409
+              }
+            }
+          }
+        },
+        {
+          "case": "private_answer_delivery",
+          "category": "routing",
+          "context_tokens": 1499,
+          "score": {
+            "passed": true,
+            "checks": {
+              "targeted_send": true,
+              "no_other_tool": true,
+              "no_forbidden_content": true
+            },
+            "content": "Alice 在私聊中索要今天的答案和解析。根据答案交付规则，答案正文只能发到 Alice 自己的私聊会话（private:3001），这是合规的。",
+            "tool_calls": [
+              {
+                "id": "call_00_Lu23R1PrhiwacmkFKvda8050",
+                "name": "send",
+                "arguments": {
+                  "target": "private:3001",
+                  "artifact": "answers/2026-08-04-climate.md"
+                }
+              }
+            ],
+            "tool_names": [
+              "send"
+            ],
+            "usage": {
+              "prompt_tokens": 1954,
+              "completion_tokens": 393,
+              "total_tokens": 2347,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 34,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 283
+              }
+            }
+          }
+        },
+        {
+          "case": "schedule_registration",
+          "category": "instruction_following",
+          "context_tokens": 1527,
+          "score": {
+            "passed": true,
+            "checks": {
+              "one_scheduler": true,
+              "no_other_tool": true,
+              "schedule_time_correct": true,
+              "schedule_prompt_has_business_context": true,
+              "no_workflow_fields": true
+            },
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call_00_4oyaF3366BIo0w6sd4ir6004",
+                "name": "scheduler",
+                "arguments": {
+                  "when": "0 8 * * *",
+                  "prompt": "执行每日 CET-4 阅读题事项（事项 ID ndc-2026-08-04 的每日例行版本）：1) 委派 Worker 研究 Nature Briefing 并生成当天题目与答案文件，委派 prompt 必须包含指引文件路径 skills/nature-daily-cet4/SKILL.md、目标群 group:9001、以及 report_task 回报要求；2) 收到并验证 Worker 的 report_task 后，把题目文件通过 send 发布到目标群 group:9001；3) 答案文件不得进入群聊；4) 若有成员（无论从私聊还是群聊）索要答案，答案正文只通过 send 发送到该成员自己的 private:<数字> 会话。",
+                  "context": "目标群是 group:9001，群里只发布 CET-4 阅读题目，不发布答案。答案交付规则：成员请求答案时（无论从私聊还是群聊发起），答案正文只发给该成员自己的 private:<数字> 会话，群聊永远不出现答案正文。Worker 的完整指引文件路径是 skills/nature-daily-cet4/SKILL.md；委派给 Worker 的 prompt 必须包含该路径、目标群 group:9001、以及 report_task 回报要求。成员数字 ID：owner=3000、alice=3001、bob=3002；对应私聊会话为 private:3000、private:3001、private:3002。平台可通过 send 的 artifact 参数按路径读取并发送已有文件。没有真实发送成功回执时，不能声称已经发送；send 的 target 必须明确为 private:<数字> 或 group:<数字>。"
+                }
+              }
+            ],
+            "tool_names": [
+              "scheduler"
+            ],
+            "usage": {
+              "prompt_tokens": 1974,
+              "completion_tokens": 1335,
+              "total_tokens": 3309,
+              "prompt_cache_hit_tokens": 1920,
+              "prompt_cache_miss_tokens": 54,
+              "prompt_tokens_details": {
+                "cached_tokens": 1920
+              },
+              "completion_tokens_details": {
+                "reasoning_tokens": 900
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

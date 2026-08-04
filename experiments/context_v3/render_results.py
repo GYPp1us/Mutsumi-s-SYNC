@@ -19,6 +19,18 @@ def _avg_context(summary: dict[str, Any]) -> int:
     return round(sum(values) / max(1, len(values)))
 
 
+def _leaders(designs: dict[str, Any], metric: str) -> tuple[list[str], float | None]:
+    values = {
+        name: summary.get(metric)
+        for name, summary in designs.items()
+        if isinstance(summary.get(metric), (int, float))
+    }
+    if not values:
+        return [], None
+    best = max(float(value) for value in values.values())
+    return [name for name, value in values.items() if float(value) == best], best
+
+
 def render(data: dict[str, Any], source_name: str) -> str:
     designs = data.get("designs", {})
     noise_turns = int(data.get("noise_turns", 0) or 0)
@@ -27,6 +39,23 @@ def render(data: dict[str, Any], source_name: str) -> str:
     case_count = len(data.get("cases", []))
     provider = data.get("provider") or {}
     provider_label = str(provider.get("model") or provider.get("name") or "unknown model")
+    overall_names, overall_rate = _leaders(designs, "pass_rate")
+    fact_names, fact_rate = _leaders(
+        {name: {"value": summary.get("category_rates", {}).get("fact_recall")} for name, summary in designs.items()},
+        "value",
+    )
+    boundary_names, boundary_rate = _leaders(
+        {name: {"value": summary.get("category_rates", {}).get("private_boundary")} for name, summary in designs.items()},
+        "value",
+    )
+    dispatch_names, dispatch_rate = _leaders(
+        {name: {"value": summary.get("category_rates", {}).get("dispatch_efficiency")} for name, summary in designs.items()},
+        "value",
+    )
+    overall_label = "、".join(overall_names) or "无可用结果"
+    fact_label = "、".join(fact_names) or "无可用结果"
+    boundary_label = "、".join(boundary_names) or "无可用结果"
+    dispatch_label = "、".join(dispatch_names) or "无可用结果"
     rows = []
     failure_sections = []
     for name, summary in designs.items():
@@ -74,16 +103,16 @@ th{{font-weight:750}} code{{font-family:ui-monospace,SFMono-Regular,Consolas,mon
 <p class="note">Context v3 / {html.escape(provider_label)} / {html.escape(source_name)}</p>
 <h1>三种上下文设计的真实对照</h1>
 <p class="lead">{noise_turns} 条噪声记录，{core_records} 条核心协作事实，{case_count} 个请求；不做上下文回收。每个设计使用相同模型、工具 schema、角色资料和当前输入。</p>
-<div class="callout"><strong>结果先说：</strong>在这一次实验中，纯格式化方案总通过率最高，但它仍需要最小的后端能力边界；Task Room 的确降低了上下文规模，却没有在本组复杂调度上稳定胜出。Room 不应被提升为强制的业务抽象。</div>
+<div class="callout"><strong>结果先说：</strong>本轮总体通过率最高的是 {html.escape(overall_label)}（{_pct(overall_rate)}）；事实召回最高的是 {html.escape(fact_label)}（{_pct(fact_rate)}），私密边界最高的是 {html.escape(boundary_label)}（{_pct(boundary_rate)}），复杂调度投递最高的是 {html.escape(dispatch_label)}（{_pct(dispatch_rate)}）。这说明 Room 和全格式化各有优势，尚不足以证明需要把 Room 提升为强制业务抽象。</div>
 <h2>汇总</h2>
 <table><thead><tr><th>设计</th><th>总体</th><th>事实召回</th><th>私密边界</th><th>指令遵循</th><th>调度投递</th><th>平均上下文</th><th>输入 tokens</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
 <p class="note">平均上下文是 provider 请求的估算值；输入 tokens 是模型返回的 usage，受缓存影响，不能直接当作价格。</p>
 <h2>读法</h2>
-<p>Ledger 的主要失败不是“完全记不住”，而是长历史下把当前私聊回答误当成跨会话动作，向当前目标调用 <code>send</code>；它在本轮私密边界用例中表现最差。Task Room 的主要收益是更小的输入和稳定的基础召回，但群内拒答、对应私聊答案、fan-out 和新合作方动作仍会出现错选工具或重复委派。纯格式化上下文在本轮事实召回和隐私边界上最好，但在需要把“已有 artifact”转换成可发送内容时，会选择重新委派或耗尽 reasoning。</p>
+<p>Ledger 的主要失败不是“完全记不住”，而是长历史下把当前私聊回答误当成跨会话动作，向当前目标调用 <code>send</code>；它在本轮私密边界用例中表现最差。Task Room 显著减少了输入规模，并在事实召回上最好；全格式化上下文把所有角色资料交给模型，私密边界最好，但同样需要后端目标校验。三种方案在修正后的“群聊请求 -> 对应私聊”及 fan-out 投递上都通过，说明复杂调度的可靠性不能只用一次模型选择来保证，仍需要真实 send 回执、幂等和目标约束。</p>
 <h2>失败用例</h2>{''.join(failure_sections)}
 <h2>结论</h2>
 <div class="callout"><strong>建议的架构边界：</strong>让 LLM 保持自由规划，系统只做输入格式化、身份/可见性过滤、工具参数校验、目标地址、幂等和真实回执。共享黑板或 Room 可以作为 prompt 里的自然语言组织方式，但不要让模型必须先理解 Room 才能发现新任务关系。</div>
-<p class="note">限制：单模型、单次 {case_count}-case run、合成资料、未覆盖回收和重启恢复。原始脱敏结果：<code>{html.escape(source_name)}</code>。</p>
+<p class="note">限制：单模型、单次 {case_count}-case run、合成资料、未覆盖回收和重启恢复；通过率是模型决策的离散样本，不是生产成功率。原始脱敏结果：<code>{html.escape(source_name)}</code>。</p>
 </main></body></html>"""
 
 

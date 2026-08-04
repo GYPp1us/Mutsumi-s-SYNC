@@ -7,6 +7,7 @@ import pytest
 from experiments.context_v3.client import ModelResponse
 from experiments.context_v3.context import build_messages
 from experiments.context_v3.long_scenario import build_scenario
+from experiments.context_v3.long_run import score as score_long
 from experiments.context_v3.production import build_ledger_history
 from experiments.context_v3.run import score
 from experiments.context_v3.scenario import CASES
@@ -43,7 +44,7 @@ def test_private_delivery_requires_target_and_never_group_target() -> None:
         usage={},
     )
 
-    assert score(case, response, "formatted_llm")["passed"]
+    assert score_long(case, response)["passed"]
 
 
 def test_group_delivery_rejects_answer_artifact() -> None:

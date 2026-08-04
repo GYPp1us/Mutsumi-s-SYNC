@@ -1,0 +1,811 @@
+{
+  "experiment": "context-v3-long-multi-conversation",
+  "noise_turns": 320,
+  "records": 348,
+  "cases": [
+    "alice_identity",
+    "bob_identity",
+    "carol_identity",
+    "current_decision",
+    "alice_asks_bob_private",
+    "group_asks_alice_private",
+    "failed_worker_no_publish",
+    "delegate_worker",
+    "publish_exercise",
+    "group_answer_to_bob",
+    "group_answer_to_alice",
+    "schedule_atlas",
+    "ad_hoc_partner_send",
+    "fanout_status"
+  ],
+  "dry_run": true,
+  "provider": null,
+  "designs": {
+    "ledger_projection": {
+      "design": "ledger_projection",
+      "cases": 14,
+      "pass_rate": null,
+      "category_rates": {},
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 658,
+            "history_tokens": 23776,
+            "compaction_calls": 0,
+            "visible_records": 329,
+            "context_messages": 660,
+            "context_tokens": 24134
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "bob_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 644,
+            "history_tokens": 23258,
+            "compaction_calls": 0,
+            "visible_records": 322,
+            "context_messages": 646,
+            "context_tokens": 23614
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "carol_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22351,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22709
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "current_decision",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22734
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "alice_asks_bob_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 658,
+            "history_tokens": 23776,
+            "compaction_calls": 0,
+            "visible_records": 329,
+            "context_messages": 660,
+            "context_tokens": 24134
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_asks_alice_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 614,
+            "history_tokens": 22201,
+            "compaction_calls": 0,
+            "visible_records": 307,
+            "context_messages": 616,
+            "context_tokens": 22553
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "failed_worker_no_publish",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22732
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22727
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "publish_exercise",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22731
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_to_bob",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 614,
+            "history_tokens": 22201,
+            "compaction_calls": 0,
+            "visible_records": 307,
+            "context_messages": 616,
+            "context_tokens": 22575
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_to_alice",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 614,
+            "history_tokens": 22201,
+            "compaction_calls": 0,
+            "visible_records": 307,
+            "context_messages": 616,
+            "context_tokens": 22576
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "schedule_atlas",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22739
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22728
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "fanout_status",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "ledger_events": 696,
+            "history_messages": 618,
+            "history_tokens": 22365,
+            "compaction_calls": 0,
+            "visible_records": 309,
+            "context_messages": 620,
+            "context_tokens": 22732
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    },
+    "task_room_usc": {
+      "design": "task_room_usc",
+      "cases": 14,
+      "pass_rate": null,
+      "category_rates": {},
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12879
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "bob_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12594
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "carol_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12129
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "current_decision",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12154
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "alice_asks_bob_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12879
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_asks_alice_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12040
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "failed_worker_no_publish",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12152
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12147
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "publish_exercise",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12151
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_to_bob",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12061
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_to_alice",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12063
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "schedule_atlas",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12159
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12148
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "fanout_status",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 307,
+            "context_messages": 3,
+            "context_tokens": 12152
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    },
+    "formatted_llm": {
+      "design": "formatted_llm",
+      "cases": 14,
+      "pass_rate": null,
+      "category_rates": {},
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "results": [
+        {
+          "case": "alice_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17360
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "bob_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17359
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "carol_identity",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17361
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "current_decision",
+          "category": "fact_recall",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17372
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "alice_asks_bob_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17360
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_asks_alice_private",
+          "category": "private_boundary",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17355
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "failed_worker_no_publish",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17370
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "delegate_worker",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17365
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "publish_exercise",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17369
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_to_bob",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17376
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "group_answer_to_alice",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17378
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "schedule_atlas",
+          "category": "instruction_following",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17377
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "ad_hoc_partner_send",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17367
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        },
+        {
+          "case": "fanout_status",
+          "category": "dispatch_efficiency",
+          "depth": "late",
+          "context": {
+            "history_messages": 1,
+            "visible_records": 348,
+            "context_messages": 3,
+            "context_tokens": 17370
+          },
+          "score": {
+            "passed": null,
+            "checks": {
+              "dry_run": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}
