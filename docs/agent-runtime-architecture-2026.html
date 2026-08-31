@@ -3,910 +3,434 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mutsumi's SYNC：引导式双轨 Agent 架构最终设计</title>
+  <title>Mutsumi's SYNC 重构设计：从一次真实交互讲清完整流程</title>
   <style>
     :root {
-      --ink: #152018;
-      --muted: #5d6b61;
-      --paper: #f4f1e9;
+      --ink: #18211b;
+      --muted: #5c6b61;
+      --paper: #f3f0e8;
       --card: #fffdf7;
-      --line: #d9d2c2;
-      --green: #226c52;
-      --green-soft: #e6f0e9;
-      --amber: #9a651d;
-      --amber-soft: #fff1d6;
-      --red: #a53e37;
-      --red-soft: #fbe8e5;
+      --line: #d7d0c1;
+      --green: #21664d;
+      --green-soft: #e7f0e9;
       --blue: #315f88;
-      --blue-soft: #e7f0f7;
-      --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      --blue-soft: #e8f0f7;
+      --amber: #97621d;
+      --amber-soft: #fff1d8;
+      --red: #9f3f38;
+      --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
       color: var(--ink);
-      background:
-        radial-gradient(circle at 10% 0%, rgba(34,108,82,.10), transparent 28rem),
-        var(--paper);
+      background: radial-gradient(circle at 8% 0%, rgba(33,102,77,.11), transparent 28rem), var(--paper);
       font: 16px/1.72 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     }
+    header, main, footer { max-width: 1120px; margin: auto; }
+    header { padding: 4.5rem 1.3rem 2.5rem; }
+    main { padding: 0 1.3rem 5rem; }
+    footer { padding: 0 1.3rem 3rem; color: var(--muted); font-size: .88rem; }
+    h1, h2, h3 { line-height: 1.25; letter-spacing: -.015em; }
+    h1 { margin: .3rem 0 .8rem; max-width: 16ch; font-size: clamp(2.3rem, 5vw, 4.2rem); }
+    h2 { margin: 0 0 1rem; font-size: clamp(1.55rem, 3vw, 2.2rem); }
+    h3 { margin: 1.45rem 0 .5rem; font-size: 1.15rem; }
+    p { margin: .55rem 0 1rem; }
     a { color: var(--blue); text-underline-offset: .15em; }
     code, pre { font-family: var(--mono); }
-    code { font-size: .91em; background: #f0ede5; padding: .08em .32em; border-radius: 4px; }
-    pre {
-      margin: 1rem 0;
-      padding: 1rem 1.1rem;
-      overflow: auto;
-      background: #18211c;
-      color: #edf5ef;
-      border-radius: 10px;
-      font-size: 13px;
-      line-height: 1.55;
-    }
-    pre code { padding: 0; background: transparent; color: inherit; }
-    h1, h2, h3 { line-height: 1.25; letter-spacing: -.015em; }
-    h1 { margin: 0 0 .7rem; font-size: clamp(2.25rem, 5vw, 4.35rem); max-width: 14ch; }
-    h2 { margin: 0 0 1rem; font-size: clamp(1.65rem, 3vw, 2.35rem); }
-    h3 { margin: 1.55rem 0 .55rem; font-size: 1.18rem; }
-    p { margin: .6rem 0 1rem; }
-    ul, ol { padding-left: 1.35rem; }
-    li + li { margin-top: .36rem; }
-    header {
-      padding: 5rem max(1.3rem, calc((100vw - 1180px) / 2)) 3.3rem;
-      border-bottom: 1px solid var(--line);
-    }
-    header .lead { max-width: 72ch; color: #34463a; font-size: 1.15rem; }
-    main { max-width: 1180px; margin: 0 auto; padding: 2rem 1.3rem 6rem; }
-    section {
-      margin: 1.25rem 0;
-      padding: clamp(1.2rem, 3vw, 2.1rem);
-      background: rgba(255,253,247,.94);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      box-shadow: 0 8px 30px rgba(36,45,38,.035);
-    }
-    .meta, .chips { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: 1.2rem; }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      padding: .28rem .62rem;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: rgba(255,255,255,.65);
-      color: var(--muted);
-      font-size: .84rem;
-    }
-    nav { columns: 2; column-gap: 2rem; }
-    nav a { display: block; margin: .35rem 0; break-inside: avoid; text-decoration: none; }
-    .verdict {
-      border: 2px solid var(--green);
-      background: linear-gradient(135deg, var(--green-soft), var(--card) 58%);
-    }
-    .callout {
-      margin: 1rem 0;
-      padding: .9rem 1rem;
-      border-left: 4px solid var(--blue);
-      background: var(--blue-soft);
-    }
-    .callout.warn { border-color: var(--amber); background: var(--amber-soft); }
-    .callout.danger { border-color: var(--red); background: var(--red-soft); }
-    .callout.good { border-color: var(--green); background: var(--green-soft); }
-    .eyebrow { color: var(--green); font-weight: 750; letter-spacing: .08em; text-transform: uppercase; font-size: .78rem; }
-    .muted, small { color: var(--muted); }
-    .grid { display: grid; gap: 1rem; }
-    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .mini {
-      padding: 1rem;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: rgba(255,255,255,.55);
-    }
-    .mini h3 { margin-top: 0; }
-    .table-wrap { overflow-x: auto; margin: 1rem 0; }
+    code { padding: .08em .3em; background: #efebe1; border-radius: 4px; font-size: .91em; }
+    pre { margin: 1rem 0; padding: 1rem 1.1rem; overflow: auto; color: #eef5ef; background: #19221d; border-radius: 10px; font-size: 13px; line-height: 1.55; }
+    pre code { padding: 0; color: inherit; background: none; }
+    section { margin: 1.15rem 0; padding: clamp(1.15rem, 3vw, 2rem); background: rgba(255,253,247,.95); border: 1px solid var(--line); border-radius: 14px; }
+    .lead { max-width: 74ch; color: #34463a; font-size: 1.12rem; }
+    .tag { display: inline-block; margin: .15rem .35rem .15rem 0; padding: .25rem .6rem; color: var(--muted); background: rgba(255,255,255,.65); border: 1px solid var(--line); border-radius: 999px; font-size: .82rem; }
+    .label { color: var(--green); font-weight: 800; letter-spacing: .08em; font-size: .78rem; }
+    .note { margin: 1rem 0; padding: .85rem 1rem; background: var(--blue-soft); border-left: 4px solid var(--blue); }
+    .note.good { background: var(--green-soft); border-color: var(--green); }
+    .note.warn { background: var(--amber-soft); border-color: var(--amber); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .card { padding: 1rem; background: rgba(255,255,255,.55); border: 1px solid var(--line); border-radius: 10px; }
+    .card h3 { margin-top: 0; }
+    .table { overflow-x: auto; margin: 1rem 0; }
     table { width: 100%; border-collapse: collapse; background: rgba(255,255,255,.55); }
-    th, td { padding: .72rem .75rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
-    th { background: #ebe8df; font-size: .9rem; }
+    th, td { padding: .7rem .75rem; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #ebe7dd; font-size: .9rem; }
     td { font-size: .93rem; }
+    ul, ol { padding-left: 1.35rem; }
+    li + li { margin-top: .35rem; }
+    .timeline { border-left: 3px solid var(--green); margin: 1.2rem 0 .5rem .45rem; padding-left: 1.3rem; }
+    .step { position: relative; margin: 0 0 1.25rem; }
+    .step::before { content: ""; position: absolute; left: -1.72rem; top: .42rem; width: .68rem; height: .68rem; background: var(--card); border: 3px solid var(--green); border-radius: 50%; }
+    .step strong { color: var(--green); }
     .yes { color: var(--green); font-weight: 750; }
-    .maybe { color: var(--amber); font-weight: 750; }
+    .partial { color: var(--amber); font-weight: 750; }
     .no { color: var(--red); font-weight: 750; }
-    .flow {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(120px, 1fr));
-      gap: .62rem;
-      align-items: stretch;
-      margin: 1.25rem 0;
-    }
-    .node {
-      position: relative;
-      min-height: 92px;
-      padding: .8rem;
-      border: 1px solid #bfc9c1;
-      border-radius: 10px;
-      background: #f7fbf8;
-      font-size: .86rem;
-    }
-    .node strong { display: block; margin-bottom: .25rem; color: var(--green); }
-    .node:not(:last-child)::after {
-      content: "→";
-      position: absolute;
-      right: -.53rem;
-      top: 34%;
-      z-index: 2;
-      color: var(--green);
-      font-weight: 900;
-      background: var(--card);
-    }
-    .lane {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1rem;
-      margin-top: 1rem;
-    }
-    .lane > div { padding: 1rem; border: 1px solid var(--line); border-radius: 10px; }
-    .lane .main-lane { background: #eef5f0; }
-    .lane .reply-lane { background: #eef3f8; }
-    .badge-p0, .badge-p1 {
-      display: inline-block;
-      min-width: 2.25rem;
-      padding: .08rem .4rem;
-      border-radius: 999px;
-      text-align: center;
-      font: 750 .78rem/1.5 var(--mono);
-    }
-    .badge-p0 { color: #fff; background: var(--red); }
-    .badge-p1 { color: #fff; background: var(--amber); }
-    footer { max-width: 1180px; margin: 0 auto; padding: 0 1.3rem 3rem; color: var(--muted); font-size: .88rem; }
-    @media (max-width: 900px) {
-      .grid.two, .grid.three, .lane { grid-template-columns: 1fr; }
-      .flow { grid-template-columns: 1fr 1fr; }
-      .node::after { display: none; }
-    }
-    @media (max-width: 620px) {
-      nav { columns: 1; }
-      .flow { grid-template-columns: 1fr; }
-      th, td { padding: .55rem; font-size: .82rem; }
-    }
-    @media print {
-      body { background: #fff; font-size: 11pt; }
-      header { padding-top: 1.2cm; }
-      section { box-shadow: none; break-inside: avoid; }
-      a { color: inherit; }
-    }
+    nav { columns: 2; column-gap: 2rem; }
+    nav a { display: block; margin: .3rem 0; text-decoration: none; break-inside: avoid; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } nav { columns: 1; } th, td { padding: .52rem; font-size: .82rem; } }
+    @media print { body { background: #fff; font-size: 11pt; } section { break-inside: avoid; } }
   </style>
 </head>
 <body>
 <header>
-  <div class="eyebrow">Mutsumi's SYNC · Architecture Decision Record</div>
-  <h1>引导式双轨 Agent 架构最终设计</h1>
-  <p class="lead">在“相信现代 Agent 能力、让自然语言与 Bash 承担业务推理”的前提下，只把身份、顺序、权限、持久化、幂等和真实发送留在确定性内核。本稿回答插件、Dream、上下文、完整性与测试问题，并给出可直接实现的最小边界。</p>
-  <div class="meta">
-    <span class="chip">结论日期：2026-08-31（UTC+8）</span>
-    <span class="chip">范围：架构细化，不含本轮代码重构</span>
-    <span class="chip">依据：当前源码 + 两组本地实验 + 2025/2026 研究 + 主流开源实现</span>
-    <span class="chip">原则：不做运行时兼容层，不做 Workflow DSL</span>
-  </div>
+  <div class="label">MUTSUMI'S SYNC · 架构修订稿</div>
+  <h1>从一次真实交互讲清重构设计</h1>
+  <p class="lead">本版删除了上一版中不必要的专有名词，纠正了“已验证事实”和“风格尾巴”两处错误，并具体说明图片如何被读图模型处理、主模型与回复模型分别看到什么。</p>
+  <span class="tag">修订日期：2026-09-01</span>
+  <span class="tag">仍坚持：自然语言 + Bash + Skill</span>
+  <span class="tag">不增加工作流语言</span>
 </header>
 
 <main>
-  <section class="verdict" id="executive">
-    <div class="eyebrow">最终判断</div>
-    <h2>方向成立，但必须做四处收紧</h2>
-    <p><strong>这套系统足以成为拟人化通讯与执行中枢。</strong>它不缺新的业务抽象；它缺的是对用户构想中四个并发与事实边界的精确定义：</p>
+  <section id="conclusion">
+    <h2>先给结论</h2>
     <ol>
-      <li>删除的是“取消整条 pipeline”，不是删除取消能力；新消息只抢占正在流式生成的 Main/Reply 请求。</li>
-      <li>Main 与 Reply 不能各自拥有一份互不相知的世界；应是一份权威事件史、两种忠实投影。</li>
-      <li>“秘密思考”不能保存 raw CoT 或 provider <code>reasoning_content</code>；只保存有限、可审计的状态摘要。</li>
-      <li>Dream 后必须保留一条连续性摘要，同时保留最近原文与精确历史搜索；只靠搜索会遇到“模型不知道自己忘了什么”的检索盲区。</li>
+      <li><strong>用户的新消息只打断正在生成的模型请求，不取消整条处理流程，也不假装撤销已经开始的工具操作。</strong></li>
+      <li><strong>主模型和回复模型各自保留自己的完整输出。</strong>主模型不再把回复模型写的内容冒充成自己的 assistant 历史；平台会另外告诉主模型“用户最终收到了什么”。</li>
+      <li><strong>工具返回不叫“已验证事实”。</strong>它只是工具返回的数据。平台最多能确认“定时任务确实写入数据库”或“QQ 确实返回发送成功”，不能替模型判断文本内容在现实世界中一定为真。</li>
+      <li><strong>图片编号只用于找回原图，不用于理解图片。</strong>独立读图模型先把图片转成详细文字；需要追问细节时，主模型可以让读图模型重新查看原图。</li>
+      <li><strong>每个模型的上下文都是：固定规则 + 人格 + 长期备注 + 一条旧对话摘要 + 最近完整消息 + 当前输入。</strong>主模型另外有工具；回复模型没有工具。</li>
     </ol>
-    <p>最终最小心智模型是：</p>
-    <pre><code>Agent = 权威事件史 + 会话执行器 + Main 投影 + Reply 投影
- 一条连续性摘要 + 最近原生尾巴 + 历史搜索
- Bash / Skill / Plugin / Sub-agent
- 同步器 / 媒体管理器 / 中心节点协议</code></pre>
   </section>
 
   <section id="toc">
-    <h2>交付导航</h2>
+    <h2>目录</h2>
     <nav>
-      <a href="#glossary">1. 名词释义对齐表</a>
-      <a href="#evidence">2. 前沿研究与开源实现证据</a>
-      <a href="#answers">3. 问题的直接回答</a>
-      <a href="#architecture">4. 技术架构最终设计</a>
-      <a href="#repo-audit">当前代码库与实验审计</a>
-      <a href="#pipeline">全双工 Pipeline</a>
-      <a href="#dual-lane">Main / Reply 双轨</a>
-      <a href="#dream">Dream 与上下文裁剪</a>
-      <a href="#plugins">Plugin 与 Skill</a>
-      <a href="#sync">同步器、Sub-agent 与节点</a>
-      <a href="#migration">删除、复用与落地顺序</a>
-      <a href="#tests">必须补充的测试</a>
+      <a href="#example">1. 一个完整交互示例</a>
+      <a href="#context">2. 两个模型的上下文如何拼接</a>
+      <a href="#media">3. 图片究竟如何进入文字模型</a>
+      <a href="#pipeline">4. 消息打断、工具和发送</a>
+      <a href="#memory">5. 长期记忆与凌晨整理</a>
+      <a href="#plugin">6. 插件、技能与独立任务</a>
+      <a href="#goals">7. 是否覆盖项目目标</a>
+      <a href="#tests">8. 必须补充的测试</a>
+      <a href="#evidence">9. 依据与限制</a>
+      <a href="#terms">10. 仅保留的必要名词</a>
     </nav>
   </section>
 
-  <section id="repo-audit">
-    <div class="eyebrow">代码库事实</div>
-    <h2>当前实现与最新实验告诉了我们什么</h2>
-    <p>本次审计依次核对了 <a href="./current-design.md">current-design</a>、<a href="../README.md">README</a>、<a href="../init.md">init</a>、两份历史架构书，以及 <code>pipeline.py</code>、<code>scheduler.py</code>、projection/store/episodes、ingress、media、scheduler tool 与 OpenCode 回调。以下不是从设计稿猜出的结论。</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>当前事实</th><th>位置 / 规模</th><th>重构含义</th></tr></thead>
-        <tbody>
-          <tr><td>普通新消息通过 <code>cancel_user()</code> 取消当前整条会话 task。</td><td><code>scheduler.py</code> 的 dispatch 与 <code>cancel_user</code> 路径</td><td>必须替换为持久事件 + 可重建会话执行器；只 abort 当前 provider stream。</td></tr>
-          <tr><td>当前 LLM 调用不是用户设想的可抢占流式请求。</td><td><code>pipeline.py</code> 的 provider request</td><td>流式读取与 inbox wait 需要成为同一 race；不能用定时 sleep 轮询。</td></tr>
-          <tr><td>上下文事实经过 Event Ledger、Episode 与 Life Stream 多层投影。</td><td><code>pipeline.py</code> 约 2,257 行；<code>projection.py</code> 约 1,124 行；<code>store.py</code> 约 2,169 行</td><td>复杂度已经进入性能与可靠性预算；重构应收敛为一个累计摘要与一个原生尾巴。</td></tr>
-          <tr><td>工具回合已经能忠实重建为 native <code>assistant(tool_calls) → tool</code>。</td><td>Event Ledger / projection tests</td><td>这是应保留的正确部分；不要给 tool result 套“秘密思考/用户回复”文本协议。</td></tr>
-          <tr><td>OpenCode 仅在受控 <code>report_task</code> 回调后视为已报告。</td><td><code>opencode.py</code> 与对应测试</td><td>已非常接近理想 Sub-agent 边界，应复用而不是另造 workflow runtime。</td></tr>
-          <tr><td>ingress 已有认证、去重和 source 映射；media 已有 SHA 派生标识与 provenance。</td><td><code>ingress.py</code>、memory/media 路径</td><td>同步器与媒体管理器可在现有事实层上收敛，不需要重写协议宇宙。</td></tr>
-        </tbody>
-      </table>
+  <section id="example">
+    <div class="label">实际交互</div>
+    <h2>用户发来路由器照片，并在生成途中改口</h2>
+    <pre><code>10:00:00  用户发来一张路由器后台照片：
+          “记住型号和后台地址，明天九点提醒我升级固件。”
+
+10:00:02  主模型正在生成时，用户补充：
+          “等等，只记型号，不要记后台地址；提醒改到十点。”</code></pre>
+
+    <div class="timeline">
+      <div class="step"><strong>第一步：先保存，再处理。</strong><br>平台保存两条原始消息、稳定用户编号、会话编号和图片。图片被保存为媒体记录；由内容哈希生成的媒体编号只负责去重和以后找回原图。</div>
+      <div class="step"><strong>第二步：读图模型查看原图。</strong><br>如果主模型是纯文字模型，平台先把图片文件交给独立读图模型。读图模型返回详细描述，例如“型号 AX6000；页面地址 192.168.1.1；页面上有固件版本……”。完整描述与媒体编号一起进入主模型，不是只给一个 SHA 和短标签。</div>
+      <div class="step"><strong>第三步：新消息打断主模型。</strong><br>第二条真人消息到达后，会话的“输入版本号”增加。平台关闭正在生成的主模型流，丢弃未完成内容，然后用两条消息重新组装上下文。读图结果仍可复用，因为它只是对原图的读取结果。</div>
+      <div class="step"><strong>第四步：主模型重新决定动作。</strong><br>主模型现在清楚看到后来的修正，因此只保存型号，不保存后台地址，并把提醒时间设为十点。如果自动描述不足，它可调用读图工具，要求“只确认设备型号”，工具会再次把原图交给读图模型。</div>
+      <div class="step"><strong>第五步：工具返回后，主模型继续。</strong><br>定时工具可能返回“任务编号 42，触发时间 2026-09-02 10:00 +08:00”。这叫工具返回，不叫“已验证事实”。平台可以确认数据库中确实创建了任务 42，但不能因此证明照片里型号文字一定正确。</div>
+      <div class="step"><strong>第六步：回复模型组织措辞。</strong><br>回复模型收到主模型本轮的完整输出和工具返回，结合自己过去的回复历史，写出：“好，只记型号。提醒改到明天十点，后台地址不会保存。”它没有工具，也不能改变提醒时间或发送目标。</div>
+      <div class="step"><strong>第七步：记录实际发送结果。</strong><br>只有 QQ 返回成功后，平台才记录“这段话已经发出”和消息编号。主模型随后收到一条单独的平台记录，知道用户实际看到了什么；这条记录不会冒充主模型自己的 assistant 输出。</div>
     </div>
 
-    <h3>实验一：USC 对比 Ledger / Episode</h3>
-    <p>本地实验分支 <code>experiment/context-v2@72d2db1</code> 的 <code>docs/experiments/context-v2-comparison.md</code> 使用生产投影代码与同一模型做了摘要 + 窗口对照。结果是方向性证据，不是统计定论：</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>条件</th><th>Ledger 基线</th><th>USC（一摘要 + 窗口）</th><th>纯截断</th></tr></thead>
-        <tbody>
-          <tr><td>300 轮 / 16K</td><td>1.00</td><td>1.00</td><td>0.94</td></tr>
-          <tr><td>600 轮 / 16K</td><td>0.50</td><td><strong>1.00</strong></td><td>0.44</td></tr>
-          <tr><td>1000 轮 / 8K</td><td>0.38</td><td><strong>1.00</strong></td><td>0.25</td></tr>
-          <tr><td>1000 轮 / 16K</td><td>0.94</td><td>0.94</td><td>0.25</td></tr>
-          <tr><td>1000 轮 / 32K</td><td>0.81</td><td>0.75</td><td>0.88</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>压缩输入成本中，基线约为 USC 的 2.2–7.1 倍。三用户测试两者均为零直接泄露；USC 的明确拒答与人格标记命中均为 1.00，基线均为 0.67。实验还暴露出 reasoning 模型下 <code>max_tokens=500</code> 让 Episode 摘要返回空内容，以及预算选择可静默丢掉最老 Episode 的问题。</p>
-
-    <h3>实验二：Quest Context 长噪声</h3>
-    <p>本地实验分支 <code>codex/context-v3-experiment@3d97284</code> 的短场景大体接近；加入长噪声后，扁平格式化上下文约为 0.77，Task Room + USC 约为 0.62，Ledger Projection 约为 0.38。它支持“模型读取单一、行内标记、低嵌套序列”，同时也说明目标地址、身份、幂等与真实发送不能只靠模型理解。</p>
-
-    <h3>实验三：Reasonix 工具流观察</h3>
-    <p>工作树中的 Reasonix 观察记录显示：同一个 assistant response 可以边流式给出阶段性 content，边带 native <code>tool_calls</code>；完整响应后执行工具，并把 assistant content、tool call 与 tool result 原样带入下一轮。这直接支持“先表达当前阶段，再执行工具”的交互，但不能推出“工具结果也应使用双通道文本 envelope”。</p>
-
-    <div class="callout warn"><strong>证据限制：</strong>本地实验重复次数少、主要使用一个模型族，场景也未覆盖新的双模型、立即 stream abort、Dream 连续 30 天与分布式节点。因此它们足以决定下一版架构方向，不足以宣称双轨一定提升人格；该部分必须 A/B。</div>
+    <div class="note good"><strong>如果第二条消息在回复模型生成时到达：</strong>关闭回复模型的生成流，回到主模型重新思考，而不是只让回复模型改写。因为新消息可能改变动作本身。</div>
   </section>
 
-  <section id="glossary">
-    <div class="eyebrow">交付 1</div>
-    <h2>黑话与名词释义对齐表</h2>
-    <div class="table-wrap">
+  <section id="context">
+    <div class="label">上下文拼接</div>
+    <h2>主模型与回复模型分别看到什么</h2>
+    <p>数据库只保存一套原始事件，但会按模型分别还原对话记录。两套记录的 assistant 消息不同：主模型只保留主模型自己的输出，回复模型只保留回复模型自己的输出。这样才与各自收到的要求一致。</p>
+
+    <h3>主模型请求</h3>
+    <pre><code>system
+  固定平台规则
+  人格提示词
+  当前用户/会话可见的长期备注
+
+user
+  [较早对话摘要，覆盖到事件 800]
+
+user / assistant / tool ...
+  事件 801 之后的最近完整消息，按时间排列
+  assistant 是主模型过去的原样输出
+  工具调用与工具返回保持 API 原生结构
+  回复模型实际发给用户的文字，以“平台发送记录”单独出现
+
+user
+  [临时运行状态：当前时间、等待中的任务]
+
+user
+  [当前消息：时间、会话、用户、来源、正文、图片描述和媒体编号]
+
+tools
+  当前可用工具的 API 定义</code></pre>
+
+    <div class="table">
       <table>
-        <thead><tr><th>本文术语</th><th>严格定义</th><th>不是</th></tr></thead>
+        <thead><tr><th>组成部分</th><th>具体规则</th><th>存在价值</th></tr></thead>
         <tbody>
-          <tr><td><strong>权威事件史</strong><br>Canonical Event History</td><td>append-first、持久化、带顺序与 provenance 的唯一世界事实；所有模型上下文都是它的派生视图。</td><td>不是 prompt 本身，也不是可覆盖摘要。</td></tr>
-          <tr><td><strong>会话执行器</strong><br>Conversation Runner</td><td>活跃时串行推进一个 conversation 的可重建异步 worker；状态在数据库游标，不在 Task 对象。</td><td>不是永不退出的 actor framework。</td></tr>
-          <tr><td><strong>唤醒队列</strong><br>Wake Queue</td><td>内存中的“可能有新工作”提示；runner 醒后仍从事件史读 cursor 到 head。</td><td>不是事实队列，不承担可靠投递。</td></tr>
-          <tr><td><strong>引导</strong><br>Guidance / Steer</td><td>会话中新的真人输入使当前 Main/Reply stream 过期，并要求回到 Main 重新规划。</td><td>不是取消整条 pipeline，也不是撤销已开始工具。</td></tr>
-          <tr><td><strong>输入代际</strong><br>Input Epoch</td><td>只由可抢占输入推进的 per-conversation 整数。</td><td>不是全局 event sequence；工具与 assistant 事件不能推进它。</td></tr>
-          <tr><td><strong>代际栅栏</strong><br>Generation Fence</td><td>Main、Reply、工具启动与 outbox 提交前校验输入代际的规则。</td><td>不是外部副作用的回滚机制。</td></tr>
-          <tr><td><strong>出站意图</strong><br>Outbound Intent</td><td>通过代际栅栏后、等待 sender 认领的持久待发送记录。</td><td>不是已发送事实。</td></tr>
-          <tr><td><strong>发送线性化点</strong><br>Send Claim Point</td><td>sender 原子认领 outbound intent 的时刻；认领前可作废，认领后只能承认发送已经开始。</td><td>不是平台成功确认。</td></tr>
-          <tr><td><strong>已发送事实</strong><br>Actual Sent</td><td>平台确认成功并返回 message id 后写入的 delivery event。</td><td>不是模型说“我发了”。</td></tr>
-          <tr><td><strong>Main 轨 / Main 投影</strong></td><td>面向规划、工具与世界状态的上下文视图；拥有工具权限。</td><td>不是直接发送给用户的表达层。</td></tr>
-          <tr><td><strong>Reply 轨 / Reply 投影</strong></td><td>面向人格表达和输出门禁的上下文视图；只改写受限 reply brief，没有工具与目标选择权。</td><td>不是第二个世界状态机。</td></tr>
-          <tr><td><strong>状态札记</strong><br>STATE</td><td>有限的意图、承诺、开放事项、关系变化与后续线索。</td><td>不是 raw CoT、事实证明或更高优先级指令。</td></tr>
-          <tr><td><strong>连续性胶囊</strong><br>Continuity Capsule</td><td>覆盖到精确 <code>through_seq</code> 的一条累计摘要，可从 raw journal 重建。</td><td>不是第二份真相，也不是多 Episode 图。</td></tr>
-          <tr><td><strong>最近原生尾巴</strong><br>Recent Native Suffix</td><td>胶囊覆盖之后的完整 user / assistant / tool 回合。</td><td>不是随意截断的 token 尾部。</td></tr>
-          <tr><td><strong>检索盲区</strong><br>Retrieval Blind Spot</td><td>模型不知道某条缺失信息存在，因而无法主动构造搜索的问题。</td><td>不是搜索算法本身召回失败。</td></tr>
-          <tr><td><strong>主动标记</strong><br>Active Marker</td><td>Dream 提取的、带 scope 与 provenance 的描述性持久记忆，注入在不可变规则之后。</td><td>不是自动改写的系统规则或 persona seed。</td></tr>
-          <tr><td><strong>Dream</strong></td><td>每日 05:00 主动触发的标记提取 + 胶囊刷新；与预算触发使用同一个 compactor。</td><td>不是唯一的上下文回收时机。</td></tr>
-          <tr><td><strong>Plugin</strong></td><td>启动时显式启用的可信 Python 代码扩展，贡献稳定能力并拥有 setup/cleanup 生命周期。</td><td>不是 Skill，也不是安全沙箱。</td></tr>
-          <tr><td><strong>Plugin Host</strong></td><td>加载 plugin、校验冲突、登记 disposer、失败回滚与诊断的极小运行时。</td><td>不是应用市场、依赖解析器或 UI 框架。</td></tr>
-          <tr><td><strong>Disposer</strong></td><td>每次能力注册返回的撤销函数；setup 失败或进程退出时逆序执行。</td><td>不是热更新承诺。</td></tr>
-          <tr><td><strong>Skill</strong></td><td>按需读取的自然语言工作指引及 refs/scripts/assets。</td><td>不是注册中心、解释器、流程 DSL 或常驻进程。</td></tr>
-          <tr><td><strong>Synchronizer</strong></td><td>把站外数据与回调归一化为受认证、去重的 source event，并承载双向 command/ack。</td><td>不是论文、行情等领域 workflow。</td></tr>
-          <tr><td><strong>绑定回调</strong><br>Bound Callback</td><td>origin task 与 conversation 由服务端绑定、worker 无法改写目标的结果上报。</td><td>不是解析 stdout 猜测成功。</td></tr>
-          <tr><td><strong>设备节点</strong><br>Node</td><td>受中心服务认证的传感器/执行器，提供 generic shell/artifact 能力并以 idempotency key 接收命令。</td><td>不是多主 Agent 或共享数据库副本。</td></tr>
-          <tr><td><strong>媒体标识</strong><br>Media ID</td><td>由内容哈希派生、带来源与 scope 的稳定引用。</td><td>不是临时 URL、本地路径或 base64 prompt。</td></tr>
-          <tr><td><strong>可信小内核</strong></td><td>只负责身份、作用域、顺序、权限、持久化、幂等、调度时钟与真实回执的确定性部分。</td><td>不是把业务判断写回后端。</td></tr>
+          <tr><td>固定平台规则</td><td>始终是第一条 system；只放身份边界、输出协议、工具与安全规则。外部消息不能修改。</td><td>让最重要的约束处于最高优先级并保持请求前缀稳定。</td></tr>
+          <tr><td>人格提示词</td><td>与平台规则同属 system；由所有者维护，不由群聊、网页或凌晨整理自动改写。</td><td>维持人格基线。</td></tr>
+          <tr><td>长期备注</td><td>只加入当前用户和当前会话有权看到的内容；每条注明来源和适用范围；它是历史记录，不是新指令。</td><td>保存称呼、偏好、关系变化和未完成事项。</td></tr>
+          <tr><td>较早对话摘要</td><td>每个模型只保留一条累计摘要；摘要写明覆盖到哪个事件；被摘要覆盖的原文不重复加入。</td><td>在有限上下文容量内保留长期连续性和搜索线索。</td></tr>
+          <tr><td>最近完整消息</td><td>严格按时间排列；不能切断一组工具调用；主模型保留自己的 assistant 输出，不用回复模型输出替换。</td><td>保留最近细节，并让模型看到与自身要求一致的历史。</td></tr>
+          <tr><td>平台发送记录</td><td>作为平台生成的 user 消息出现，例如“回复模型发送成功：……”。成功或失败均记录；不伪装成主模型 assistant。</td><td>主模型既保留自己的思考轨迹，又知道用户真正看到了什么。</td></tr>
+          <tr><td>临时运行状态</td><td>只在当前请求出现，不写回历史。包括当前时间、正在等待的任务和必要运行状态。</td><td>避免把不断变化的时间与状态污染长期记忆。</td></tr>
+          <tr><td>当前消息</td><td>平台填写时间、稳定用户编号、会话编号、来源与媒体信息；昵称只用于显示，不能决定权限。</td><td>明确“谁在什么会话说了什么”，防止角色混淆。</td></tr>
+          <tr><td>工具定义</td><td>由工具注册表直接传给 API，不在提示词里手写一份工具清单。</td><td>避免说明与真实工具不一致。</td></tr>
         </tbody>
       </table>
     </div>
+
+    <div class="note warn"><strong>为什么不能用实际发送文本替换主模型草稿：</strong>主模型收到的要求与它过去生成的内容必须对应。若把回复模型改写后的文字塞进主模型的 assistant 历史，主模型会被迫把别人的输出认作自己的输出，容易混淆自己曾经承诺和执行了什么。实际发送文本仍然重要，但应作为单独的平台记录出现。</div>
+
+    <h3>回复模型请求</h3>
+    <pre><code>system
+  回复规则
+  同一人格提示词
+  当前用户/会话可见的长期备注
+
+user
+  [回复模型自己的较早对话摘要]
+
+user / assistant ...
+  最近的用户消息
+  过去每次“主模型本轮输出”
+  回复模型自己过去的原样输出
+  每次发送成功或失败的结果
+
+user
+  [当前主模型输出：内部状态、回复草稿、工具调用、工具返回]
+
+tools
+  无</code></pre>
+    <p>回复模型不需要所谓“最近实际回复的风格尾巴”。它自己的 assistant 历史本身就是最准确的表达历史。单独再截一段“风格尾巴”只会重复信息。</p>
+
+    <h3>两个模型的输出如何保存</h3>
+    <pre><code>主模型输出（原样保留在主模型历史）
+[内部状态]当前意图、承诺、未完成事项；不是原始思维链[/内部状态]
+[回复草稿]交给回复模型的内容[/回复草稿]
++ 原生工具调用
+
+回复模型输出（原样保留在回复模型历史）
+[内部状态]本轮表达上的简短状态[/内部状态]
+[给用户]准备发送的文字[/给用户]</code></pre>
+    <p>标签名可以继续沿用现有协议；关键不是名字，而是两条规则：不保存模型服务返回的原始思维链；不把一个模型生成的 assistant 内容改成另一个模型的 assistant 历史。</p>
   </section>
 
-  <section id="evidence">
-    <div class="eyebrow">交付 2</div>
-    <h2>支撑设计的研究与开源实现</h2>
-    <p>下表把“可核验事实”“本文推断”和“证据不能证明什么”分开。2026 年 Agent Harness 研究大多仍是预印本；本文不把新鲜度当成熟度。</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>来源</th><th>可核验结果 / 实现</th><th>对本设计的支持</th><th>限制</th></tr></thead>
-        <tbody>
-          <tr>
-            <td><a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a><br>2026，MIT，developer preview</td>
-            <td>Model + Harness；会话是 append-only event stream；session、tools、skills、sandboxes、storage、loop、scheduler、UI 均可由 plugin 提供。底层 Cordis 使用依赖与可逆 effect。</td>
-            <td>支持事件史派生上下文、<code>setup → disposer</code>、headless profile 与可组合能力。</td>
-            <td>官方明确 API 会破坏性变化；不能证明“万物皆插件”适合本项目。</td>
-          </tr>
-          <tr>
-            <td><a href="https://arxiv.org/abs/2608.25512">Cordis: Temporal and Spatial Composability</a><br>2026-08-26，预印本</td>
-            <td>用 reversible effects 与 reactive dependencies 形式化 harness 的时间/空间组合。</td>
-            <td>直接支撑能力注册必须可撤销、setup 失败逆序回滚。</td>
-            <td>92 页架构论文，尚非长期生产独立验证。</td>
-          </tr>
-          <tr>
-            <td><a href="https://github.com/earendil-works/pi">Pi</a><br>约 99.3K stars（2026-08-31 快照）</td>
-            <td>一个原生消息历史；完整保留 assistant tool calls 与 tool results；steering 在完整 turn/tool batch 边界注入；compaction 为 summary + recent suffix。</td>
-            <td>支持忠实 native 拼接、文本 Skill、单摘要 + 尾巴和小 loop。</td>
-            <td>它没有实现本设计的“新消息立即 abort provider stream”；这是我们的扩展。</td>
-          </tr>
-          <tr>
-            <td><a href="https://github.com/anomalyco/opencode">OpenCode</a> / <a href="https://opencode.ai/docs/plugins/">Plugin docs</a><br>约 202.5K stars</td>
-            <td>本地 JS/TS plugin 是接收 context、返回 hooks 的模块函数；无需内建 UI。</td>
-            <td>支持单文件 headless plugin 形态和少量稳定扩展面。</td>
-            <td>不采用其启动时自动装依赖与可覆盖内建工具的宽松策略。</td>
-          </tr>
-          <tr>
-            <td><a href="https://github.com/openclaw/openclaw">OpenClaw</a><br>约 388.1K stars</td>
-            <td>中心 gateway、channel plugins 与配对 peripheral nodes；节点可暴露远端执行能力。</td>
-            <td>支持“单中心脑 + 设备节点”的通信边界。</td>
-            <td>stars 不是质量证明；其庞大 manifest 和兼容范围不适合照搬。</td>
-          </tr>
-          <tr>
-            <td><a href="https://arxiv.org/abs/2502.05167">NoLiMa</a><br>2025</td>
-            <td>12 个长上下文模型在缺乏字面匹配的检索上随长度显著退化；32K 时 10 个模型低于其短上下文基线的一半。</td>
-            <td>支持主动压缩高信号上下文，而不是盲目塞满长窗口。</td>
-            <td>是长文检索基准，不是长期人格聊天。</td>
-          </tr>
-          <tr>
-            <td><a href="https://arxiv.org/abs/2410.10813">LongMemEval</a><br>ICLR 2025</td>
-            <td>覆盖抽取、多会话推理、时间推理、知识更新与拒答；报告长期历史让系统出现约 30% 准确率下降，并显示 session decomposition、fact-augmented keys、time-aware query 有帮助。</td>
-            <td>支持 summary/tail 之外保留带时间与范围的历史搜索。</td>
-            <td>arXiv 初稿是 2024；这里按 2025 会议发表计，且合成历史仍有局限。</td>
-          </tr>
-          <tr>
-            <td><a href="https://arxiv.org/abs/2507.05257">MemoryAgentBench</a><br>2025；ICLR 2026</td>
-            <td>把记忆拆成准确检索、测试时学习、长程理解与选择性遗忘；当前方法没有一套掌握全部能力。</td>
-            <td>支持测试“用户纠正后旧事实失效”，不能只测召回。</td>
-            <td>是评测框架，不指定唯一最佳架构。</td>
-          </tr>
-          <tr>
-            <td><a href="https://arxiv.org/abs/2504.13171">Sleep-time Compute</a><br>2025</td>
-            <td>离线预计算可降低若干推理任务 test-time compute；收益与未来 query 可预测性相关。</td>
-            <td>支持 05:00 Dream 做主动反思与预压缩。</td>
-            <td>数学/SWE 场景不能证明 Dream 一定改善人格；也解释了它不能取代 on-demand search。</td>
-          </tr>
-          <tr>
-            <td><a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Anthropic Context Engineering</a><br>2025</td>
-            <td>将 compaction、structured notes、retrieval/agent exploration 视为互补；强调最小高信号上下文。</td>
-            <td>直接支持“胶囊 + 主动标记 + 搜索”的组合。</td>
-            <td>厂商工程经验，不是同行评审对照实验。</td>
-          </tr>
-          <tr>
-            <td><a href="https://www.anthropic.com/research/reasoning-models-dont-say-think">Reasoning models don't always say what they think</a> / <a href="https://aclanthology.org/2025.chomps-main.2/">DeepSeek R1 faithfulness</a><br>2025</td>
-            <td>多种设置下可见 CoT 并不忠实；CHOMPS 在 445 个逻辑题中观察到 DeepSeek R1 对 helpful hints 的隐性不忠实。</td>
-            <td>支持 raw CoT 不得成为长期人格或事实来源，只保存有界 STATE。</td>
-            <td>不意味着 CoT 对当前轮推理无用；只是不应把它当真相。</td>
-          </tr>
-          <tr>
-            <td><a href="https://arxiv.org/abs/2603.25723">Natural-Language Agent Harnesses</a><br>2026，预印本</td>
-            <td>把大量 harness 策略压成自然语言文件，同时保留 loop、terminal 与确定性验证；在三个基准上接近代码 harness，静态实现显著更小。</td>
-            <td>支持 Skill + Bash + 小内核，反对业务 workflow DSL。</td>
-            <td>论文仍保留 sandbox、parser、validator；不支持“Bash 代替权限和持久化”。</td>
-          </tr>
-          <tr>
-            <td><a href="https://arxiv.org/abs/2608.01347">Prompt-Induced Waste in Agentic Coding Systems</a><br>2026，预注册实验预印本</td>
-            <td>4,643 次有效运行中，泛化“多想/多方案”提示显著增加 reasoning；相同模型/任务在两个 harness 间每次成功成本可差 5–30 倍。</td>
-            <td>支持短系统规则、Skill 按需加载、限制 plugin 注入 prompt。</td>
-            <td>coding tasks 不等于人格对话；不能据此评出万能 harness。</td>
-          </tr>
-          <tr>
-            <td><a href="https://openai.com/index/equip-responses-api-computer-environment/">OpenAI：shell、Skills 与 compaction</a><br>2026</td>
-            <td>官方把 shell/computer environment、Skill 与服务端 compaction 作为长程 Agent 的通用原语。</td>
-            <td>支持“少量强原语 + 自由代码执行”的总方向。</td>
-            <td>产品实现不是对本项目具体架构的独立证明。</td>
-          </tr>
-        </tbody>
-      </table>
+  <section id="media">
+    <div class="label">图片链路</div>
+    <h2>文字模型并不是靠 SHA 看图</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>当前默认方式：独立读图模型</h3>
+        <ol>
+          <li>媒体管理器下载并保存原图。</li>
+          <li>内容哈希生成媒体编号，用于去重和以后找回。</li>
+          <li>主流程在主文字模型之前调用 <code>vision.py</code> 中配置的读图服务。</li>
+          <li>读图服务接收真实图片文件、URL 或 base64，返回完整文字描述。</li>
+          <li>主文字模型收到：用户附言 + 完整描述 + 媒体编号。</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>需要更多细节时：重新读原图</h3>
+        <ol>
+          <li>主模型调用读图工具并传入媒体编号和具体问题。</li>
+          <li>媒体管理器找到原图。</li>
+          <li>读图模型按问题重新检查，例如“读取右下角版本号”。</li>
+          <li>结果以普通工具返回交给主模型。</li>
+        </ol>
+      </div>
     </div>
-    <p class="muted">Stars 为 2026-08-31 同日快照，仅用于证明实现被广泛观察，不用于证明安全、成熟或适合本项目。DeepSeek Harness 当时公开时间很短且仍是 developer preview。</p>
-  </section>
-
-  <section id="answers">
-    <div class="eyebrow">交付 3</div>
-    <h2>问题的直接回答</h2>
-
-    <h3>Q1：DeepSeek Harness 的插件系统能为我们做什么？如何轻量实现？</h3>
-    <p><strong>它证明插件可以是无 UI 的运行时组合机制，而不是页面组件。</strong>DeepSeek Harness 通过 Cordis 把能力声明、依赖和副作用撤销统一起来；session event log 负责恢复与重放。对 Mutsumi 最值得借的是三个原语：<strong>显式依赖、注册返回 disposer、失败逆序撤销</strong>。</p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>DeepSeek Harness 实现层</th><th>官方实现要点</th><th>Mutsumi 的取舍</th></tr></thead>
-        <tbody>
-          <tr><td><a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/session/README.md">Session</a></td><td>append-only event log 是 single source of truth；messages、compaction、fork/search/replay 是派生物；中断后的 tool outcome 可以显式成为 unknown。</td><td>采用一份权威事件史与派生投影；不复制完整 session framework。</td></tr>
-          <tr><td><a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/agent-loop/README.md">Agent loop</a></td><td>模型调用、工具执行、再调用模型；有 cancellation 与 inbox/queue 边界。</td><td>采用 Main/Reply stream abort，但发送与工具另外受 input epoch/outbox 保护。</td></tr>
-          <tr><td><a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md">Plugin composition</a></td><td>Definition / Provider / Consumer 能力接缝；Cordis effect 在卸载/失败时撤销；不同 profile 可组合 headless 或带 UI 运行时。</td><td>只保留 <code>setup(ctx)</code>、稳定 contribution API 与 disposer；内核事实边界不开放替换。</td></tr>
-          <tr><td>Bundles / profiles</td><td>同一 plugin 集合可组成 Code、Minimal、Creator 等不同产品面。</td><td>无需 UI bundle；生产配置的 enabled plugin paths 就是唯一 profile。</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>不应照搬的是“无 privileged core、所有内核能力皆可替换”。Mutsumi 的 actor/conversation 映射、Event Journal、input epoch、output gate、authentication、outbox 和 scheduler 时间语义必须是可信内核。第一版 Plugin Host 只需约百行级别：配置显式列出本地路径，启动时 import，调用 <code>setup(ctx)</code>，记录各项 disposer；冲突或 setup 异常则逆序回滚并让该 plugin 失败。首版不做 marketplace、自动下载、热重载、依赖求解、Web UI 或多厂商目录兼容。</p>
-
-    <h3>Q2：Dream 裁剪后保留摘要，还是只让模型搜索消息记录？</h3>
-    <p><strong>两者都要，但每个只做一件事：</strong>保留一条累计连续性胶囊，负责始终在场的关系、承诺、边界与检索线索；保留最近完整原生尾巴，负责当前细节；保留 <code>history_search → history_load</code>，负责精确原文与证据。只搜索会遇到检索盲区，只摘要会丢精确细节与修订轨迹，只保留长原文会受 context pollution 影响。</p>
-    <p>05:00 Dream 不是唯一回收点。高流量会话在当天任何时刻都可能超预算，因此 Dream 与请求预算阈值必须调用同一个 CAS compactor。原始事件永不删除；摘要失败时 <code>through_seq</code> 不推进。</p>
-
-    <h3>Q3：这一套是否足够完备？</h3>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>核心目标</th><th>判断</th><th>成立条件 / 尚缺部分</th></tr></thead>
-        <tbody>
-          <tr><td>拟人化</td><td class="maybe">基本足够，收益待证</td><td>实际已发送文本必须回到两轨；Dream marker 有 scope/provenance；双模型做三臂 A/B。</td></tr>
-          <tr><td>超长上下文一致性</td><td class="yes">足够</td><td>一胶囊 + 原生尾巴 + search/load；raw journal 真相；同一 compactor。</td></tr>
-          <tr><td>角色边界一致性</td><td class="yes">足够</td><td>ID/scope/target 由后端决定；外部 source 永远不能成为 provider system；私聊 raw 不全局注入。</td></tr>
-          <tr><td>完备助手</td><td class="yes">足够</td><td>受控 Bash + 文件 + Skill + scheduler + plugin capabilities + Sub-agent。</td></tr>
-          <tr><td>通讯中枢</td><td class="maybe">当前只完成入站一半</td><td>补 source register/revoke、durable command outbox、ack/result 回流。</td></tr>
-          <tr><td>设备通信分布式节点</td><td class="yes">单中心版本足够</td><td>中心分配顺序；节点 at-least-once + dedupe；不宣称 exactly-once，不做多主。</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>Bash 的图灵完备性解决“能否执行”，不解决凭据、权限、长连接、幂等、远端发现和真实回执。Skill 解决“怎么做”，Plugin 解决“提供什么常驻能力”，Synchronizer 解决“如何跨进程/设备传输”，可信内核解决“谁能对什么做、是否真的发生”。这些边界足够，不需要 Workflow DSL、向量数据库、知识图谱、CRDT、多主共识、插件市场或复杂 UI。</p>
-
-    <h3>Q4：需要补充什么测试？</h3>
-    <p>最优先不是更多 happy-path 单测，而是可控 barrier 下的确定性竞态测试：stream 与 steer 同时完成、epoch check 与 send 认领交错、工具副作用已开始后到达新消息、journal commit 后 wake 前崩溃、Dream 与预算 compactor 同时 claim。完整矩阵见<a href="#tests">测试章节</a>。</p>
-  </section>
-
-  <section id="architecture">
-    <div class="eyebrow">交付 4</div>
-    <h2>技术架构最终设计</h2>
-    <div class="flow" aria-label="architecture flow">
-      <div class="node"><strong>Ingress</strong>NapCat / Sync / Schedule / Sub-agent / Node</div>
-      <div class="node"><strong>Event Journal</strong>持久化、去重、分配 seq 与 input epoch</div>
-      <div class="node"><strong>Conversation Runner</strong>一会话一活跃执行器，可重建</div>
-      <div class="node"><strong>Main → Reply</strong>流式、可引导、双投影</div>
-      <div class="node"><strong>Gate / Tool</strong>outbox 认领或 native tool round</div>
-      <div class="node"><strong>Actual Result</strong>发送回执 / tool result / callback 再入 Journal</div>
-    </div>
-
-    <h3>不可再下放给模型的最小内核</h3>
-    <div class="grid three">
-      <div class="mini"><strong>世界事实</strong><br>event id、conversation、actor、source、sequence、scope、平台回执。</div>
-      <div class="mini"><strong>副作用边界</strong><br>权限、target、idempotency、outbox claim、tool outcome unknown。</div>
-      <div class="mini"><strong>生命周期</strong><br>会话 runner 所有权、持久游标、scheduler 时钟、plugin setup/cleanup。</div>
-    </div>
-    <p>其他业务规划全部交给 Main + Skill + Bash；Reply 只负责人格表达。这里的确定性字段是传输和安全元数据，不是业务 DSL。</p>
+    <p>自动描述应尽量保留可见文字、公式、代码和图表，而短描述只用于媒体搜索界面。短描述不能替代给主模型的完整描述。一段通用描述无法覆盖未来所有问题，因此“按问题重新读图”是必要能力。</p>
+    <p>如果未来主模型本身支持图片，可把真实图片作为模型接口的图片消息直接传入；媒体编号与文字描述仍保留，负责持久化、搜索和不支持多模态时的降级。当前 DeepSeek 文字模型路径应继续使用独立读图模型。</p>
   </section>
 
   <section id="pipeline">
-    <div class="eyebrow">Pipeline</div>
-    <h2>事件驱动、全双工、只抢占模型流</h2>
-    <h3>1. 接收与唤醒</h3>
-    <pre><code>receive(event):
-  transaction:
-    validate source / actor / target
-    dedupe(source_id, source_event_id)
-    seq = append_event(event)
-    if event.interrupt_policy == "steer":
-      input_epoch += 1
-  commit
-  best_effort_wake(conversation_id)</code></pre>
-    <p><code>asyncio.Queue</code> 只唤醒，不承载事实。提交后、wake 前崩溃时，supervisor 会在启动/重连时扫描 <code>processed_cursor &lt; journal_head</code> 并重建 runner。空闲 runner 可以退出，不需要给历史会话永久保留 Task。</p>
+    <div class="label">消息处理</div>
+    <h2>新消息、工具与发送的最小规则</h2>
 
-    <h3>2. 谁能引导</h3>
-    <div class="table-wrap">
+    <h3>新消息如何打断生成</h3>
+    <ol>
+      <li>每条输入先写数据库，再通知会话处理协程。</li>
+      <li>每个会话保存一个只由“可打断输入”增加的版本号。工具返回和模型输出不会增加它。</li>
+      <li>等待主模型或回复模型时，同时等待新输入；新输入先到就关闭模型连接并丢弃未完成输出。</li>
+      <li>模型与新输入同时完成时，固定让新输入优先，避免随机行为。</li>
+      <li>群聊中任何真人的新消息都可打断当前群会话；普通订阅数据默认排队，不抢占真人请求。</li>
+    </ol>
+    <p>内存队列只用于唤醒。进程重启后，处理协程必须从数据库中找出还没有处理的事件，不能把可靠性寄托在 <code>asyncio.Queue</code>。</p>
+
+    <h3>工具如何处理</h3>
+    <ul>
+      <li>工具开始前再次检查输入版本号；已过时的调用不执行。</li>
+      <li>工具已经开始后，默认让它完成或超时。网络请求、写文件和发消息不能被诚实地“撤销”。</li>
+      <li>写操作使用稳定调用编号；进程崩溃后若不知道是否成功，记录“结果未知”，禁止自动重放。</li>
+      <li>长时间 Bash 返回进程编号，后续用等待或终止工具管理，不长期堵塞会话。</li>
+      <li>首版按顺序执行工具，不设计复杂并行调度。</li>
+    </ul>
+
+    <h3>发送如何避免竞态</h3>
+    <p>不能“检查没有新消息，然后直接发”，因为检查和网络发送之间仍可能插入一条新消息。正确做法是：</p>
+    <ol>
+      <li>在数据库事务中检查输入版本号，仍一致才写入待发送记录。</li>
+      <li>发送器原子认领待发送记录。认领前可以因新消息作废；认领后承认网络发送已经开始。</li>
+      <li>QQ 返回成功后记录消息编号和发送文本；返回失败则记录失败。</li>
+    </ol>
+    <div class="note warn">平台只能保证“发送器认领前已经过时的回复不会发出”，不能保证在任意纳秒到达的新消息都能撤回已经开始的网络请求。</div>
+
+    <h3>“工具返回”和“现实是否为真”必须分开</h3>
+    <div class="table">
       <table>
-        <thead><tr><th>事件来源</th><th>默认策略</th><th>理由</th></tr></thead>
+        <thead><tr><th>内容</th><th>平台能确认什么</th><th>平台不能确认什么</th></tr></thead>
         <tbody>
-          <tr><td>同一 conversation 的真人私聊/群聊输入</td><td><strong>steer</strong></td><td>群中任意真人都属于 human role；若只按 exact actor，群聊会表现为互相听不见。</td></tr>
-          <tr><td>普通 synchronizer 订阅数据</td><td>follow-up</td><td>不应让行情/订阅噪声不断抢占真人请求。</td></tr>
-          <tr><td>scheduler / heartbeat / Dream</td><td>follow-up</td><td>走同一 inbox，但让位真人 pipeline。</td></tr>
-          <tr><td>当前明确等待的 Sub-agent report</td><td>可由平台标记 steer</td><td>只有绑定任务的关键结果才需要立即重规划。</td></tr>
-          <tr><td>另一个 conversation</td><td>独立 runner</td><td>不共享 input epoch。</td></tr>
+          <tr><td>天气接口返回“晴”</td><td>接口确实返回了这段数据。</td><td>室外现在一定晴。</td></tr>
+          <tr><td>定时工具返回任务 42</td><td>数据库中已创建任务 42，时间字段是十点。</td><td>未来进程和外部服务一定不会故障。</td></tr>
+          <tr><td>QQ 返回发送成功</td><td>平台接受了消息并给出消息编号。</td><td>用户一定已经阅读和理解。</td></tr>
+          <tr><td>读图模型返回“型号 AX6000”</td><td>读图模型给出了这个识别结果。</td><td>识别结果绝对正确。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="memory">
+    <div class="label">长期记忆</div>
+    <h2>一条摘要、最近原文、按需搜索</h2>
+    <p>主模型和回复模型的历史不同，所以<strong>每个模型各保留一条累计摘要</strong>。原始事件不删除。摘要负责让重要关系和未完成事项一直在场；最近原文负责保留细节；搜索负责找回准确日期、原话、编号和旧工具结果。</p>
+    <div class="grid">
+      <div class="card"><h3>凌晨五点做什么</h3><ul><li>根据新消息更新长期备注。</li><li>把较早的完整消息并入该模型的一条累计摘要。</li><li>跳过正在活跃的会话，稍后重试。</li><li>服务错过五点时，启动后补跑一次。</li></ul></div>
+      <div class="card"><h3>为什么不能只搜索</h3><ul><li>模型可能不知道自己忘了某件事，因此不会主动搜索。</li><li>摘要提供持续线索，搜索提供精确证据。</li><li>用户提到“之前那个”但线索不足时，先搜索，再加载附近完整消息。</li></ul></div>
+    </div>
+    <p>凌晨整理和请求超预算时使用同一段压缩代码：后端选择一段不切断工具调用的旧消息，模型只负责总结；摘要成功写入后才推进覆盖位置。两个压缩请求同时发生时，数据库条件更新只允许一个成功。失败时仍使用原始消息。</p>
+    <p>长期备注必须带适用范围和来源。群聊或订阅数据不能自动改写全局人格；所有者私聊可以提出全局备注，但固定平台规则和人格原稿仍由所有者明确修改。</p>
+  </section>
+
+  <section id="plugin">
+    <div class="label">扩展能力</div>
+    <h2>插件、技能、同步器和独立任务各做一件事</h2>
+    <div class="table">
+      <table>
+        <thead><tr><th>方式</th><th>适合做什么</th><th>不应该做什么</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Bash</strong></td><td>一次性计算、文件操作、调用现成命令。</td><td>不负责长期连接、权限判断和可靠回调。</td></tr>
+          <tr><td><strong>Skill</strong></td><td>一个 <code>SKILL.md</code> 说明某类任务如何完成，按需读取。</td><td>不执行代码，不建立流程状态机。</td></tr>
+          <tr><td><strong>插件</strong></td><td>可信的常驻 Python 代码：新工具、消息来源、读图服务、独立任务后端。</td><td>不替换身份、会话顺序、权限、发送记录和定时器的基本规则。</td></tr>
+          <tr><td><strong>同步器</strong></td><td>接收外部服务事件，发送远端命令，处理确认和结果。</td><td>不理解论文、行情、日程等业务步骤。</td></tr>
+          <tr><td><strong>独立任务 Agent</strong></td><td>用独立上下文完成长任务，只回传简短结果和产物。</td><td>不把完整工作记录塞进主会话，也不靠退出码冒充完成报告。</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3>3. Main / Reply stream race</h3>
-    <pre><code>model_task = create_task(stream_model(context, epoch))
-wake_task  = create_task(wait_for_steer(epoch))
-done = await asyncio.wait(
-    {model_task, wake_task}, return_when=FIRST_COMPLETED
-)
-
-if steer_won_or_tied(done):          # 同时完成时固定 steer 优先
-    abort_http_stream(model_task)
-    discard_partial_assistant()
-    drain_guidance()
-    goto MAIN
-
-result = await model_task
-drain_already_committed_events()
-if current_input_epoch != epoch:
-    discard(result)                  # stale draft / stale tool calls
-    goto MAIN</code></pre>
-    <p>引导发生在 Main 时，重新请求 Main；发生在 Reply 时，也回到 Main，而不是只重写 Reply，因为新的输入可能改变计划本身。partial stream 只进入诊断日志，绝不进入模型历史、Dream 或用户消息。</p>
-
-    <h3>4. 发送边界：不能用“检查后直接 send”</h3>
-    <p><code>epoch check → 网络 send</code> 存在 TOCTOU。最小正确语义是：</p>
-    <ol>
-      <li>会话事务内检查 epoch；相等才写 <code>outbound_intent</code>。</li>
-      <li>sender 原子认领 intent；<strong>认领是发送线性化点</strong>。</li>
-      <li>认领前的新 steer 可使 intent 作废；认领后晚到消息不能假装撤回已开始发送。</li>
-      <li>只有平台确认后才追加 <code>actual_sent</code> 与 provider message id；失败追加真实 failure。</li>
-    </ol>
-    <div class="callout danger">系统能保证的是“认领前的过期回复绝不发送”，不能保证“任何纳秒到达的新消息都能阻止旧回复”。后者在外部网络副作用上不可实现。</div>
-
-    <h3>5. 工具边界</h3>
-    <pre><code>Main 完整响应
-→ epoch gate
-→ Reply 组织可选阶段性回复
-→ Reply epoch gate / outbox
-→ tool preflight epoch gate
-→ 顺序执行 native tool calls
-→ append native tool results
-→ 回 Main</code></pre>
-    <ul>
-      <li>工具调用前检查 epoch；过期则不执行。</li>
-      <li>工具一旦开始，默认让其完成或超时；新消息不能回滚已经发生的 HTTP/文件/发送副作用。</li>
-      <li>每个工具后再检查 steer；若已过期，剩余 calls 产生 native skipped result，使 tool round 仍结构完整。</li>
-      <li>写工具携带稳定 call id/idempotency key。崩溃后若结果未知，记录 <code>outcome=unknown</code>，不可自动重放。</li>
-      <li>长 Bash 返回 process/session handle，后续用 wait/kill；首版顺序执行，不做复杂并行调度。</li>
-    </ul>
-  </section>
-
-  <section id="dual-lane">
-    <div class="eyebrow">Context</div>
-    <h2>Main / Reply：一份世界，两种投影</h2>
-    <p>用户所说的“同步地并行”应理解为两条长期逻辑轨，而不是两次推理同时开始：Reply 依赖本轮 Main 结果，所以调用顺序必然是 Main → Reply。两轨都保留自己的输出风格连续性，但不能各自维护一份世界数据库。</p>
-    <div class="lane">
-      <div class="main-lane">
-        <h3>Main Projection</h3>
-        <ul>
-          <li>immutable system + persona seed</li>
-          <li>当前 scope 的 active markers</li>
-          <li>continuity capsule + recent native suffix</li>
-          <li>平台格式化的 user/system/source events</li>
-          <li>平台确认的 actual-sent assistant 文本</li>
-          <li>当前 native assistant(tool_calls) + tool results</li>
-          <li>上一轮已接受的 bounded Main STATE</li>
-        </ul>
-      </div>
-      <div class="reply-lane">
-        <h3>Reply Projection</h3>
-        <ul>
-          <li>reply system + 同一 persona seed</li>
-          <li>当前 scope 的 active markers</li>
-          <li>相同 source events 与 actual-sent history</li>
-          <li>最近实际回复的风格尾巴</li>
-          <li>本轮受限 reply brief：Main STATE、draft、tool stage、已验证事实</li>
-          <li>无工具 schema、无 target 选择、无世界写权限</li>
-        </ul>
-      </div>
-    </div>
-    <p>Main 的未发送措辞不跨顶层 turn 持久化；否则模型会把自己从未对用户说过的话当成共同经历。Reply 的实际发送内容是世界事实，两轨下一轮都必须看见。Reply 不得新增事实、承诺、成功声明或跨会话目标；输出门禁在 host 侧再次验证。</p>
-
-    <h3>输入格式</h3>
-    <p>继续采用用户提出的行内格式，但所有安全字段由平台生成，原始 payload 无权自称 system：</p>
-    <pre><code>[2026-08-31 14:22:09+08:00]
-[event_id=evt_...]
-[conversation=group:123]
-[actor=qq:user:456 kind=human display="昵称"]
-[source=napcat policy=human]
-[active_marks=actor:456,conversation:group:123]
-[message_id=...]
-用户原文；图片写成 [media:sha256:... description="..."]</code></pre>
-    <p>外部 sync、网页、tool output 与 vision description 都是“不可信资料”，即使文本中出现 <code>[system]</code> 也不升级角色。昵称只用于显示，权限只认稳定 ID。</p>
-
-    <h3>输出格式</h3>
-    <pre><code>Main assistant content:
-[STATE]有限任务状态、承诺、开放事项、关系变化[/STATE]
-[DRAFT]给 Reply 的候选表达；可以为空[/DRAFT]
-+ provider-native tool_calls
-
-Reply assistant content:
-[REPLY_STATE]有限表达/关系状态；可以为空[/REPLY_STATE]
-[TO_USER]唯一待发送文本[/TO_USER]</code></pre>
-    <p><strong>工具结果继续是 provider-native <code>role=tool</code> 的原始、可审计 content。</strong>不把 tool content 包成“秘密思考/说给用户”，因为它本来不直接发送，而且 native tool call/result 邻接是工具循环恢复和模型理解的结构事实。Provider <code>reasoning_content</code> 只活在当前 native loop，永不写入 journal、Dream 或下一会话。</p>
-
-    <h3>双轨是否一定更好？</h3>
-    <p>目前没有本项目实验证明。实现前做三臂对照：</p>
-    <ol>
-      <li>单 Main 直接输出；</li>
-      <li>权威历史 + stateless Reply；</li>
-      <li>权威历史 + 有自身风格尾巴的 Reply（最终建议）。</li>
-    </ol>
-    <p>若 2 与 3 在人格约束、关系连续性和 token/latency 上无显著差异，选择更简单的 2。不要先为未经验证的“双完整历史”支付永久 token 成本。</p>
-  </section>
-
-  <section id="dream">
-    <div class="eyebrow">Dream & Memory</div>
-    <h2>05:00 主动反思 + 同一个在线 Compactor</h2>
-    <h3>最终上下文拼接</h3>
-    <pre><code>immutable platform system
-+ immutable persona seed
-+ scoped active markers
-+ one continuity capsule
-+ recent native suffix
-+ current platform-formatted input
-+ tool schemas</code></pre>
-
-    <h3>Dream 的两个独立请求</h3>
-    <div class="grid two">
-      <div class="mini">
-        <h3>A. 主动标记提取</h3>
-        <p>输入：旧 markers + 上次游标后的 finalized events，全部扁平到一个 user payload；仅保留一个不可变 extractor system 规则。</p>
-        <p>输出：对目标 scope 的完整 replacement 或小 patch。host 校验 scope、provenance 与长度；不能写 immutable system/persona。</p>
-      </div>
-      <div class="mini">
-        <h3>B. 连续性胶囊刷新</h3>
-        <p>输入：旧 capsule + 后端选定的完整、已 finalized、早于 recent suffix 的原生回合，扁平为一个 user payload。</p>
-        <p>输出：一条新的累计 capsule；模型只总结后端给定区段，无权决定删除范围。</p>
-      </div>
-    </div>
-
-    <h3>胶囊最小结构与原子性</h3>
-    <pre><code>conversation_id
-through_seq
-input_digest
-summary
-created_at
-generator_version</code></pre>
-    <p>投影永远是 <code>capsule + raw events where seq &gt; through_seq</code>；同一事件不能既以摘要又以 raw 出现。Dream 与预算触发都调用同一个 CAS primitive：</p>
-    <ol>
-      <li>固定 high-water snapshot；</li>
-      <li>claim 一个不切断 native tool round 的前缀；</li>
-      <li>生成并验证 summary；</li>
-      <li>原子写 capsule 并推进 <code>through_seq</code>；</li>
-      <li>失败不推进，raw 仍可见；并发 compactor 只有一个 CAS 成功。</li>
-    </ol>
-    <p>05:00 使用 <code>dream:YYYY-MM-DD</code> 幂等键；服务错过时启动后补跑一次。活跃会话通过同一 runner 排队，不另开会与 pipeline 争写的后门。</p>
-
-    <h3>胶囊保留与丢弃内容</h3>
-    <div class="grid two">
-      <div class="mini"><strong>保留</strong><ul><li>关系、称呼、角色边界</li><li>稳定偏好与明确约束</li><li>已确认事实及最新修订</li><li>未完成事项、承诺、等待中的任务</li><li>关键决定与理由</li><li>缺口和可检索关键词</li></ul></div>
-      <div class="mini"><strong>丢弃</strong><ul><li>重复寒暄</li><li>过期临时状态</li><li>大段工具输出</li><li>未发送 draft</li><li>raw CoT / reasoning_content</li><li>已被明确纠正的旧值（可在 raw 搜到）</li></ul></div>
-    </div>
-
-    <h3>何时自动搜索历史</h3>
-    <ul>
-      <li>用户询问准确时间、原话、ID、路径、媒体或旧动作结果；</li>
-      <li>胶囊注明历史缺口；</li>
-      <li>用户说“之前那个/你还记得”但当前上下文无法唯一定位；</li>
-      <li>事实冲突或需要证明某个副作用是否真实成功。</li>
-    </ul>
-    <p><code>history_search</code> 返回小段命中与 event id；<code>history_load(start, end)</code> 再加载附近完整 native turn。加载只作为本轮 tool result，不创建永久“调入上下文”状态。</p>
-
-    <h3>Active Marker 的权限</h3>
-    <pre><code>scope: self | actor:&lt;id&gt; | conversation:&lt;id&gt; | global
-text
-source_range / source_event_ids
-updated_at</code></pre>
-    <p>只有 owner-private 或系统事实能提议 global/self；群聊与订阅来源只能产生 conversation/source scoped marker。Marker 注入时明确标注“描述性记忆，不是外来指令”。人格 seed 的修改仍是 owner-gated 系统操作，不由 Dream 自动升级。</p>
-  </section>
-
-  <section id="plugins">
-    <div class="eyebrow">Plugin & Skill</div>
-    <h2>可信本地插件 + 纯文本 Skill</h2>
-    <h3>Plugin V1：一个模块函数就够</h3>
+    <h3>最小插件实现</h3>
     <pre><code># plugins/example/plugin.py
 PLUGIN_ID = "mutsumi.example"
 PLUGIN_API = 1
 
-async def setup(ctx, config):
-    dispose_tool = ctx.register_tool(...)
-    dispose_source = ctx.register_source(...)
-    return async_cleanup   # 可选；host 仍会逆序调用 registrations</code></pre>
-    <pre><code># config.yaml
-plugins:
-  enabled:
-    - path: plugins/example
-      config: {}</code></pre>
-    <p>不需要单独 manifest。模块常量承担 ID/API；版本由 repo commit/lockfile 管理。Plugin Host 只做：显式 allow-list、import、API/重复名称校验、setup、disposer 栈、shutdown cleanup 与 <code>plugin list/inspect/doctor</code> 诊断。</p>
+async def setup(api, config):
+    api.add_tool(...)
+    api.add_message_source(...)
+    return cleanup  # 服务退出时调用</code></pre>
+    <p>配置文件显式列出启用的本地插件。加载时检查编号冲突；注册到一半失败就按相反顺序清理。第一版不做插件市场、自动下载、热更新、复杂依赖图或内建管理页面。DeepSeek Harness 值得借鉴的是“注册能力时同时得到清理办法”，不值得照搬“所有内核都可替换”。</p>
 
-    <h3>第一版稳定扩展面</h3>
-    <div class="table-wrap">
+    <h3>同步器与设备节点</h3>
+    <ul>
+      <li>中心服务分配会话顺序；设备节点不成为第二个主脑。</li>
+      <li>外部来源用稳定事件编号重试，中心按来源编号去重。</li>
+      <li>远端命令有命令编号、超时、确认和结果；接收方按命令编号避免重复执行。</li>
+      <li>首版只承诺“至少投递一次并去重”，不宣称网络上的严格一次执行。</li>
+      <li>独立任务只有调用受控回报工具才算完成；目标会话由平台绑定。</li>
+    </ul>
+  </section>
+
+  <section id="goals">
+    <div class="label">完整性判断</div>
+    <h2>是否覆盖六个核心目标</h2>
+    <div class="table">
       <table>
-        <thead><tr><th>可注册能力</th><th>用途</th><th>边界</th></tr></thead>
+        <thead><tr><th>目标</th><th>判断</th><th>关键条件</th></tr></thead>
         <tbody>
-          <tr><td><code>register_tool</code></td><td>常驻外部 API / 设备动作</td><td>重复名称失败；不能覆盖内建安全工具。</td></tr>
-          <tr><td><code>register_source</code></td><td>新 channel / ingress / synchronizer adapter</td><td>只能提交 untrusted source event；不能伪造 system/owner。</td></tr>
-          <tr><td><code>register_media_handler</code></td><td>识别、生成、转码、存储 adapter</td><td>最终统一进入 Media Ledger。</td></tr>
-          <tr><td><code>register_agent_backend</code></td><td>OpenCode 等独立任务后端</td><td>结果必须走 bound callback。</td></tr>
-          <tr><td><code>register_skill_dir</code></td><td>随插件分发自然语言说明</td><td>Skill 仍按文件读取，不获得代码权限。</td></tr>
-          <tr><td><code>spawn_managed_task</code></td><td>长连接与后台 adapter</td><td>host 统一取消、超时、日志与 cleanup。</td></tr>
+          <tr><td>拟人化</td><td class="partial">基本覆盖，需实验</td><td>两个模型各自保留自身输出；主模型另外收到实际发送记录；人格效果做三组对照。</td></tr>
+          <tr><td>超长上下文一致性</td><td class="yes">覆盖</td><td>每个模型一条摘要 + 最近原文 + 历史搜索；原始事件不删。</td></tr>
+          <tr><td>角色边界一致性</td><td class="yes">覆盖</td><td>稳定编号和会话范围由后端决定；外部来源不能自称 system。</td></tr>
+          <tr><td>完备助手</td><td class="yes">覆盖</td><td>Bash、文件、Skill、插件工具、定时任务和独立任务。</td></tr>
+          <tr><td>通讯中枢</td><td class="partial">还需补出站命令</td><td>来源注册、持久待发送命令、确认与结果回流。</td></tr>
+          <tr><td>分布式设备</td><td class="yes">单中心方案覆盖</td><td>中心掌握顺序；节点重试和去重；暂不做多主。</td></tr>
         </tbody>
       </table>
     </div>
-    <p>第一版不开放任意 <code>before_model/replace_context</code> hook；这会让 plugin 直接污染人格与角色边界。真实需求出现后，再增加具名、窄化、确定顺序的 hook。Plugin 是同进程可信代码，不能假装安全沙箱；安装/更新是 operator action，生产启动不自动下载依赖。</p>
-
-    <h3>Skill V1：文件，不是系统</h3>
-    <pre><code>skills/&lt;name&gt;/SKILL.md     # name + description + 完整自然语言指引
-skills/&lt;name&gt;/references/ # 按需读取
-skills/&lt;name&gt;/scripts/    # 可复用脚本
-skills/&lt;name&gt;/assets/     # 模板/资源</code></pre>
-    <ul>
-      <li>启动时只扫描 allowlisted roots，提取唯一 <code>name + description</code> 构造短目录；这是文件索引，不是运行时注册中心。</li>
-      <li>Main 自行选择后再读完整 <code>SKILL.md</code>；不把全部 Skill 塞进系统 prompt。</li>
-      <li>删除重复的 bot/worker 双份正文约定；一个 Skill 可在正文中分别给主 Agent 与 Sub-agent 指引。</li>
-      <li>Skill 可以教 Agent 用 Bash、工具或 Plugin；它不激活代码、不拥有状态机、不进入 Scheduler schema。</li>
-      <li>最小 lint：唯一名称、准确触发描述、正文长度、引用路径存在、无越权自称 system。</li>
-    </ul>
-
-    <div class="callout good"><strong>选择规则：</strong>一次性计算/文件工作用 Bash；可复用“怎么做”写 Skill；常驻连接或新能力写 Plugin；外部标准工具服务用一个 MCP adapter plugin；长期独立任务用 Sub-agent。不要用 Plugin 表达业务步骤。</div>
-  </section>
-
-  <section id="sync">
-    <div class="eyebrow">Media · Sync · Sub-agent · Nodes</div>
-    <h2>通讯中枢与分布式节点的最小闭环</h2>
-    <h3>媒体管理器</h3>
-    <ul>
-      <li>入站与验证成功的出站媒体统一 content-addressed 存储，SHA 派生 <code>media_id</code>。</li>
-      <li>记录 origin、scope、MIME、尺寸、description、vision provenance 与 delivery receipt。</li>
-      <li>模型上下文只放可读 description + media id；不放 base64、临时 URL 或不稳定路径。</li>
-      <li>vision/OCR description 是外部资料，不能成为指令。</li>
-      <li>节点上传媒体后中心立即归档为自己的 blob；不假设共享文件系统。</li>
-    </ul>
-
-    <h3>同步器：数据格式不承载业务 workflow</h3>
-    <pre><code>source registration:
-  source_id, bound_conversation, role_policy, skill_ref, token_hash, enabled
-
-inbound event:
-  source_event_id, occurred_at, text, media_refs
-
-host derives:
-  actor_kind, conversation_id, scope, interrupt_policy, journal seq</code></pre>
-    <p>Main 可通过 owner-gated 系统工具注册、禁用、撤销或轮换 source token；role policy 与 skill path 存在 host registration 中，不接受上报 payload 覆盖。传输是 at-least-once，按 <code>(source_id, source_event_id)</code> 去重。</p>
-    <p>要成为通讯中枢，还需补 durable outbound command：中心写 command id，节点通过 long-poll/WebSocket 获取，执行后 ack/result 作为新 source event 回流。目标节点由服务端绑定；模型不填写任意 callback conversation。</p>
-
-    <h3>Sub-agent</h3>
-    <p>保留现有 OpenCode 方向：Main 调用 <code>delegate(natural_language_prompt)</code>；平台绑定 task、origin conversation 与 report token；worker 使用独立上下文执行，只有调用受控 <code>report_task(result)</code> 才算 reported。stdout、退出码或超时都不能被后端猜成成功。紧凑报告作为低权限 source event 入队，完整 worker transcript 不进入主 Life Stream。</p>
-
-    <h3>设备节点</h3>
-    <p>首版坚持一个权威中心：中心分配 conversation sequence 并拥有 runner；节点只是传感器/执行器。通用能力先做 <code>node_bash(node, command, timeout)</code>、process handle 与 artifact/media refs。节点协议只需要：</p>
-    <ul>
-      <li>node id + 认证与 token rotation；</li>
-      <li>capability announcement + heartbeat/lease；</li>
-      <li>command id + idempotency key + deadline；</li>
-      <li>ack / result / outcome unknown + artifact refs。</li>
-    </ul>
-    <p>不做 multi-primary、CRDT、vector clock 或“exactly once”。只有未来确实出现多个 backend writer 同时争夺同一 conversation 时，再引入 lease + fencing token。</p>
-  </section>
-
-  <section id="tools">
-    <div class="eyebrow">Tool Surface</div>
-    <h2>工具只保留强原语</h2>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>类别</th><th>最小工具</th><th>确定性内核负责</th></tr></thead>
-        <tbody>
-          <tr><td>系统</td><td>配置局部修改 / restart、active marker CRUD、source registration</td><td>owner 权限、schema、持久化与重启状态。</td></tr>
-          <tr><td>角色</td><td>actor alias / relationship label CRUD</td><td>稳定 ID、scope、昵称不参与鉴权。</td></tr>
-          <tr><td>工作</td><td>Skill read、沙箱文件 CRUD、Bash、wait/kill、scheduler</td><td>workspace/network 权限、timeout、process handle；scheduler 仍只是时间 + prompt。</td></tr>
-          <tr><td>记忆</td><td><code>history_search</code>、<code>history_load</code></td><td>scope filter、event range、返回 native 完整 turn。</td></tr>
-          <tr><td>通信</td><td>send special、node command、delegate</td><td>target binding、idempotency、receipt 与 callback origin。</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>不要增加 paper、market、calendar 等专用流程字段。领域步骤写进 Skill，自由组合由 Agent 决定；后端只验证通用传输与安全契约。</p>
-  </section>
-
-  <section id="migration">
-    <div class="eyebrow">Cutover</div>
-    <h2>删除、复用与落地顺序</h2>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>删除 / 替换</th><th>直接复用</th><th>新增最小件</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>scheduler 的 whole-pipeline <code>cancel_user</code>、debounce 合并语义、active Task 作为真相</td>
-            <td>低层 SQLite、结构化日志、provider/native tool schema</td>
-            <td>journal cursor、input epoch、runner supervisor、stream abort</td>
-          </tr>
-          <tr>
-            <td>多 Episode/coverage frontier/legacy summary 双读与复杂 Life Stream 投影</td>
-            <td>raw event、actor/media provenance、action ledger</td>
-            <td>一条 capsule、一个统一 CAS compactor、history search/load</td>
-          </tr>
-          <tr>
-            <td>raw TO_SELF 作为长期“内心”、未发送 draft 进入共享历史</td>
-            <td>输出 gate、真实 send receipt</td>
-            <td>Main STATE / Reply STATE、actual-sent 共享投影、outbox claim</td>
-          </tr>
-          <tr>
-            <td>Skill 双份正文与隐式领域 workflow</td>
-            <td>file_edit、Bash、scheduler、OpenCode report</td>
-            <td>单 SKILL.md 索引、Plugin Host、双向 sync command</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h3>建议顺序（每阶段都可独立验收）</h3>
-    <ol>
-      <li><strong>先建立并发真相：</strong>Event Journal、可重建 runner、input epoch、stream abort、outbox claim 与 P0 race tests。</li>
-      <li><strong>再替换上下文：</strong>Main 投影、一 capsule + suffix、history tools、统一 compactor；删除 Episode runtime paths。</li>
-      <li><strong>再验证表达层：</strong>做单 Main / stateless Reply / stateful Reply 三臂实验，达标后启用最终双轨。</li>
-      <li><strong>最后接能力：</strong>Plugin Host、双向 synchronizer、远端 node adapter；它们都走同一 journal/outbox。</li>
-    </ol>
-    <p>不保留运行时双读兼容。切换时只允许一次性离线导入：备份数据库，把可确认的 finalized events 转成新 journal，随后旧 messages/summaries/episodes 只读归档或按用户授权清空。不要让新 pipeline 同时维护新旧两套语义。</p>
+    <p>不需要补充工作流语言、知识图谱、多主同步、插件市场或复杂界面。Bash 负责自由执行，Skill 负责方法说明，插件负责常驻能力，后端只守住身份、顺序、权限、持久化和真实操作结果。</p>
   </section>
 
   <section id="tests">
-    <div class="eyebrow">Test Plan</div>
-    <h2>必须补充的测试</h2>
-    <h3>四个合并阻断不变量</h3>
-    <ol>
-      <li>已确认入站事件不丢。</li>
-      <li>同一 idempotency key 不重复产生副作用。</li>
-      <li>未被 sender 认领的过期回复绝不发送。</li>
-      <li><code>actual_sent</code> 只来自平台成功确认。</li>
-    </ol>
-    <p>并发测试必须用可控 barrier、fake sender、fake stream、fake tool；禁止靠随机 sleep 碰竞态。</p>
-
-    <h3><span class="badge-p0">P0</span> 架构正确性</h3>
-    <div class="table-wrap">
+    <div class="label">测试</div>
+    <h2>最先补什么测试</h2>
+    <div class="table">
       <table>
-        <thead><tr><th>领域</th><th>注入点</th><th>硬断言</th></tr></thead>
+        <thead><tr><th>场景</th><th>必须成立</th></tr></thead>
         <tbody>
-          <tr><td>Main steer</td><td>Main stream 中真人消息</td><td>stream abort；partial 不持久；下次 Main 含两条输入；旧 send/tool 为 0。</td></tr>
-          <tr><td>Reply steer</td><td>Reply stream 中真人消息</td><td>Reply abort；无 outbound intent；直接回 Main 重规划。</td></tr>
-          <tr><td>同时完成</td><td>stream 与 steer barrier 同时释放</td><td>固定 steer 优先，无随机 flaky 行为。</td></tr>
-          <tr><td>Epoch 域</td><td>tool/assistant 事件递增 journal seq</td><td>不推进 input epoch，不把自己的结果误判 stale。</td></tr>
-          <tr><td>Send fence</td><td>新输入在认领前、事务中、认领后</td><td>前两种旧 intent 不发；认领后允许发且顺序可解释；仅 ack 写 actual_sent。</td></tr>
-          <tr><td>Journal / wake 崩溃</td><td>commit 后 wake 前 kill</td><td>重启扫描后事件仍处理；wake queue 不是真相。</td></tr>
-          <tr><td>Runner 崩溃</td><td>model/tool/handler 抛异常</td><td>supervisor 重建；cursor 不越过未处理事件。</td></tr>
-          <tr><td>Tool preflight</td><td>工具开始前 steer</td><td>工具不执行，call 产生结构完整的 skipped 结果。</td></tr>
-          <tr><td>Tool mid-flight</td><td>写工具开始后 steer</td><td>当前工具最多一次；不谎称撤销；剩余 calls skipped。</td></tr>
-          <tr><td>Unknown write</td><td>写请求发出后进程崩溃</td><td><code>outcome=unknown</code>，相同 call 不自动重放。</td></tr>
-          <tr><td>双轨事实</td><td>Reply 试图新增成功声明/target</td><td>无工具权限；gate 拒绝；Main 下轮只看到 actual sent。</td></tr>
-          <tr><td>CoT 隔离</td><td><code>reasoning_content</code> 与恶意 STATE</td><td>不进入 raw journal、Dream、用户输出或高权限 marker。</td></tr>
-          <tr><td>Dream commit</td><td>空摘要、超长、timeout、异常</td><td><code>through_seq</code> 不推进；raw 仍可见。</td></tr>
-          <tr><td>双 Compactor</td><td>05:00 与 threshold 同时处理</td><td>仅一个 CAS 成功；无重叠、重复或洞。</td></tr>
-          <tr><td>Capsule coverage</td><td>capsule through=N</td><td>suffix 第一条严格 &gt;N；不切断 native tool round。</td></tr>
-          <tr><td>Scope</td><td>A/B 私聊、群聊同名 actor</td><td>无跨私聊 raw/marker 泄露；群 actor 独立。</td></tr>
-          <tr><td>Source spoof</td><td>payload 自称 system/owner/target</td><td>host 字段覆盖；权限不提升。</td></tr>
-          <tr><td>Sync retry</td><td>并发重复 source_event_id</td><td>journal 只有一条事实事件。</td></tr>
-          <tr><td>Node command</td><td>重复投递、ack、断线重连</td><td>按 command id 幂等；最终状态可解释，不宣称 exactly-once。</td></tr>
-          <tr><td>Plugin setup</td><td>重复工具、setup 半途异常、cleanup 异常</td><td>注册原子回滚；core 保持旧快照；日志可定位。</td></tr>
-          <tr><td>Sub-agent report</td><td>重复、伪 token、错误 target</td><td>幂等、拒绝伪造、只唤醒 origin conversation。</td></tr>
+          <tr><td>主模型生成时来新消息</td><td>关闭旧流；未完成内容不入历史；旧工具和旧回复均不执行。</td></tr>
+          <tr><td>回复模型生成时来新消息</td><td>关闭回复流；不发送；回主模型重新思考。</td></tr>
+          <tr><td>模型完成与新消息同时发生</td><td>固定新消息优先，测试不依赖随机 sleep。</td></tr>
+          <tr><td>新消息发生在发送认领前/后</td><td>认领前旧回复作废；认领后如实记录已经开始发送。</td></tr>
+          <tr><td>写工具开始后进程崩溃</td><td>记录结果未知，不自动重复写。</td></tr>
+          <tr><td>数据库已写消息但进程尚未唤醒</td><td>重启后仍能从数据库继续处理。</td></tr>
+          <tr><td>主模型和回复模型历史</td><td>各自 assistant 内容与自身实际输出完全一致；主模型通过单独平台记录知道发送文本。</td></tr>
+          <tr><td>图片自动描述不足</td><td>主模型可按媒体编号让读图模型重新查看指定细节。</td></tr>
+          <tr><td>读图错误</td><td>识别结果标明来自读图模型，不被当成确定现实。</td></tr>
+          <tr><td>凌晨整理与超预算同时发生</td><td>只有一个摘要写入成功；覆盖范围不重叠、不漏消息。</td></tr>
+          <tr><td>用户纠正旧信息</td><td>摘要与长期备注使用新值；旧原文仍可搜索，但不再当当前值。</td></tr>
+          <tr><td>插件加载到一半失败</td><td>已注册能力全部清理，原工具列表不被污染。</td></tr>
+          <tr><td>外部服务重复上报/节点重复收命令</td><td>相同事件或命令不会产生两次副作用。</td></tr>
+          <tr><td>角色隔离</td><td>私聊 A、私聊 B 和群聊成员的摘要、备注、搜索结果不会串线。</td></tr>
         </tbody>
       </table>
     </div>
+    <p>行为实验至少比较三组：主模型直接回复；主模型 + 无历史回复模型；主模型 + 保留自身历史的回复模型。指标包括事实召回、人格一致性、跨角色泄露、错误承诺、旧回复/旧工具执行率、输入量和延迟。若第三组没有稳定收益，就选第二组。</p>
+  </section>
 
-    <h3><span class="badge-p1">P1</span> 行为与长期上下文评估</h3>
-    <ul>
-      <li>复跑 USC 300/600/1000 轮、8K/16K/32K 的 early/mid/late recall；增加真实 native tool round、restart 与 recovery。</li>
-      <li>复跑 Quest 长噪声，对比 capsule+suffix、search-only、truncate；至少两个模型族、多个 seed，报告置信区间。</li>
-      <li>双轨三臂对照：单 Main、stateless Reply、stateful Reply。指标含 persona adherence、关系连续性、事实增删、错误承诺、tokens、cache hit、latency、rewrite failure。</li>
-      <li>Dream 连续 30 周期：早期稳定事实、后续纠正、一次性任务不变 Skill、prompt injection 不进 persona、递归摘要不快速漂移。</li>
-      <li>MemoryAgentBench 式四维：准确检索、测试时学会新规则、长程聚合、选择性遗忘/冲突修订。</li>
-      <li>安全/真实性：cross-actor leakage、wrong-target、unverified-success claim、stale reply rate、stale tool rate。</li>
-    </ul>
-
-    <h3>现有测试如何处理</h3>
-    <div class="grid two">
-      <div class="mini"><strong>保留并迁移</strong><ul><li>send 平台真实性与 output gate</li><li>ingress auth/dedupe</li><li>actor/media provenance</li><li>scheduler recurrence</li><li>OpenCode token-bound report</li><li>native tool round</li><li>cross-conversation target enforcement</li></ul></div>
-      <div class="mini"><strong>删除或重写</strong><ul><li><code>test_cancelled_pipeline_*</code></li><li>依赖 staged cleanup 的取消测试</li><li>MessageWindow/legacy summary 恢复</li><li>多 Episode overlap/frontier/legacy coverage 大量测试</li></ul></div>
+  <section id="evidence">
+    <div class="label">依据</div>
+    <h2>保留最相关的研究与实现</h2>
+    <div class="table">
+      <table>
+        <thead><tr><th>来源</th><th>支持什么</th><th>不能证明什么</th></tr></thead>
+        <tbody>
+          <tr><td>本项目 <code>experiment/context-v2</code></td><td>在多组长对话条件中，“一条摘要 + 最近消息”比多段 Episode 更便宜，并在紧预算下召回更好。</td><td>重复次数少、主要是单模型，不能证明所有模型都如此。</td></tr>
+          <tr><td>本项目 <code>codex/context-v3-experiment</code></td><td>长噪声下，简单行内格式优于复杂投影；身份、目标和发送结果仍需后端控制。</td><td>不能直接证明双模型能提升人格。</td></tr>
+          <tr><td><a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> 与 <a href="https://arxiv.org/abs/2608.25512">Cordis</a></td><td>会话事件可追加记录；插件注册应可清理；没有界面也能运行。</td><td>仍是快速变化的开发预览，不能照搬“所有内核皆插件”。</td></tr>
+          <tr><td><a href="https://github.com/earendil-works/pi">Pi</a> 与 <a href="https://opencode.ai/docs/plugins/">OpenCode 插件</a></td><td>工具调用保持 API 原生结构；Skill 是文件；插件可用一个模块函数实现。</td><td>它们主要是编程 Agent，不直接证明聊天人格效果。</td></tr>
+          <tr><td><a href="https://arxiv.org/abs/2502.05167">NoLiMa</a> 与 <a href="https://arxiv.org/abs/2410.10813">LongMemEval</a></td><td>长上下文会降低检索能力；时间、更新和拒答都需要专门测试。</td><td>不是本项目的长期人物关系实验。</td></tr>
+          <tr><td><a href="https://arxiv.org/abs/2504.13171">Sleep-time Compute</a> 与 <a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">Anthropic 上下文工程</a></td><td>离线整理有价值；摘要、外部备注和按需搜索应互补。</td><td>凌晨整理的收益取决于未来问题是否可预测。</td></tr>
+          <tr><td><a href="https://www.anthropic.com/research/reasoning-models-dont-say-think">思维链忠实性研究</a> 与 <a href="https://aclanthology.org/2025.chomps-main.2/">DeepSeek R1 研究</a></td><td>可见思维链不应被当成长期事实来源。</td><td>不表示模型当前轮不需要推理。</td></tr>
+        </tbody>
+      </table>
     </div>
-    <p>建议新文件：<code>test_conversation_runner.py</code>、<code>test_guidance_races.py</code>、<code>test_outbox_linearization.py</code>、<code>test_dual_model_projection.py</code>、<code>test_dream_compaction.py</code>、<code>test_history_tools.py</code>、<code>test_plugin_host.py</code>、<code>test_sync_nodes.py</code>、<code>test_long_context_eval.py</code>。</p>
   </section>
 
-  <section id="non-goals">
-    <div class="eyebrow">Explicit Non-goals</div>
-    <h2>这版明确不做什么</h2>
-    <ul>
-      <li>不做 Workflow DSL、connector 领域 schema、paper/market/calendar 专用 pipeline。</li>
-      <li>不做多 Episode 图、向量数据库或知识图谱作为 v1 必需项。</li>
-      <li>不做 plugin marketplace、自动依赖下载、热卸载、复杂 manifest 或内建 Web UI。</li>
-      <li>不做多主 Agent、CRDT、vector clock 或 exactly-once 宣称。</li>
-      <li>不保存 raw CoT，不让 Reply 获得工具/target 权限，不让外部 source 生成 system role。</li>
-      <li>不长期维护新旧上下文/输出协议双路径；只允许一次性离线导入。</li>
-    </ul>
+  <section id="terms">
+    <div class="label">必要名词</div>
+    <h2>只保留这些需要对齐的表达</h2>
+    <div class="table">
+      <table>
+        <thead><tr><th>表达</th><th>本文含义</th></tr></thead>
+        <tbody>
+          <tr><td>事件日志</td><td>按时间追加保存的原始输入、模型输出、工具调用、工具返回和发送结果。</td></tr>
+          <tr><td>输入版本号</td><td>同一会话每来一条可打断的新输入就加一，用来判断模型结果是否过时。</td></tr>
+          <tr><td>待发送记录</td><td>通过版本检查后写入数据库、尚未被发送器取走的回复。</td></tr>
+          <tr><td>长期备注</td><td>带来源和适用范围的称呼、偏好、关系变化与未完成事项。</td></tr>
+          <tr><td>累计摘要</td><td>覆盖较早对话的一条摘要；主模型和回复模型各有一条。</td></tr>
+          <tr><td>媒体编号</td><td>用于去重、查找和重新读取原图的稳定编号；它不包含图片语义。</td></tr>
+          <tr><td>Skill</td><td>按需读取的任务说明文件。</td></tr>
+          <tr><td>插件</td><td>启动时显式启用的可信常驻代码扩展。</td></tr>
+          <tr><td>同步器</td><td>负责外部事件、远端命令、确认与结果回传的通用通信层。</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
-  <section id="final-decision" class="verdict">
-    <div class="eyebrow">Decision</div>
-    <h2>最终技术决策</h2>
-    <p>采用<strong>权威事件史上的引导式双轨 Agent</strong>：每个 conversation 由可重建 runner 串行推进；真人输入通过 input epoch 抢占 Main/Reply stream；发送经持久 outbox 认领线性化；工具保持 native 结构且不伪装可撤销。上下文采用 scoped active markers + 一条 continuity capsule + recent native suffix + history search/load。Plugin 是显式启用的可信本地代码；Skill 是按需读取的文本；同步器与节点采用中心权威、at-least-once + dedupe；Sub-agent 只以绑定回调报告。</p>
-    <p><strong>这已经覆盖项目六个核心目标。</strong>接下来不应再补架构名词，而应先用 P0 竞态测试证明内核，再用三臂双模型实验验证人格收益。若实验不支持 stateful Reply，就主动删掉该状态，而不是为理念保留复杂度。</p>
+  <section id="decision">
+    <h2>最终设计</h2>
+    <p>采用事件日志驱动的双模型流程：真人新消息可以关闭正在生成的主模型或回复模型请求；主模型负责思考和工具，回复模型只负责表达；两者各自忠实保留自己的 assistant 输出，平台用单独消息告诉主模型实际发送内容。每个模型使用自己的累计摘要和最近完整消息；原始事件始终可搜索。图片先由独立读图模型生成完整描述，并支持按媒体编号再次查看原图。Bash、Skill、插件、同步器和独立任务保持清晰分工，后端只负责身份、顺序、权限、持久化和真实操作结果。</p>
   </section>
 </main>
 
 <footer>
-  <p>证据审阅口径：优先官方源码/规范与论文；厂商博客标为工程证据；arXiv 标为预印本；本地实验标明样本与模型限制。本文未把 star 数当作质量分数，也未把未经本项目实验验证的双模型收益写成既成事实。</p>
+  <p>本报告描述目标架构，不表示当前生产代码已经完成这些改动。外部论文和开源实现只提供方向性支持；双模型人格收益、即时打断和长期摘要稳定性仍需由本项目测试决定。</p>
 </footer>
 </body>
 </html>
