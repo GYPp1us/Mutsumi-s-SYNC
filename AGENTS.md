@@ -2,7 +2,7 @@
 
 ## 当前阶段与目录边界
 
-- 新版工作分支为 `v4`，目标运行时为 Rust；当前只有已确认的架构契约与 V3 归档，不能声称 Rust 运行时已经可用。
+- 新版工作分支为 `v4`，目标运行时为 Rust；当前有可运行的 Rust 编排原型与 V3 归档；完整 QQ 生产运行时尚未完成。
 - 开始工作前按顺序读 `docs/current-design.md`、`README.md`、`init.md`、`docs/refactor-decisions-2026-10-18.md` 和 `docs/v4-handoff-2026-10-18.md`。
 - `archive/v3/` 是冻结的 Python 实现、原型、测试与历史设计，其内部 `AGENTS.md` 只约束归档中的旧代码。没有明确任务时不要修改归档、恢复旧服务或从旧发布脚本部署。
 - `.local-archives/` 保存未跟踪恢复包；`.worktrees/` 中的旧实验工作树保留。不要删除、重置或提交其中的私有文件。
@@ -25,7 +25,9 @@
 
 ## 开发与验证
 
-- V4 当前没有 Cargo 工程，不要把建立分支或归档视为已经完成运行时实现。
+- Rust 入口为 `src/main.rs`，单个主循环为 `src/runtime.rs`；模块边界与命令见 `docs/rust-prototype.md`。
+- Rust 改动运行 `cargo test --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings` 与 `cargo fmt --all -- --check`。真实 API 测试默认忽略，使用 key 的调用必须在用户授权范围内。
+- 不将终端回执声称为 QQ 送达，不将 Router 接口声称为已接入 Jev；当前只有只读 clock 工具。
 - 代码和测试只围绕本次真实改动增加；离线验证不证明真实模型延迟、角色扮演或语义准确率。
 - V3 行为基准可在 `archive/v3/` 下使用根目录的现有 `.venv` 执行；详见交接文档。
 - 提交消息用中文约定式前缀；不提交 `config.yaml`、`.env`、运行数据、模型原始隐私内容、依赖目录或恢复包。

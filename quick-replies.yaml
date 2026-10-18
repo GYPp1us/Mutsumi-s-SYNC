@@ -1,0 +1,12 @@
+# Prepared for a future measured Jev router. MainModelRouter currently always generates.
+version: 1
+templates:
+  - id: morning
+    category: morning_greeting
+    enabled: true
+    description: 只有简单早安问候，没有附加任务
+    target_binding: source_conversation
+    messages:
+      - segments:
+          - type: text
+            text: 早安呀～
