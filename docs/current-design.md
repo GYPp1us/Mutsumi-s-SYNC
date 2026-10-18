@@ -1,315 +1,103 @@
-# Mutsumi's SYNC Current Design
+# Mutsumi's SYNC V4 - 当前架构契约
 
-This document is the current design baseline for v3. `bottle/docs/` records the
-design history; when it conflicts with this document, the implementation tests,
-or `README.md`, this document and the tests take precedence.
+本文是已确认的 V4 目标契约，不是已实现功能清单。V4 当前完成主线与文档初始化，Rust 运行时尚未实现；冻结的 Python 实现见 [`archive/v3/`](../archive/v3/README.md)。
 
-The independent [conversation and background-work prototype](prototype-conversation-background-work.md), started with `python -m src.mutsumi_sync.prototype --demo`, experiments with short chat requests, durable background jobs and message lists. It is text-only, uses a separate database and terminal sender, and does not change the production runtime semantics documented below. Its recent per-conversation context does not implement the production global projection or summary pipeline.
+## 1. 模型与宿主的职责
 
-The [repository cleanup and experiment handoff report](repository-cleanup-and-experiment-plan-2026-09-08.md) lists historical design records, archived generated data, branch/worktree status, and the next experiments for autonomous orchestration. It is a design and maintenance note, not a replacement for this runtime baseline.
+模型决定当前一步的目标、交流、工具、等待与委派。宿主只提供真实来源、能力与对象资料，落实动作审查、持久化和执行结果，不按任务类型预写完整业务流程。
 
-## 1. Runtime Boundaries
+Runtime/Scheduler 拥有状态；主编排循环为清晰的异步入口，依赖显式注入。借鉴 pi 的小循环和动作拦截模式，首版不引入完整 TypeScript SDK 作为中心运行时依赖。
 
-- `PipelineScheduler` owns shared dependencies and per-conversation state.
-- `pipeline()` remains one asynchronous function and receives all state through
-  `PipelineDeps`.
-- A newer input for the same conversation cancels the previous task with
-  `asyncio.Task.cancel()` and waits for its cleanup.
-- Incoming user data is persisted before cancellation-sensitive LLM or tool work.
-- External service reports are persisted as `received` Event Ledger entries before
-  acknowledgement and processed by a per-service FIFO worker; they do not use
-  the ordinary same-key cancellation rule.
-- Heartbeats are real LLM calls over conversations with inbound activity in the
-  previous 24 hours. Private conversations are scanned every 15 minutes and
-  groups every 3 hours. Synthetic heartbeat input uses `remember_input=False`,
-  while verified proactive assistant output may be persisted to the target
-  conversation and global event ledger.
+## 2. 入站、身份与事件事实
 
-## 2. Provider Request Layout
+原始入站在模型或工具工作前持久化，保留 actor、conversation、平台消息 ID、受众、时间和有序消息段。服务来源与 QQ actor 分离，正文不能自行升级身份或执行权限。
 
-The persona prompt and five operational prompts live in the standalone
-`system-prompts.yaml` file and are selected through `prompts.system_file`.
-Runtime, message-summary, summary-merge, and Episode-summary requests load that
-same validated file; missing or empty operational levels fail startup.
-The mandatory `identity` config block supplies distinct bot and owner IDs, names,
-and the owner's relationship alias. Prompt loading resolves their placeholders once.
-It is a load-time substitution,
-not a runtime actor resolver; current speakers remain identified by event `actor_id`.
-`config_manager reload`
-reloads the external prompt file. Production stores it under the shared deploy
-root so a release does not overwrite operator changes.
+事件账本是唯一的共同经历来源。模型的提议、主观内心、工具报告和已经核实的副作用分别表示。可信来源说明“谁报告了什么”，不自动保证报告内容是外部世界的真相。
 
-Every LLM request has these layers, in order:
+原始记录不因摘要消失。摘要覆盖范围精确，原生工具回合保持完整；投影应区分动作提议和真正发送，避免重复呈现或把 JSON 草稿当成人类看过的回复。
 
-1. A provider-native Chinese `system` message containing stable platform rules and the configured persona.
-2. The global chronological Life Stream. Human and service inputs use provider `user`, assistant outputs use `assistant`, and completed tool rounds use native `assistant(tool_calls)` plus `tool` messages. Actor and conversation identity is carried by readable source prefixes.
-3. A temporary platform-state `user` message containing current UTC+8 time, runtime flags and active work.
-4. The current source message.
+## 3. Jev 开局分类
 
-Platform state is not persisted. Platform timestamps are supplied values, not
-text the model should invent. The external `persona` prompt is loaded from
-`system-prompts.yaml`, appended to stable `system`, and is not stored in
-`config.yaml`.
+每次入站先做一次窄分类。明确的简短问候、表情接龙等交流可选择用户维护的预制回复；复杂请求、缺少材料、分类不确定或调用失败交给生成模型。
 
-DeepSeek `reasoning_content` is retained on the assistant message only during
-the current native tool loop. It is never sent to QQ and never persisted into a
-future conversation window.
+Jev 选择候选并返回概率，不自由编写台词。模板放在独立 `quick-replies.yaml`，使用稳定 ID、启用状态、适用说明、有序片段与受限占位符；热重载先验证后原子替换。模板不会增加授权，也不会绕过发送门禁。
 
-## 3. Reply And Tool Protocol
+分类只接受文本和媒体管线的描述，不假设 Jev 能看原始图片。不能只因输入有问候词或表情就忽略附加任务。收益以中文真实场景的完整首响、任务完成、误拦截与成本验证。
 
-- The final assistant `content` with no `tool_calls` must contain exactly two
-  blocks: `[TO_SELF]...[/TO_SELF]` followed by `[TO_USER]...[/TO_USER]`.
-- For model compatibility, final content with no protocol markers is recovered
-  as empty `TO_SELF` plus `TO_USER`; marker-bearing malformed replies still use
-  the bounded rewrite loop. When rewrites are exhausted, one complete,
-  unambiguous `TO_USER` block may be sent while `TO_SELF` is discarded;
-  otherwise a flat-text protocol error is sent for an ordinary visible pipeline
-  instead of silently dropping the turn. Strict parsing remains available for validation.
-- `TO_USER` is the only ordinary visible channel. It is flat-text gated and is
-  sent once. `TO_SELF` is a bounded subjective delta stored in global inner
-  journal only after a complete successful turn; protocol tags never enter the
-  working window or durable assistant reply.
-- Assistant content from a tool-call round is never sent or parsed. DeepSeek
-  `reasoning_content` is retained only for the current provider-native loop.
-- Pipe-based multi-message splitting is disabled. `|` is sent literally until a
-  replacement framing protocol is designed.
-- `send` is reserved for special QQ segments and Markdown-rendered images.
-- `status_update` is a short visible progress event for long tools. It executes
-  before other calls in its round, does not end the pipeline, and is not added to
-  assistant history. A long registered tool without an explicit update gets
-  one pipeline-generated fallback; heartbeat pipelines suppress progress events.
-- `no_reply` intentionally ends a turn without visible output.
-- Provider tool schemas are authoritative. Prompts must not contain a manually
-  maintained tool inventory.
-- A tool action is successful only when its returned result proves success.
-  Assistant prose is never treated as evidence that a side effect happened.
-- Three consecutive actual error results from the same tool stop further calls
-  to that tool in the current loop. Successful results reset the counter.
+## 4. 每轮 content 与原生工具调用
 
-## 4. Persistence And Cancellation
+每一轮 assistant `content` 都可包含结构化消息提议，包括同轮存在 `tool_calls` 的情况。provider 的 content 字段仍是文本，文本内容为一个完整 JSON 对象：
 
-The global `inner_journal` table stores only bounded subjective bot-state
-deltas from `TO_SELF`. Each entry keeps its source conversation, source actor,
-pipeline id, and source event ids. It is injected as documentary Life Stream
-state with a clear warning that it is subjective history, not verified facts or
-instructions.
-Entries are latest-content deduplicated and bounded by configured entry count,
-character count, and context token budget. A final turn that sends no visible
-text may still commit `TO_SELF` when it completes through `no_reply` or a
-successful special send.
+```json
+{
+  "to_self": "",
+  "messages": [
+    {
+      "target_ref": "target_from_directory",
+      "segments": [
+        {"type": "text", "text": "我先核对一下。"}
+      ]
+    }
+  ]
+}
+```
 
-Each inbound conversation record stores its source, lifecycle status, original
-input, final visible text when present, and structured image metadata when
-present. Valid lifecycle states include `received`, `responded`, `no_reply`,
-`empty`, `cancelled`, and `error`.
+工具轮允许空 content 表示没有消息提议；有 content 时使用同一 JSON 协议。没有可见输出可显式使用 `messages: []`。对象和媒体引用均来自平台资料，上例是格式说明，不是可发送的真实对象。
 
-Memory write tools (`memory_save` and `self_note`) are
-staged during the tool loop. Their immediate result explicitly says `staged`,
-not persisted. Cleanup flushes each staged operation once under cancellation
-protection and writes a verified action result. Historical native tool
-projection selects that final committed result instead of the provisional
-`staged` response. This preserves turn-level
-atomicity when a pipeline is interrupted.
+每轮顺序：
 
-## 5. Working Window And Summaries
+1. 等待模型本轮消息完成，保留 provider 原生 assistant/tool_calls 结构。
+2. 完整解析并校验 content；不执行流式半截 JSON。
+3. 有消息时，将各条消息经当前动作 dry-run 与执行检查后发送，并立即记录真实回执；空列表不强制开场或额外回复模型。
+4. 本轮工具仍逐个进入相同的审查边界，实际执行或如实返回被拒、失败、取消等结果。
+5. 保留原生 tool call/result 配对，向模型提供真实发送和工具结果，再进入下一轮或结束。
 
-Raw short messages remain the source of truth. There are two summary purposes:
+这替代 V3“有 tool_calls 就不处理 content”的限制。这里不增加一个固定先行的回复模型；行动模型自行决定本轮是否有话要说。
 
-- `message` summaries describe one long message and do not cover other message
-  records.
-- `compaction` summaries replace a precise prefix of complete persisted turns
-  and carry `covered_through_message_id`.
+`reasoning_content` 属于 provider 私有推理状态，不作为发送内容，也不注入未来长期历史。`to_self` 仅是有界主观增量，按提交条件处理，不能被当作事实或新的指令。
 
-Legacy `last_message_id` boundaries are untrusted and are not used to skip raw
-records. Compaction operates on complete record IDs, never half of a user/bot
-turn. MessageWindow entries carry their originating record ID.
+已经发出的阶段消息立即成为共同事实。后面的工具失败或任务取消不能把它抹掉，也不能以最终轮的空回复覆盖它。
 
-Startup restores the newest eligible conversation rows in chronological order.
-It uses the same eligibility rules as live window insertion and excludes
-memory, self-note, action artifacts, cancelled/error turns, empty/no-reply
-turns, and malformed records.
+## 5. 消息段数组与跨会话发送
 
-If startup restoration is capped and older eligible rows remain outside the
-window, that window is marked coverage-untrusted. It may compact in memory but
-must not advance `covered_through_message_id`; repeated restoration is preferable
-to claiming history that was never summarized.
+使用消息段数组进行行内编排。外层 `messages` 的每项是一条独立消息，内层 `segments` 保存文字、表情和图片的顺序；模型决定混排还是分条，不用 `|` 或文字换行猜测消息边界。
 
-## 6. Token-Aware Compaction
+每条消息的 `target_ref` 必须明确，包括当前会话的普通回复。引用只能来自真实对象目录；缺少或无法解析目标时由 dry-run 打回，发送器不自动选择默认目标。
 
-Compaction considers the complete provider request: system rules, Life Stream,
-platform state, current input, and tool schemas.
-Before a call it uses a deterministic estimate; after a call it records the
-provider's actual `prompt_tokens` when available.
+QQ 内置表情使用有效 `face_id`，Unicode emoji 属于文字，图片与 GIF 表情包使用真实 `media_id`。接收侧保留所有片段和每张图片的位置；描述失败在原位置标明，不把多图退化成只看第一张图。
 
-Configuration defines model context capacity, trigger ratio, target ratio, and
-reserved output tokens. Compaction removes the oldest complete turns until the
-estimated request fits the target. Summary input is not silently truncated; if
-it cannot fit the summarizer request, it is split into explicit chunks.
-Current native tool-loop messages are never compacted mid-loop.
+发送账号、会话、@ 对象、引用消息和被转述作者分别核对。同条消息里的显示与换行由 QQ 客户端决定；精确排版的内容走渲染媒体。
 
-## 7. Image Input
+## 6. 独立 dry-run 与执行边界
 
-The classifier preserves both image metadata and all accompanying text. A
-configured vision provider produces a textual description. The pipeline first
-downloads an image URL into the Media Ledger when possible, falling back to an
-external reference if the URL cannot be fetched. It then constructs one
-synthetic user input containing only the caption, description, and stable media
-reference; CQ metadata, temporary URLs, and local source paths are not placed
-in model context. The pipeline proceeds through the normal LLM/tool/reply path.
-Vision failure is represented in that input rather than replaced by a canned
-bot response. The original image metadata and description are persisted
-structurally.
+每项真实动作前做一次隔离审查：只读证据与对象资料，核对准确参数、事实、目标及授权，不执行副作用。审查输出为通过、补证据或拒绝，携带简短原因与依据引用。
 
-## 8. Verified Action Ledger
+审查推演独立留审计，不进入主上下文；必要的拒绝原因需要反馈模型以便修正。审查者不暗中改目标，也不递归审查自己。
 
-Tool and send side effects are stored in dedicated structured action records.
-Each record includes tool name, call ID, timestamp, success, sanitized arguments,
-and result. Successful sent images additionally record message ID, source
-Markdown hash/reference, and generated file reference.
+参数或相关事实改变后，旧审查失效。动作开始前用同一短锁检查新事件与审查依据，登记“开始”，释放锁后执行外部请求。已经开始的请求不能伪装成从未发生。
 
-Action records are audit and recovery data, not default prompt material. Current
-tool-loop results still use provider-native tool messages; historical actions
-should be retrieved only when a task actually needs them. Action records are
-never inserted as ordinary assistant prose. In particular, `[sent image: ...]`
-markers are forbidden in the working conversation window.
+消息、工具、进度表达与子代理动作使用同一边界。通过审查只表示允许尝试，只有真实结果能够证明动作成功。语义判断由模型承担，结构、能力范围和状态一致性由宿主落实。
 
-## 9. Send Truthfulness
+## 7. 持久化、取消与恢复
 
-NapCat success requires both an HTTP-success response and `status == "ok"`.
-`failed`, malformed, timeout, and transport-error responses become `[Error: ...]`
-tool results. Artifacts and successful actions are persisted only after verified
-NapCat success. Normal assistant-content sends follow the same check and failed
-sends do not become assistant history.
+成功发送保存原话、目标、受众、媒体与消息 ID；失败或未知回执如实记录。多条消息允许部分成功，恢复时不得盲目重放未知的不可幂等操作。
 
-## 10. Configuration Editing
+用户补充进入事件流，尚未开始的旧动作重新判断；已开始的外部操作保存真实结果。实现使用运行时原生取消能力并提供受保护的结果落盘，不自行发明业务取消协议。
 
-`config_manager set` updates an arbitrary-depth YAML scalar without serializing
-or reordering unrelated configuration. It preserves comments and surrounding
-formatting. Boolean parsing accepts explicit true/false forms and rejects
-unknown strings instead of silently converting them to false.
+新循环接入前以归档 V3 的持久化与恢复用例作基准，但不直接继承“整条 pipeline 新消息即全部取消”或“只在最终轮发消息”等已经撤回的编排限制。
 
-## 11. Global Event Ledger And Conversation Boundaries
+## 8. Markdown 图片与媒体
 
-`events` is the append-first global Life Stream. It records inbound/outbound
-messages, tool calls/results, media, and state changes with a monotonic global
-sequence plus `conversation_id`, `actor_id`, `actor_kind`, `visibility`,
-`audience`, `turn_id`, and pipeline id. Heartbeat input and Runtime Injection
-are platform state and are excluded from the lived interaction stream;
-successful proactive assistant output is a real outbound event.
+md2svg + resvg 作为独立常驻 worker。复用 Renderer，限制输入、队列、输出像素与内存；硬超时或异常后回收进程。SVG 保存为原件，PNG 用于发送，登记实际媒体引用。
 
-The current projector intentionally presents finalized events from the unified
-timeline. All human and service sources use provider `user`; readable actor and
-conversation prefixes preserve identity. `actors` is the global registry for
-stable display names, private aliases and relationship labels. Visibility and
-audience remain attached to every event for future input/output gates and audit.
+原生图片、表情包与 GIF 继续走媒体适配器。渲染工具产生文件和媒体引用，向用户发送仍通过结构化 content 与统一执行器。
 
-Group runtime state uses `group:<group_id>` as the conversation and retains the
-legacy `group:<group_id>:<actor_id>` key only for actor-scoped memory/action
-compatibility. Each human remains an independent actor inside the shared group.
-The current actor comes from platform metadata and must not be inferred from
-historical text.
+## 9. 提示词、配置与日志
 
-`episodes` are derived summaries, never replacements for ledger facts. An
-episode belongs to one conversation and stores exact first/last event
-sequences, participants, narrative, open loops, and media references. A
-summary is requested after about 30 minutes of idle time or when the context
-budget needs it; only finalized events are eligible. Failed summarization leaves
-raw events usable. Projection selects an episode or its covered raw events,
-never both. The target request is approximately 100K tokens.
+人设和运行时等提示词集中外置，约定在 `system-prompts.yaml` 维护，与新版解析器同步接入；Rust 不复制提示正文。当前没有启用的 V4 prompt，归档中的同名文件是 V3 历史配置。
 
-Media is pipeline-native infrastructure. Incoming and successfully outgoing
-media receive stable SHA-derived `media_id` values and are recorded with
-descriptions, references, and lifecycle status. `sticker_search` and
-`sticker_manage` query or maintain this ledger; they are not required for the
-pipeline to remember that media happened.
+固定 system 对齐协议、来源和角色边界；当前身份、对象目录和事实通过平台资料提供。配置修改保持局部性。日志和动作账本应诚实记录模型、审查、取消、发送和恢复的关键结果。
 
-`bot_state` and `priority_override` are retired model capabilities. Their legacy
-tables may remain until a production data reset, but they are not registered or
-injected. Current bot-self continuity is carried by the inner journal and the
-unified event timeline.
+## 10. 当前交付边界
 
-## 12. External Service Ingress
-
-The optional ingress is a standard-library asyncio HTTP/1.1 listener bound to
-an enforced loopback `ingress.host:ingress.port`, disabled by default. It accepts only
-`POST /v1/events` with `Content-Type: application/json` and a matching
-`Authorization: Bearer <ingress.token>` header. It enforces a request body
-limit and never logs the token.
-
-The request body reuses the NapCat private-message shape. The `user_id` field
-is a stable service identifier validated against a safe ASCII identifier
-grammar. The ingress maps it to `service:<id>` for `actor_id` and
-`conversation_id`; `sender.card` or `sender.nickname` becomes the readable
-actor name. The source is therefore a service actor, not a QQ user, while all
-service and human events still share the global Life Stream.
-
-Image segments must use an HTTP(S) `data.url` and then follow the normal inbound
-media path. Local file paths and non-text/non-image segments are rejected before
-persistence. The image is downloaded only when the configured media policy
-allows it, then its verified Media Ledger ID is attached to the already accepted
-event before the event is finalized.
-
-The configured positive numeric `ingress.target_user_id` is the NapCat private-message target
-for service pipeline output. It is deliberately independent from the source
-service ID. Only private service events are accepted in this version.
-
-Each accepted event receives a deterministic UUID derived from service ID and
-`message_id`, is stored with `status=received` and its original NapCat payload,
-then is queued. Duplicate retries are acknowledged without inserting another
-event. A service FIFO worker does not cancel earlier reports. On startup,
-`received` service events are reconstructed from their stored payload and
-queued again; successful or failed processing changes their lifecycle status.
-Graceful cancellation restores an in-flight service event to `received` rather
-than excluding it from restart recovery.
-
-The listener returns a NapCat-shaped JSON acknowledgement with HTTP `202` after
-the event is durably stored and queued. Ingress is local-only by default; a
-reverse proxy or tunnel is required for remote producers.
-
-## 13. Output Gate
-
-Only `TO_USER` is subject to the ordinary flat-text gate. Obvious complex
-Markdown (headings, tables, code fences, links/images, or LaTeX) is rejected
-before sending and a bounded correction is returned to the current model loop.
-The model must rewrite it as plain text or use `send.markdown_image`. A rejected
-response is never persisted as a sent outbound event, and its `TO_SELF` is not
-eligible for inner-journal commit.
-
-## 14. Documentation Ownership
-
-- `docs/current-design.md`: current semantic and architectural baseline.
-- `README.md`: installation, configuration, operation, and user-facing behavior.
-- `AGENTS.md`: agent workflow and invariants.
-- `init.md`: project charter and implementation status.
-- `bottle/docs/`: historical design source and archived rationale.
-
-## 15. Production Acceptance
-
-A release is complete only after local and server tests pass, the optional
-Markdown renderer check passes, the shared production config is patched without
-reformatting unrelated values, and all shared prompts are synchronized atomically
-after backing up the previous production prompt file. The default
-Markdown renderer timeout is 60 seconds to cover Chromium cold startup. Systemd
-must report the service active, NapCat must be
-connected, and fresh logs verify text, tool, image, restart restoration, failed
-send, and compaction behavior.
-
-## 16. Delivery Groups
-
-1. Consolidate design and synchronize documentation.
-2. Verify NapCat/send result truthfully.
-3. Correct summary coverage while preserving raw short messages.
-4. Preserve cancellation-safe staged memory writes and verify final outcomes.
-5. Restore only clean, runtime-eligible conversation rows.
-6. Route captioned image inputs through the regular pipeline.
-7. Implement request-level token-aware compaction.
-8. Replace assistant artifact markers with a verified action ledger.
-9. Disable pipe-based reply splitting.
-10. Keep the external `persona` prompt separate from `config.yaml` and append it
-    to the stable provider-native `system` message.
-11. Fix arbitrary-depth local YAML editing and strict boolean conversion.
-12. Count actual consecutive tool failures and stop at three.
-13. Synchronize the canonical system prompt in defaults, docs, and production.
-14. Add authenticated local service ingress with durable acceptance, FIFO
-    processing, service identity projection, owner reply routing, and restart
-    recovery.
+本轮只完成 V3 归档、本地 `v4` 分支与设计入口。Rust 工程、真实模型实验、新版发送适配器和生产部署仍是后续工作。远端分支发布和默认分支切换待完成，详见 [交接文档](v4-handoff-2026-10-18.md)。

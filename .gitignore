@@ -1,40 +1,34 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.eggs/
-
-# Virtual env
-venv/
-.venv/
-env/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Secrets
+# Private configuration and runtime data
 config.yaml
 .env
-
-# Logs
+data/
 logs/
 *.log
 
-# Cache
-cache/
-
-# Data
-data/
-
-# Worktrees
+# Local recovery packages and assistant metadata
+.local-archives/
+.reasonix/
 .worktrees/
 
-# Node renderer dependencies
-tools/markdown-renderer/node_modules/
+# Python legacy development
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+venv/
+.venv/
+env/
+dist/
+build/
+.eggs/
+cache/
+
+# Rust and optional Node tooling
+target/
+node_modules/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

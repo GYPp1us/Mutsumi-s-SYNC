@@ -1,0 +1,50 @@
+{
+  "repository": "GYPp1us/Mutsumi-s-SYNC",
+  "visibility": "public",
+  "status": "awaiting_explicit_publication_approval",
+  "branches": {
+    "v4": "current local v4 HEAD at time of approved publication",
+    "archive/v3": "a57cea494dfd7ef9b0692da5fd233f7a6fedb4a9"
+  },
+  "tags": {
+    "archive/v3-final-2026-10-18": {
+      "tag_object": "14515b946678150e08219b69902f5cc7523742f4",
+      "commit": "a57cea494dfd7ef9b0692da5fd233f7a6fedb4a9"
+    },
+    "archive/v3-local-main-2026-10-18": {
+      "tag_object": "38d51a00ad07938c2051a4db49c222a4026b4da7",
+      "commit": "732cd9e2e6a7d30a753ab4149b84f5e88c073f36"
+    },
+    "archive/v3-remote-integration-2026-10-18": {
+      "tag_object": "9fe7a2f573cb3162788777bcb1094769d583455e",
+      "commit": "e3cccf286722ebecd44f49142f7424b52b883711"
+    },
+    "archive/context-v2-experiment-2026-09-08": {
+      "tag_object": "72d2db1b221f561d4084acfa2934ebbaf34e9ae6",
+      "commit": "72d2db1b221f561d4084acfa2934ebbaf34e9ae6"
+    },
+    "archive/context-v3-experiment-2026-09-08": {
+      "tag_object": "3d972843f8ec7577759395ddeeba58030003d4fe",
+      "commit": "3d972843f8ec7577759395ddeeba58030003d4fe"
+    },
+    "archive/live-lab-prompt-bench-2026-09-08": {
+      "tag_object": "53c4eb2b64c8a551cc704993f034997f077746e2",
+      "commit": "53c4eb2b64c8a551cc704993f034997f077746e2"
+    },
+    "archive/feature-v3-rewrite-2026-09-08": {
+      "tag_object": "c313f48e79fdb233c80eae52d13fadc9dad8e66f",
+      "commit": "c313f48e79fdb233c80eae52d13fadc9dad8e66f"
+    },
+    "archive/feature-markdown-image-send-2026-09-08": {
+      "tag_object": "c6214606d8336c7aba30f4deb58e0799369e5a40",
+      "commit": "c6214606d8336c7aba30f4deb58e0799369e5a40"
+    },
+    "archive/guided-dual-lane-architecture-2026-09-08": {
+      "tag_object": "0200acfa6ee249d2bc926a339b23470fa84e0a31",
+      "commit": "0200acfa6ee249d2bc926a339b23470fa84e0a31"
+    }
+  },
+  "default_branch_after_publication": "v4",
+  "force_push": false,
+  "publish_local_recovery_packages": false
+}
