@@ -1,31 +1,31 @@
 {
   "repository": "GYPp1us/Mutsumi-s-SYNC",
   "visibility": "public",
-  "status": "awaiting_explicit_publication_approval",
+  "status": "published",
   "branches": {
     "v4": "current local v4 HEAD at time of approved publication",
-    "archive/v3": "a57cea494dfd7ef9b0692da5fd233f7a6fedb4a9"
+    "archive/v3": "bd3aef271501fb8c4c90a91e12d22965923db5f9"
   },
   "tags": {
     "archive/v3-final-2026-10-18": {
-      "tag_object": "14515b946678150e08219b69902f5cc7523742f4",
-      "commit": "a57cea494dfd7ef9b0692da5fd233f7a6fedb4a9"
+      "tag_object": "f0af71058bac2f26b561c3508c98417ba663d3dc",
+      "commit": "bd3aef271501fb8c4c90a91e12d22965923db5f9"
     },
     "archive/v3-local-main-2026-10-18": {
-      "tag_object": "38d51a00ad07938c2051a4db49c222a4026b4da7",
-      "commit": "732cd9e2e6a7d30a753ab4149b84f5e88c073f36"
+      "tag_object": "d7532e4bd51d03df956da8d2d9033a4a548f4bc7",
+      "commit": "901556c3937328470f5829e08e5c9a029e7016ca"
     },
     "archive/v3-remote-integration-2026-10-18": {
       "tag_object": "9fe7a2f573cb3162788777bcb1094769d583455e",
       "commit": "e3cccf286722ebecd44f49142f7424b52b883711"
     },
     "archive/context-v2-experiment-2026-09-08": {
-      "tag_object": "72d2db1b221f561d4084acfa2934ebbaf34e9ae6",
-      "commit": "72d2db1b221f561d4084acfa2934ebbaf34e9ae6"
+      "tag_object": "569ac62f2eb57f74efbd2b2d3a688922643d1589",
+      "commit": "569ac62f2eb57f74efbd2b2d3a688922643d1589"
     },
     "archive/context-v3-experiment-2026-09-08": {
-      "tag_object": "3d972843f8ec7577759395ddeeba58030003d4fe",
-      "commit": "3d972843f8ec7577759395ddeeba58030003d4fe"
+      "tag_object": "bcdca8e1f216fa79ec1d2b9fc72ffaff7a824386",
+      "commit": "bcdca8e1f216fa79ec1d2b9fc72ffaff7a824386"
     },
     "archive/live-lab-prompt-bench-2026-09-08": {
       "tag_object": "53c4eb2b64c8a551cc704993f034997f077746e2",
@@ -40,11 +40,18 @@
       "commit": "c6214606d8336c7aba30f4deb58e0799369e5a40"
     },
     "archive/guided-dual-lane-architecture-2026-09-08": {
-      "tag_object": "0200acfa6ee249d2bc926a339b23470fa84e0a31",
-      "commit": "0200acfa6ee249d2bc926a339b23470fa84e0a31"
+      "tag_object": "6e9ae79c5c02f87210407b37717aff562c8f22be",
+      "commit": "6e9ae79c5c02f87210407b37717aff562c8f22be"
     }
   },
   "default_branch_after_publication": "v4",
   "force_push": false,
-  "publish_local_recovery_packages": false
+  "publish_local_recovery_packages": false,
+  "security_scan": {
+    "reachable_commits": 150,
+    "scanner": "gitleaks 8.30.1",
+    "confirmed_key_values_removed": 1,
+    "remaining_reviewed_placeholder_findings": 2,
+    "original_key_matches_after_cleanup": 0
+  }
 }

@@ -6,16 +6,16 @@
 
 | 归档对象 | 引用 / 提交 |
 | --- | --- |
-| 完整 V3 工作树快照 | 分支 `archive/v3`；提交 `a57cea494dfd7ef9b0692da5fd233f7a6fedb4a9` |
+| 完整 V3 工作树快照 | 分支 `archive/v3`；提交 `bd3aef271501fb8c4c90a91e12d22965923db5f9` |
 | V3 冻结标签 | `archive/v3-final-2026-10-18` |
-| 本地 main 独立提交 | `archive/v3-local-main-2026-10-18` → `732cd9e2e6a7d30a753ab4149b84f5e88c073f36` |
+| 本地 main 独立提交 | `archive/v3-local-main-2026-10-18` → `901556c3937328470f5829e08e5c9a029e7016ca` |
 | 远端 V3 集成提交 | `archive/v3-remote-integration-2026-10-18` → `e3cccf286722ebecd44f49142f7424b52b883711` |
-| Context v2 实验 | `archive/context-v2-experiment-2026-09-08` → `72d2db1` |
-| Context v3 实验 | `archive/context-v3-experiment-2026-09-08` → `3d97284` |
+| Context v2 实验 | `archive/context-v2-experiment-2026-09-08` → `569ac62` |
+| Context v3 实验 | `archive/context-v3-experiment-2026-09-08` → `bcdca8e` |
 | Live Lab 实验 | `archive/live-lab-prompt-bench-2026-09-08` → `53c4eb2` |
 | 旧版重写与 Markdown 工作 | `archive/feature-v3-rewrite-2026-09-08`、`archive/feature-markdown-image-send-2026-09-08` |
 
-其他旧分支、标签与工作树继续保留；本次不删除其引用。远端发布尚待完成，这些归档引用当前以本地 Git 为准。
+其他旧分支、标签与工作树继续保留；本次不删除其引用。清单中的两个分支与九个归档标签已公开发布。发布前清理了一处历史硬编码 API key，因此部分提交哈希已变化；本地原始 bundle 仍保留原始哈希，不能直接重新发布。
 
 ## 本地完整恢复包
 

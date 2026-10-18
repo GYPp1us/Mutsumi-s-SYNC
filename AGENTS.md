@@ -6,7 +6,7 @@
 - 开始工作前按顺序读 `docs/current-design.md`、`README.md`、`init.md`、`docs/refactor-decisions-2026-10-18.md` 和 `docs/v4-handoff-2026-10-18.md`。
 - `archive/v3/` 是冻结的 Python 实现、原型、测试与历史设计，其内部 `AGENTS.md` 只约束归档中的旧代码。没有明确任务时不要修改归档、恢复旧服务或从旧发布脚本部署。
 - `.local-archives/` 保存未跟踪恢复包；`.worktrees/` 中的旧实验工作树保留。不要删除、重置或提交其中的私有文件。
-- GitHub 发布和默认分支切换目前待批准完成；不要将本地 `v4` 已建立写成远端默认分支已切换。
+- `v4` 已公开发布并设为 GitHub 默认分支。发布前已清理待发布历史中的硬编码密钥；原始恢复包仅保留本机，禁止重新推送未脱敏引用。
 
 ## V4 架构约定
 

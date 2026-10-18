@@ -2,7 +2,7 @@
 
 目标是将长期运行的个人社交 Agent 分阶段迁移到 Rust，同时保持模型的自主编排能力和连续人格。
 
-当前阶段为 V4 主线初始化：本地分支 `v4` 已建立，Rust 新运行时尚未实现。远端发布与默认分支切换待完成；旧 `main` 保留。V3 代码、实验、测试和历史设计封存在 `archive/v3/`，对应 `archive/v3` 分支与 `archive/v3-final-2026-10-18` 标签。
+当前阶段为 V4 主线初始化：`v4` 已成为 GitHub 默认分支，Rust 新运行时尚未实现；旧 `main` 保留。V3 代码、实验、测试和历史设计封存在 `archive/v3/`，对应 `archive/v3` 分支与 `archive/v3-final-2026-10-18` 标签。
 
 当前架构事实源为 [docs/current-design.md](docs/current-design.md)，本轮决策为 [docs/refactor-decisions-2026-10-18.md](docs/refactor-decisions-2026-10-18.md)。旧 Python 的实现事实与验收记录只在归档范围内适用。
 
