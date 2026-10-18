@@ -1,5 +1,7 @@
 # Context Integrity V2 Implementation Plan
 
+> **历史交付记录（2026-09-08）**：本计划对应的十三项上下文、持久化、发送和文档修复已进入当前 v3 基线；本文件只用于追溯，不是新的待办清单。当前运行时以 [`docs/current-design.md`](../current-design.md) 和测试为准；新编排清理与实验安排见 [`docs/repository-cleanup-and-experiment-plan-2026-09-08.md`](../repository-cleanup-and-experiment-plan-2026-09-08.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the thirteen approved context, persistence, send, image, prompt, configuration, and documentation corrections as one production release.

@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="通过聊天模型、后台任务与独立发送计时，解决首次回复等待、角色台词和多条回复的技术路线。">
+<title>让角色及时开口，也能安心做复杂工作 · Mutsumi's SYNC</title>
+<style>
+:root{--paper:#f7f6f2;--ink:#20372d;--muted:#647268;--line:#d9dfd8;--accent:#206149;--soft:#eaf0e9;--blue:#215f8e}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:26px}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.88 'Segoe UI','Microsoft YaHei','PingFang SC',system-ui,sans-serif}a{color:var(--blue);text-decoration-thickness:1px;text-underline-offset:3px}a:hover{color:var(--accent)}a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}.skip{position:absolute;top:-100px;left:20px;padding:10px;background:white}.skip:focus{top:12px}header{max-width:1160px;margin:0 auto;padding:58px 28px 34px;border-bottom:1px solid var(--line)}.eyebrow{font-size:12px;font-weight:700;letter-spacing:2px;color:var(--accent);margin:0 0 18px}h1{font-size:clamp(30px,3.8vw,44px);line-height:1.32;letter-spacing:-.6px;max-width:23ch;margin:0 0 20px}.meta{color:var(--muted);font-size:13px;line-height:1.7}.layout{max-width:1160px;margin:auto;display:grid;grid-template-columns:190px minmax(0,1fr);gap:42px;padding:34px 28px 68px}nav{position:sticky;top:28px;align-self:start;font-size:13px;line-height:1.65}nav b{display:block;font-size:11px;letter-spacing:2px;color:var(--muted);margin-bottom:12px}nav a{display:block;padding:8px 0;color:var(--muted);text-decoration:none;border-bottom:1px solid var(--line)}nav a:hover{color:var(--accent)}main{min-width:0}p{margin:0 0 18px}h2{font-size:25px;line-height:1.42;margin:48px 0 20px;padding-top:22px;border-top:1px solid var(--line);letter-spacing:-.2px}h3{font-size:18px;line-height:1.55;margin:30px 0 12px}blockquote{margin:0 0 24px;padding:22px 25px;border-left:4px solid var(--accent);background:var(--soft);font-size:18px;line-height:1.85}blockquote p{margin:0}strong{font-weight:650;color:#173f2e}ul,ol{padding-left:26px;margin:14px 0 24px}li{padding-left:3px;margin:8px 0}code,pre{font-family:Consolas,'Microsoft YaHei',monospace}code{font-size:.88em;background:#e9ece7;padding:2px 4px;border-radius:3px;overflow-wrap:anywhere}pre{padding:20px;background:#213c31;color:#eff5ef;border-radius:6px;overflow:auto;font-size:13px;line-height:1.85;tab-size:2;margin:22px 0}pre code{padding:0;background:none;color:inherit;font-size:inherit;overflow-wrap:normal}.table-scroll{overflow-x:auto;margin:20px 0 24px;border:1px solid var(--line);border-radius:5px;background:#fffefa}table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.72}th,td{text-align:left;vertical-align:top;padding:13px 14px;border-bottom:1px solid var(--line);min-width:120px}th{background:var(--soft);font-weight:650}tr:last-child td{border-bottom:0}td:first-child{width:25%}th+th,td+td{border-left:1px solid var(--line)}footer{max-width:1104px;margin:0 auto;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}.footlinks{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:8px}
+@media(max-width:850px){header{padding:36px 22px 28px}.layout{display:block;padding:24px 22px 46px}nav{position:static;margin:0 0 28px;display:grid;grid-template-columns:1fr 1fr;gap:0 20px}nav b{grid-column:1/-1}h2{font-size:23px}footer{margin:0 22px}blockquote{padding:18px 20px}}
+@media(max-width:500px){body{font-size:15px}header{padding:28px 18px 24px}.layout{padding:22px 18px 42px}h1{font-size:30px}nav{font-size:12px;gap:0 14px}blockquote{font-size:16px;padding:16px}h2{font-size:22px}th,td{min-width:135px;padding:11px}pre{font-size:12px;padding:15px}footer{margin:0 18px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{body{background:white;color:#111;font-size:10pt;line-height:1.65}header{padding:0 0 18px;max-width:none}h1{font-size:26pt}.layout{display:block;padding:12px 0}nav,.skip,.footlinks{display:none}h2{font-size:17pt;break-after:avoid;margin-top:24px}h3{font-size:12pt;break-after:avoid}p,li{orphans:3;widows:3}blockquote{font-size:12pt}pre{white-space:pre-wrap;background:#f1f3f1;color:#111;break-inside:avoid}.table-scroll{overflow:visible}table{font-size:9pt}th,td{min-width:0;padding:8px}tr{break-inside:avoid}footer{padding:12px 0}@page{size:A4;margin:17mm}}
+</style>
+</head>
+<body><a class="skip" href="#report">跳至正文</a>
+<header><p class="eyebrow">MUTSUMI'S SYNC / 技术路线</p><h1>让角色及时开口，<br>也能安心做复杂工作</h1><div class="meta">Mutsumi's SYNC 技术路线报告 · 2026-09-08 · 设计提案，尚未实现</div></header>
+<div class="layout"><nav aria-label="报告目录"><b>阅读目录</b><a href="#section-1">1. 项目是什么，最近的报告说了什么</a><a href="#section-2">2. 为什么“主模型想，回复模型润色”不够</a><a href="#section-3">3. 新架构只分三项职责</a><a href="#section-4">4. 第一次回应：程序计时，模型选择自然台词</a><a href="#section-5">5. 角色台词与发送条数分别处理</a><a href="#section-6">6. 为避免错发和误做，只补必要规则</a><a href="#section-7">7. 分三步落地，并用三个痛点验收</a><a href="#section-8">8. 依据、范围与尚未证实的部分</a></nav><main id="report"><blockquote><p><strong>已重新设计：</strong>固定时间等待短句、固定回传会话与受限聊天模型的划分不再作为后续方向。请阅读<a href="agent-orchestration-options-2026-09-08.html">新的三个参考方案</a>。本页保留为历史设计记录。</p></blockquote><blockquote>
+<p>建议把系统组织成：<strong>聊天模型直接面对用户，复杂工作交给后台任务，程序独立管理等待提示和实际发送。</strong> 聊天模型决定说什么、是否说、分几条说；后台任务可以长时间思考，却不占住聊天过程。</p>
+</blockquote>
+<p>这条路线仍可能调用两个模型，也可以用同一个模型的两种配置。改变的是职责和先后关系：负责聊天的模型从收到用户消息起就能工作。无需等另一个模型想完，更无需每次工具调用都先生成一段解释。</p>
+<h2 id="section-1">1. 项目是什么，最近的报告说了什么</h2>
+<p>Mutsumi's SYNC 是一个通过 NapCat 收发 QQ 消息的个人聊天机器人。它有固定角色设定、聊天记忆，也能使用工具查询资料、处理图片、设置提醒和执行任务。这里的“工具”就是模型可以请求程序执行的函数，例如查询天气或保存提醒。</p>
+<p>目前实现是一条消息进入后，由同一个模型连续思考、调用工具，最后给出回复。复杂工作与聊天共用这一条处理过程。已经有主动静默工具和长工具等待提示，但后者要等模型选出工具才触发，覆盖不到第一次模型请求本身的长时间等待。普通回复目前只发一条，<code>|</code> 是普通文字。<a href="current-design.md">当前设计</a>、<a href="../src/mutsumi_sync/pipeline.py">处理代码</a></p>
+<p>本次核对了 GitHub 最新的 #15–#19；截至核对时，最新主线提交为 <code>cdef34f</code>。此前报告是设计方案，合并文档不代表已经改造生产程序。</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>报告及 PR</th>
+<th>主要内容</th>
+<th>本次如何承接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="rearch-event-pipeline-dual-model.html">第一份重构报告</a>，<a href="https://github.com/GYPp1us/Mutsumi-s-SYNC/pull/15">PR #15</a></td>
+<td>提出事件排队、主模型与回复模型分工、记忆整理等整体路线。</td>
+<td>保留输入先保存、发送看真实结果、工具调用保持原生结构的原则。</td>
+</tr>
+<tr>
+<td><a href="agent-runtime-architecture-2026.html">后续架构报告</a>，<a href="https://github.com/GYPp1us/Mutsumi-s-SYNC/pull/16">PR #16</a>、<a href="https://github.com/GYPp1us/Mutsumi-s-SYNC/pull/18">#18</a>、<a href="https://github.com/GYPp1us/Mutsumi-s-SYNC/pull/19">#19</a></td>
+<td>修订为主模型返回后先调用回复模型，再执行工具；用按会话排队和短锁处理新消息。</td>
+<td>延续简单排队和动作开始前检查，重新安排聊天与工作的关系。</td>
+</tr>
+<tr>
+<td><a href="rearch-report-plain-language.html">大白话版</a>，<a href="https://github.com/GYPp1us/Mutsumi-s-SYNC/pull/17">PR #17</a></td>
+<td>对前述方案的通俗解释。</td>
+<td>作为历史对照。其中轮次号、待发送清单等说法早于 #19 的修订。</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>两份重构报告及其通俗版没有提供证据证明双模型能解决本次三个痛点。</strong> 它们自己也要求先验证角色表现。本报告集中调整聊天和任务执行，不同时重做插件、长期记忆或设备通信。</p>
+<h2 id="section-2">2. 为什么“主模型想，回复模型润色”不够</h2>
+<p>原方案的关键顺序是：</p>
+<pre><code class="language-text">用户消息 → 主模型思考 → 回复模型组织语言 → 发送 → 执行工具
+</code></pre>
+<p>如果主模型第一轮思考了一分钟，回复模型这一分钟里也在等待。把回复模型换得更快，只能缩短后面的组织语言时间。流式传输能提前交付已经生成的文字，无法让尚未生成的台词出现；收到网络流的第一个事件也不等于用户收到第一句回复。<a href="https://platform.claude.com/docs/en/build-with-claude/streaming">Claude 流式接口说明</a></p>
+<p>高思考强度可能推迟回答，厂商文档也承认更多思考会增加延迟。不过，本次资料不足以证明“所有模型的后训练都没有首次回复时间目标”。更准确的工程前提是：<strong>不能依赖训练方式或一句系统提示，保证模型在指定时间内开口。</strong> <a href="https://api-docs.deepseek.com/guides/thinking_mode/">DeepSeek 思考模式</a>、<a href="https://platform.claude.com/docs/en/build-with-claude/extended-thinking">Claude 扩展思考</a></p>
+<p>角色问题也不能只靠润色补救。如果给回复模型的任务始终是“解释刚才的工具调用”，它接收到的对话目标本身就偏离了角色交流。它需要直接理解用户、人物关系和当前场景，并有权判断这次工具动作是否值得说。</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>做法</th>
+<th>能改善的部分</th>
+<th>仍然留下的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>强调“先回复再思考”，开启流式</td>
+<td>部分请求更早出现文字。</td>
+<td>时间依然由模型生成过程决定。</td>
+</tr>
+<tr>
+<td>主模型之后增加回复模型</td>
+<td>有机会改善措辞。</td>
+<td>第一轮等待不变；每轮工具解释容易重复。</td>
+</tr>
+<tr>
+<td>单模型加独立计时和消息数组</td>
+<td>可处理等待提示、静默和分条，改动最少。</td>
+<td>长任务占住模型时，很难继续自然聊天。</td>
+</tr>
+<tr>
+<td><strong>聊天模型负责交流，复杂工作后台执行</strong></td>
+<td>聊天可以独立开始、继续；工具过程无需自动变成台词。</td>
+<td>需要一份简单的后台任务记录，角色质量仍要实测。</td>
+</tr>
+</tbody>
+</table></div>
+<p>推荐最后一条。第三条适合作为第一阶段交付，但不足以承载“做事途中还能聊天”的完整需求。</p>
+<h2 id="section-3">3. 新架构只分三项职责</h2>
+<pre><code class="language-text">用户消息 → 聊天模型 → 静默，或一条／多条台词 → 程序发送
+               ↓                            ↑
+          提交后台任务                  完成结果再次交给聊天模型
+               ↓                            ↑
+          深入思考、使用工具 ────────────────┘
+
+收到消息 → 程序独立计时 → 符合条件时发送一句等待提示
+</code></pre>
+<h3>聊天模型：决定这时候怎么回应这个人</h3>
+<p>聊天模型直接收到用户消息、人设、关系备注、最近对话和当前任务状态。日常聊天直接回答；复杂分析、搜索、读图和操作交给后台。它可以关心用户、追问、开玩笑或保持沉默，不必逐一解释工具动作。</p>
+<p>使用明确关闭长思考的配置，限制单次输出长度。它只负责眼前的交流与任务交接，不先完整求解复杂问题。配置仍需在实际接口上验证，不能假定一个通用参数对所有模型有效。</p>
+<p>首版提供一个任务管理工具，支持开始、补充、停止和查询；特殊媒体交付沿用受限的 <code>send</code> 工具。开始任务时把要求持久保存并立即返回任务编号，<strong>不等待后台完成</strong>。工具返回后，它再生成本次台词。这样复杂请求可能需要两次短模型调用，但后台推理不会卡在两次调用之间。每次唤醒最多做一次工具调用，再进入最终回复，避免前台演变成另一条长工具循环。</p>
+<p>任务交接同时附上平台保存的用户原话、相关补充、会话范围及必要材料；不能只传聊天模型写的一句摘要。否则快速理解时漏掉的要求会被永久丢失。图片可以先交接原图引用，后台再识别；等待提示不必等读图完成。</p>
+<h3>后台任务：把事情做完，报告结果</h3>
+<p>后台可以使用较高思考强度和现有工具。它接收任务要求、必要历史和任务材料，按原生工具调用格式工作。首版每个会话只运行一个后台任务，额外工作排队，不建立多层任务树。</p>
+<p>后台只能报告实际状态、结果、依据、产物和未解决的问题。它没有直接向 QQ 发言的权限，工具前的普通文字也不自动发送。现有发图工具中“生成图片”和“实际发送”需在这里分开：后台生成产物，平台保留媒体编号，聊天侧用受限的 <code>send(media_id=...)</code> 交付，再决定附带什么台词。该工具只发送已准备好的媒体，不在前台进行耗时渲染，普通文字仍统一走最终消息列表。</p>
+<p>报告在任务完成、失败、需要用户补充时回到聊天过程；一般工具开始或结束不触发一轮新对白。后台等待期间，新的聊天可以继续。任务结果到来后，聊天模型结合此刻的对话判断如何交付，不照搬任务报告。</p>
+<h3>程序：计时、排队、保存和发送</h3>
+<p>程序掌握用户身份、会话、任务编号和发送结果。所有台词、等待提示及媒体都走同一个发送入口。模型不能自行修改收件人；任务结果按创建时保存的会话返回。</p>
+<p>继续使用现有 Python、asyncio、SQLite 和 NapCat。聊天和后台可以复用同一个异步 <code>pipeline()</code> 函数，通过注入的配置、工具范围和状态区分；状态仍由 Scheduler 持有。新增职责不要求引入另一套 Agent 框架或消息中间件。</p>
+<p><strong>这里仍有两种模型调用职责，但只有一个长期负责说话的角色。</strong> 后台是按任务创建的工作过程，不再有一个模型长期写对白草稿、另一个模型长期改稿。</p>
+<h2 id="section-4">4. 第一次回应：程序计时，模型选择自然台词</h2>
+<p>以下 <code>3 秒</code>、<code>8 秒</code> 是首版可调整的工程起点，不是已测性能，也不是模型或 QQ 的时延承诺。</p>
+<ol>
+<li>收到符合回应条件的真人消息，就记下接收时间，先保存输入，再启动独立计时。计时包括合并连续输入、准备上下文和读图等等待，不能从模型返回工具调用后才开始。</li>
+<li>聊天模型及时给出有效台词，就经统一入口发送。及时给出明确静默结果，则取消本次等待提示。</li>
+<li>到接收后约 3 秒，若仍无已开始发送的台词、也没有有效静默决定，程序发送一次事先审核过的短句，例如“嗯，收到这条了。稍等一下。”它不宣称已经查到结果或工具已经执行。</li>
+<li>等待提示与模型回复在同一个发送入口确定先后。正式回复先开始，提示作废；提示先开始，就记录实际结果。若模型仍在生成旧的接话内容，取消这次短生成，把已发提示加入上下文后再接着回复，避免连续说两次“稍等”。</li>
+<li>单次聊天处理从此次开始算最多约 8 秒，取消重生成也不重置这个上限。超限就终止前台请求、记录失败；按相同发送规则给出简短失败说明，不能把故障写成主动静默。后台若已接收任务，可继续工作并报告结果。</li>
+</ol>
+<p>程序能控制的是<strong>到点作出发送决定并开始发送尝试</strong>。QQ 是否送达还取决于网络和 NapCat；成功回执也不能证明用户已阅读。因此同时记录首次发送尝试、首次发送成功、首次有实质内容的回复，不能用一条机械提示掩盖真正答案很晚的问题。</p>
+<h3>静默与等待提示有一个必须明说的取舍</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>场景</th>
+<th>等待提示规则</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>私聊或群里明确 @／回复机器人，属于本次直接交流</td>
+<td>启用一次超时提示。</td>
+</tr>
+<tr>
+<td>群聊旁听、普通订阅上报、心跳</td>
+<td>不启用兜底提示，模型可以保持沉默。</td>
+</tr>
+<tr>
+<td>平台已确认的静默设置或明确静默指令</td>
+<td>禁用提示；需要“绝对不回复”时使用程序能直接识别的设置／指令。</td>
+</tr>
+<tr>
+<td>模型在提示前返回合法空消息列表</td>
+<td>本次不说话，也不再补提示。</td>
+</tr>
+<tr>
+<td>提示已经发出，模型才决定静默</td>
+<td>后续不说话；已经发出的提示仍如实保留。</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>无法同时无条件保证“固定时间内回应”和“服从一个无限晚才返回的静默决定”。</strong> 首版对直接交流采用上述等待规则；普通自然语言里的“你可以不用回”仍需理解，若模型尚未理解就到时，不能宣称程序已经知道它应静默。产品可用明确静默设置消除这种歧义。</p>
+<p>兜底台词由人设维护者在 <code>system-prompts.yaml</code> 中配置少量短句；没有明确场景信息时用克制、不作情绪猜测的句子。自由生成的台词负责自然变化，固定短句只覆盖异常等待。</p>
+<h3>不让模型凭空保证完成时间</h3>
+<p>程序首先能确认的往往只是“已收到任务”或“正在查询”。没有同类任务的实际耗时记录时，就说“需要一点时间”，不强行猜几分钟。后续有足够记录再给宽范围估计，并注明可能延长；不要求增加一个估时模型。</p>
+<h2 id="section-5">5. 角色台词与发送条数分别处理</h2>
+<h3>工具前的 content 能否严格遵循人设？</h3>
+<p><strong>不能把它当成稳定保证。</strong> 接口允许模型在工具调用时返回普通文字或空文字，但没有承诺这些文字一定符合指定角色。把“解释工具调用”换成人设提示可能改善表现，却不能据此宣布问题已经解决。<a href="https://api-docs.deepseek.com/guides/thinking_mode/">DeepSeek 思考与工具调用示例</a></p>
+<p>本路线继续不发送工具调用轮的 <code>content</code>，也不显示原始推理。无论前台任务管理还是后台业务工具，只有专门的最终台词字段可以进入发送入口。聊天模型的生成目标改为“回应当前的人和场景”；它看到任务是否开始、结果是否可用，不必看到每条命令和工具清单。</p>
+<p>固定人设、关系记录和少量贴近实际的对话示例负责引导。示例要覆盖普通聊天、复杂委托、等待、失败、用户改口与沉默，避免只示范“我将调用某工具”。后台报告以资料身份出现，不能变成新的角色指令。</p>
+<p>这降低工具过程影响台词的机会，<strong>不保证自由文本百分之百符合人设</strong>。程序可以稳定拦截协议标签和错误收件人，却不能仅凭格式判断一句话是否符合人物在此刻的心理。首版用人工场景评价验证，不增加每句话都跑一遍的审稿模型。</p>
+<h3>用明确的消息列表代替分隔符</h3>
+<p>一轮可见输出使用如下逻辑结构：</p>
+<pre><code class="language-json">{&quot;messages&quot;: [&quot;嗯，我看看。&quot;, &quot;你先不用一直等着。&quot;]}
+</code></pre>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>合法结果</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{&quot;messages&quot;: []}</code></td>
+<td>本次不新增文字回复；若也未发送媒体或等待提示，本次完全静默。它不是模型异常，也不取消后台工作。</td>
+</tr>
+<tr>
+<td><code>{&quot;messages&quot;: [&quot;一句完整的话。&quot;]}</code></td>
+<td>发一条。</td>
+</tr>
+<tr>
+<td><code>{&quot;messages&quot;: [&quot;第一句。&quot;, &quot;接着补充一句。&quot;]}</code></td>
+<td>按数组顺序分别发送，消息边界由模型决定。</td>
+</tr>
+</tbody>
+</table></div>
+<p>数组只是把“这几条消息分别是什么”说清楚。模型选择语义上的停顿；程序不按标点、换行或 <code>|</code> 再猜一次。因此正文里出现 <code>a | b</code>、引用和换行都不影响分条。每次选择静默只作用于当前这次唤醒；以后用户说话或后台有结果时，可以重新决定回应。</p>
+<p><strong>与当前协议的衔接：</strong> 保留 <code>[TO_SELF]</code> 与 <code>[TO_USER]</code> 的外层双通道校验，只把 <code>TO_USER</code> 的正文改为上述 JSON 对象；程序解析后逐项执行现有纯文本检查并发送。<code>TO_SELF</code> 仍只存短主观状态，不承载任务命令，不对外发送。任务操作仍使用原生工具调用。协议标签和 JSON 原文均不进入 QQ。</p>
+<p>为保持首版简单，完整收到并校验这份短列表后才开始逐条发送；不边解析半截 JSON 边发消息。单轮最多 4 条、每条最多 500 字可作为初始限制，超出就要求改短或生成已有的图文产物。条间按平台必要的最小间隔发送，不增加随机“打字延迟”。这些是可调产品限制，不是 QQ 协议限制。</p>
+<p>空白项、缺失字段、截断、整个响应为空都属于异常，不能当成 <code>messages: []</code>。最多纠正一次，且仍受前台总时间限制；发送前从未通过校验的内容不进入聊天历史。JSON 模式也可能出现空响应，格式支持不等于业务正确性。<a href="https://api-docs.deepseek.com/guides/json_mode/">DeepSeek JSON 输出</a>、<a href="https://api-docs.deepseek.com/guides/tool_calls/">工具结构约束</a></p>
+<h3>一个完整的交流例子</h3>
+<p>下面台词只是表达方式示意，实际以项目维护的人设为准；时间也是假设的事件顺序。</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>时刻</th>
+<th>用户看到的交流</th>
+<th>系统发生的事</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>收到消息</td>
+<td>用户：“帮我查这台路由器值不值得升级固件，把风险也查清楚。”</td>
+<td>聊天模型收到原话和图片引用，程序开始计时。</td>
+</tr>
+<tr>
+<td>第一次短调用后</td>
+<td>“嗯，等我仔细看一下。”</td>
+<td>后台任务已接收；前台不用先得出升级结论。若短调用迟迟不回，由计时规则补一句。</td>
+</tr>
+<tr>
+<td>后台分析期间</td>
+<td>用户：“先别升级，我只是想了解。”</td>
+<td>新输入先保存；尚未开始的新动作暂停，聊天模型把补充交给原任务。</td>
+</tr>
+<tr>
+<td>下一次短回复</td>
+<td>“好，只看看。”</td>
+<td>后台按新要求继续；这句话不能冒充“已撤回一个开始的升级”。</td>
+</tr>
+<tr>
+<td>用户暂时换话题</td>
+<td>用户：“你今天怎么这么认真。”机器人：“因为是你的事呀。”</td>
+<td>聊天继续，后台分析不因普通闲聊被取消。</td>
+</tr>
+<tr>
+<td>结果可交付</td>
+<td>“看完了，这次可以先不升。”然后另发一条原因。</td>
+<td>后台交回资料、判断依据和限制；聊天模型选择两条消息，程序依序确认发送。</td>
+</tr>
+</tbody>
+</table></div>
+<p>这样的两条回复来自同一个说话者在不同时间的交流决定，无需先生成长文再用分隔符切开。</p>
+<h2 id="section-6">6. 为避免错发和误做，只补必要规则</h2>
+<h3>新消息先处理，已经发生的事照实记录</h3>
+<p>沿用 #19 的会话队列思路：输入入队，与“确认开始一个动作”共用一把短锁。锁内只安排顺序和写记录，不等待模型、网络发送或工具完成。队列先收到真人补充，就不再开始依赖旧输入的发送或工具动作；动作已登记开始后才来的消息，进入后续处理。</p>
+<p>聊天生成时来新消息，取消这次聊天请求，带上新输入重来。后台思考无需因每条闲聊重启，但新真人输入尚未被聊天侧处理完时，先暂停启动下一项业务工具。聊天侧明确它是闲聊后解除暂停；判定为补充或停止时，则更新后台要求，再取消并重启相应模型请求。所有取消使用 <code>asyncio.Task.cancel()</code>，不把取消网络请求解释成撤销外部动作。</p>
+<p>后台已经开始的工具按原有约定完成或超时，结果入账；用户纠正不能抹去已发生的副作用。前台超时也不能自动解除对新工具的暂停。这里接受一个小成本：有人连续聊天时，后台工具推进可能变慢，换取明确的改口处理。</p>
+<p>一个会话只有一个说话入口。后台结果先排队，不直接抢发；若聊天已转向别处，模型可以晚一点提或暂时不提。未交付结果保留“待交付”状态，下一次用户输入或已有心跳检查时可再次看到；用户明确放弃才标记不再交付。不另建一个持续轮询催话的模型。</p>
+<h3>多条消息中途出问题，只处理未发送部分</h3>
+<p>每个批次及其消息序号都有记录，每条开始发送前重新查看会话队列。第一条已成功、第二条之前来了新消息，就保留第一条，取消旧批次未发送部分；新一轮能看到用户实际收到的第一条。</p>
+<p>发送失败时不重发整批。结果不明时记录“未知”，不盲目重试；因为网络超时可能发生在 QQ 已经收到消息之后。首版不承诺任意外部动作严格执行一次。<a href="current-design.md">现有发送事实规则</a></p>
+<h3>历史忠实于各自实际发生的事</h3>
+<p>聊天侧保留角色自己的完整输出和逐条发送结果；组装对话时明确哪些已发送、哪些未发送，不能把未发送台词当成已经说过。程序自动补的等待提示单独标为平台发送记录，不伪装成模型生成的内容。若旧整轮后来取消，已经发送的早期消息也必须在恢复和摘要时保留。</p>
+<p>后台保留自己当前任务的原生工具调用和结果；交付时只把必要报告与依据送到聊天侧。后台报告与原始材料不能被表述为平台已证实的现实真相；平台只能核对动作回执、来源和状态。深度任务需要细节时再次读取材料，不只依赖一段摘要。</p>
+<p>长期记忆仍用项目现有存储能力。聊天摘要应覆盖已发生的交流与未完成承诺；后台没有第二个人格，也不维护另一份长期人物关系。身份以稳定编号为准，人设仍统一存放在外部提示词文件中。</p>
+<h3>后台任务用一份小记录即可</h3>
+<p>SQLite 记录任务编号、绑定会话、原始输入引用、追加要求、状态和结果引用；状态包含排队、运行、等待补充、完成、失败、取消及结果未知。另记结果是否已交付，避免任务结束后回复丢失。</p>
+<p>重启恢复未开始的任务和未交付的结果；执行到一半且涉及外部写入的任务，先确认动作结果，无法确认就保留未知状态。无需首版支持任意时刻恢复完整模型思考，也不能因重启就重做所有写操作。</p>
+<h2 id="section-7">7. 分三步落地，并用三个痛点验收</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>最少改动</th>
+<th>完成标志</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 先修发送行为</td>
+<td>在 Scheduler 中加独立计时；扩展双通道解析器中的消息列表；所有出口逐条记录发送结果。</td>
+<td>模型卡在第一次思考也能触发等待规则；静默、分条和中途停止可预测。</td>
+</tr>
+<tr>
+<td>② 让后台任务独立运行</td>
+<td>增加任务记录和立即返回的任务管理工具；为聊天与后台设置不同工具范围和思考配置；任务结果重新进入会话队列。</td>
+<td>后台长时间思考时，前台仍能处理新聊天、补充和停止；只有一个说话入口。</td>
+</tr>
+<tr>
+<td>③ 校准角色与表达</td>
+<td>维护少量场景示例，比较单模型与新路线，调整消息数和等待阈值。</td>
+<td>更自然且不损害任务结果；收益不足时先调整聊天模型或示例，不叠加新的润色模型。</td>
+</tr>
+</tbody>
+</table></div>
+<p>实现主要涉及 <code>scheduler.py</code>、<code>pipeline.py</code>、输出解析器、发送入口、任务工具与 SQLite 存储。工具定义仍由注册表生成；人设、提示和等待短句都放在 <code>system-prompts.yaml</code>。媒体产物也必须接入同一发送记录，不能留一个后台直发的例外。</p>
+<p>实施时同步更新 <code>docs/current-design.md</code>、<code>README.md</code>、<code>AGENTS.md</code> 和对应测试：新的消息列表取代普通回复单条约定；前台用合法空列表表达静默，停止注册重复的 <code>no_reply</code> 能力；等待通知改由程序统筹，避免旧 <code>status_update</code> 再发一遍。新消息取消前台生成、后台按补充处理的规则也需明确替换旧的整条任务取消约定。原始记录、外层双通道、工具原生格式和真实发送回执继续保留。不要长期运行两种普通文字输出协议。</p>
+<h3>程序行为用可控假模型验证</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>场景</th>
+<th>必须看到的结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型一分钟不返回可用文字</td>
+<td>到配置阈值就开始一次等待提示发送尝试，不等工具出现；前台在总时限内停止。</td>
+</tr>
+<tr>
+<td>读图、合并输入或准备上下文很慢</td>
+<td>从接收开始计时，不能把这段等待排除。</td>
+</tr>
+<tr>
+<td>模型回复与计时器同时完成</td>
+<td>同一发送入口排出顺序；不会重复补同一等待提示。</td>
+</tr>
+<tr>
+<td>合法空列表、超时、无效 JSON</td>
+<td>前者明确静默；后两者记录故障，处理结果不同。</td>
+</tr>
+<tr>
+<td>三条回复，首条后用户改口</td>
+<td>仅首条保留成功记录；后两条取消，下一轮知道首条已发。</td>
+</tr>
+<tr>
+<td>后台计算期间继续闲聊或补充要求</td>
+<td>闲聊能回应；新工具等待补充处理；已发生动作不被说成撤销。</td>
+</tr>
+<tr>
+<td>发送超时、任务中断、服务重启</td>
+<td>不把未知结果记成成功，不重复整批发送或盲目重做写操作。</td>
+</tr>
+</tbody>
+</table></div>
+<p>这些是待实现的验收用例，<strong>本报告没有执行模型性能实验，也没有证明新架构已经达标</strong>。计时和并发测试使用可控时钟、假发送器及显式同步点，不靠随机等待碰运气。</p>
+<h3>角色与任务效果用同一组对话比较</h3>
+<p>准备约 30 个场景，覆盖普通 RP、复杂委托、失败、改口、群聊旁听、静默与多条回复，各重复几次；比较现有单模型、旧串行双模型、新路线。固定任务材料和尽量相同的后台模型设置，记录实际模型版本，由人查看打乱顺序的完整交流。</p>
+<p>分别看：首次成功发送时间、首次实质回复时间、像编码助手一样解释步骤的频率、人设与场景是否合适、静默是否恰当、分条是否自然、任务是否完成及有无错误承诺。时间至少看中位数和较慢一成的表现，不只挑一个顺利示例。短提示再快也不能补偿后台答错，拆成四条也不自动等于更自然。</p>
+<p>第一阶段的计时和发送规则可以单独成立；采用完整后台分工，还应看到做事途中聊天明显改善、角色评价更好且任务正确率未明显下降。小样本只用来选择方向，不包装成对所有模型的保证。</p>
+<h2 id="section-8">8. 依据、范围与尚未证实的部分</h2>
+<p>本报告由 AI 辅助整理。核对方法是读取 #15–#19 的变更与报告、当前设计及关键源码，再检查厂商官方接口文档；外部资料检索聚焦思考模式、流式事件、工具调用和 JSON 输出。没有以旧报告引用的论文、实验分数或开源热度作为本方案已有效的证据。</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="对照表，可横向滚动"><table>
+<thead>
+<tr>
+<th>核对来源</th>
+<th>本报告用它说明什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="current-design.md">当前设计</a>与<a href="../src/mutsumi_sync/pipeline.py">处理代码</a></td>
+<td>现有最终双通道、工具轮文字不发送、单条回复和长工具提示的实际边界。</td>
+</tr>
+<tr>
+<td><a href="https://github.com/GYPp1us/Mutsumi-s-SYNC/pull/19">PR #19</a>及前述报告</td>
+<td>旧方案仍等待主模型阶段输出，队列与动作开始规则已有讨论基础。</td>
+</tr>
+<tr>
+<td><a href="https://api-docs.deepseek.com/guides/thinking_mode/">DeepSeek 思考模式</a></td>
+<td>思考与普通回答是不同输出；可以按实际型号选择思考配置。</td>
+</tr>
+<tr>
+<td><a href="https://api-docs.deepseek.com/guides/tool_calls/">DeepSeek 工具调用</a>和<a href="https://api-docs.deepseek.com/guides/json_mode/">JSON 输出</a></td>
+<td>结构可以约束，空响应和业务校验仍需程序处理；格式不能证明人设、事实或时机正确。</td>
+</tr>
+<tr>
+<td><a href="https://platform.claude.com/docs/en/build-with-claude/extended-thinking">Claude 扩展思考</a>和<a href="https://platform.claude.com/docs/en/build-with-claude/streaming">流式说明</a></td>
+<td>更多思考存在延迟成本；网络流事件不等于用户台词。</td>
+</tr>
+</tbody>
+</table></div>
+<p>外部页面核对日期为 2026-09-08。接口文档会变化，例如当前 DeepSeek 文档对带工具请求的推理字段回传要求，与项目既有适配约定可能不同。实施时只验证选定的实际模型与接口；必要的推理字段仅留在后台请求续接范围，不进入角色聊天、长期记忆或用户消息。本文不据最新文档直接更改生产配置。</p>
+<p>本路线的程序规则可以测试和约束；“角色更自然”“能更好判断何时不说话”仍是需要实测的设计推断。首版范围是一套聊天过程、一项并行后台工作、一个发送入口和现有数据库。插件体系、记忆重写、设备网络与模型通用兼容不作为这三个痛点的前置工程。</p>
+</main></div>
+<footer><div class="footlinks"><a href="conversation-and-background-work-2026-09-08.md">Markdown 源稿</a><a href="agent-runtime-architecture-2026.html">上一份架构报告</a><a href="current-design.md">当前实现说明</a></div>设计提案 · 本次仅交付文档，未修改运行时代码或生产服务。</footer>
+</body></html>

@@ -4,6 +4,10 @@ Mutsumi's SYNC v3 is an asynchronous QQ chatbot built on NapCat. It provides an 
 
 The project was rewritten from the legacy v2 codebase. The current v3 line focuses on a maintainable core: one async pipeline function, scheduler-owned state, explicit dependency injection, and observable logs.
 
+An independent [conversation and background-work prototype](docs/prototype-conversation-background-work.md) is available through `python -m src.mutsumi_sync.prototype --demo`. It runs offline by default, supports text message lists and background file reads, and displays replies in the local terminal. It uses a separate database and does not replace the production QQ pipeline described below. Its fixed waiting notices and return destination are no longer the proposed direction; see the [three new orchestration options](docs/agent-orchestration-options-2026-09-08.md).
+
+The [repository cleanup and experiment handoff report](docs/repository-cleanup-and-experiment-plan-2026-09-08.md) records which older documents, generated data, branches, and worktrees are historical, archived, or still active.
+
 ## Features
 
 - NapCat WebSocket message receiving and HTTP sending.

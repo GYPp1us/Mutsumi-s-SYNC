@@ -1,5 +1,9 @@
 # Current Context, Heartbeat, And Vision Rules
 
+The independent prototype is documented in [docs/prototype-conversation-background-work.md](docs/prototype-conversation-background-work.md) and runs with `python -m src.mutsumi_sync.prototype --demo`. Keep its text message-list protocol, dedicated database and terminal-only sender scoped to `src/mutsumi_sync/prototype/`; it does not replace the production QQ pipeline or its rules below. Offline checks verify program behavior, not real-model speed or role-play quality.
+
+Before extending the prototype or orchestration proposal, read [the 2026-09-08 repository cleanup and experiment handoff report](docs/repository-cleanup-and-experiment-plan-2026-09-08.md). It separates current runtime facts from historical reports and records the pending local branch cleanup.
+
 ## Global Event Ledger Rules
 
 - `events` is the append-first global Life Stream. It carries actor, conversation, visibility, audience, lifecycle, turn, tool, and media provenance.

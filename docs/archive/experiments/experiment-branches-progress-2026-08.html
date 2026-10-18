@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mutsumi's SYNC v3 — 实验分支进展总结与综合对比</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --ink: #1f2430;
+    --muted: #5b6472;
+    --line: #d9dee8;
+    --accent: #2f6fed;
+    --accent-soft: #e8effc;
+    --green: #1a7f4b;
+    --green-soft: #e6f6ec;
+    --amber: #9a6b00;
+    --amber-soft: #fdf3d9;
+    --red: #b3382c;
+    --red-soft: #fbeae7;
+    --purple: #6a3fb5;
+    --purple-soft: #f0e9fb;
+    --cyan: #0e7490;
+    --cyan-soft: #e0f4fa;
+    --mono: "Cascadia Code", Consolas, "JetBrains Mono", Menlo, monospace;
+    --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  header.hero {
+    background: linear-gradient(135deg, #1b2a4a 0%, #2f6fed 100%);
+    color: #fff;
+    padding: 48px 32px 40px;
+  }
+  header.hero h1 { margin: 0 0 8px; font-size: 28px; }
+  header.hero p.sub { margin: 0; opacity: .85; max-width: 960px; }
+  header.hero .meta { margin-top: 14px; font-size: 13px; opacity: .75; font-family: var(--mono); }
+  nav.toc {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.96);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 32px;
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+    font-size: 13px;
+  }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  main { max-width: 1060px; margin: 0 auto; padding: 28px 32px 80px; }
+  section { margin-top: 44px; }
+  h2 {
+    font-size: 22px;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+    margin: 0 0 18px;
+  }
+  h3 { font-size: 17px; margin: 26px 0 10px; }
+  h4 { font-size: 15px; margin: 18px 0 8px; }
+  p { margin: 8px 0; }
+  code {
+    font-family: var(--mono);
+    font-size: .86em;
+    background: #eef1f6;
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .term {
+    font-family: var(--mono);
+    font-size: .9em;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .file { font-family: var(--mono); font-size: .8em; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; background: var(--panel); }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; font-size: 14px; }
+  th { background: #f0f3f8; font-weight: 600; white-space: nowrap; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 14px 0;
+  }
+  .note { border-left: 4px solid var(--amber); background: var(--amber-soft); }
+  .warn { border-left: 4px solid var(--red); background: var(--red-soft); }
+  .ok { border-left: 4px solid var(--green); background: var(--green-soft); }
+  .info { border-left: 4px solid var(--cyan); background: var(--cyan-soft); }
+  .note .t, .warn .t, .ok .t, .info .t { font-weight: 700; display: block; margin-bottom: 4px; }
+  .pill {
+    display: inline-block; padding: 1px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; margin-right: 4px;
+  }
+  .pill.b { background: var(--accent-soft); color: var(--accent); }
+  .pill.g { background: var(--green-soft); color: var(--green); }
+  .pill.a { background: var(--amber-soft); color: var(--amber); }
+  .pill.r { background: var(--red-soft); color: var(--red); }
+  .pill.p { background: var(--purple-soft); color: var(--purple); }
+  .pill.c { background: var(--cyan-soft); color: var(--cyan); }
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; margin: 16px 0; }
+  .node {
+    background: var(--panel);
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    text-align: center;
+    min-width: 120px;
+    font-size: 13px;
+  }
+  .node .en { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .node.hl { border-color: var(--accent); background: var(--accent-soft); }
+  .node.gr { border-color: var(--green); background: var(--green-soft); }
+  .node.am { border-color: var(--amber); background: var(--amber-soft); }
+  .node.rd { border-color: var(--red); background: var(--red-soft); }
+  .node.pu { border-color: var(--purple); background: var(--purple-soft); }
+  .node.cy { border-color: var(--cyan); background: var(--cyan-soft); }
+  .arrow { display: flex; align-items: center; padding: 0 6px; color: var(--muted); font-size: 12px; }
+  .arrow::after { content: "→"; font-size: 18px; }
+  .timeline {
+    font-family: var(--mono); font-size: 12.5px;
+    background: #0f1b2d; color: #d7e3f4;
+    border-radius: 10px; padding: 16px 18px; margin: 14px 0;
+    overflow-x: auto; line-height: 1.9;
+  }
+  .timeline .t { color: #8fa8c8; }
+  .timeline .b1 { color: #7ee2b8; }
+  .timeline .b2 { color: #7ec3ff; }
+  .timeline .b3 { color: #f0b47e; }
+  .timeline .b4 { color: #d9a4ff; }
+  .timeline .b5 { color: #ffd97e; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .glossary-term { display: block; margin: 14px 0; }
+  .glossary-term details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
+  .glossary-term summary { cursor: pointer; font-weight: 600; }
+  .glossary-term summary .en { font-family: var(--mono); color: var(--accent); }
+  .glossary-term summary .cn { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+  .glossary-term .body { margin-top: 8px; font-size: 14px; }
+  .glossary-term .loc { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .badge-reality { font-size: 12px; color: var(--red); font-weight: 600; }
+  .num { font-family: var(--mono); font-weight: 700; }
+  footer { border-top: 1px solid var(--line); margin-top: 60px; padding: 20px 0 40px; color: var(--muted); font-size: 13px; }
+  @media print { nav.toc { position: static; } }
+</style>
+</head>
+<body>
+<div style="margin:16px auto;max-width:1100px;padding:12px 18px;border:1px solid #d9dee8;border-radius:8px;background:#fff8df;color:#6b5312">
+  <strong>历史归档：</strong>本页是 2026-08-07 的实验分支快照，引用的源码和结果已从进行中目录移出。当前清理、分支状态和后续实验以<a href="../../repository-cleanup-and-experiment-plan-2026-09-08.md">2026-09-08 接手报告</a>为准。
+</div>
+
+<header class="hero">
+  <h1>Mutsumi's SYNC v3 — 实验分支进展总结与综合对比</h1>
+  <p class="sub">
+    汇总 <code>feature/v3-rewrite</code> 之后所有<b>实验分支</b>的进度与产物：<code>codex/live-lab-prompt-bench</code>、
+    <code>codex/context-integrity-v2</code>、<code>experiment/context-v2</code>、<code>codex/context-v3-experiment</code>。
+    将分散的实验报告（USC 基准、Quest Context、一致性测试、Live Lab）合成一份可对照的进展总结，
+    并给出综合性结论与下一步建议。各分支原始报告与数据 JSON 见 §9 索引。
+  </p>
+  <p class="meta">基线：main @ 732cd9e（2026-08-03）｜ 实验分支最新提交：codex/context-v3-experiment @ 3d97284（2026-08-05）｜ 汇总日期：2026-08-07</p>
+</header>
+
+<nav class="toc">
+  <a href="#overview">1 实验分支地图</a>
+  <a href="#branches">2 各分支进展明细</a>
+  <a href="#protocol">3 实验协议与方法</a>
+  <a href="#results">4 结果汇总对比</a>
+  <a href="#conclusion">5 综合对比结论</a>
+  <a href="#production">6 生产影响与修复清单</a>
+  <a href="#next">7 待办与下一步</a>
+  <a href="#glossary">8 术语对照表</a>
+  <a href="#index">9 代码与文档索引</a>
+</nav>
+
+<main>
+
+<!-- ================= 1 地图 ================= -->
+<section id="overview">
+  <h2>1. 实验分支地图</h2>
+  <p>
+    v3 重构（<code>feature/v3-rewrite</code>，Phase 2 于 2026-06-23 完成，2026-07-03 冻结）之后，
+    main 在 2026-07-30～08-03 通过两轮 PR（<code>unified-life-stream</code> #13、<code>identity-context-fixes</code> #14）
+    收编了全球事件账本、身份稳定、心跳、ingress 等生产基线与 <code>codex/context-integrity-v2</code> 的十三项硬化任务。
+    此后围绕<b>「上下文系统该不该这么复杂」</b>这一核心问题，产生了四条实验分支，形成一条连续的实验链：
+  </p>
+
+  <table>
+    <tr>
+      <th>分支</th>
+      <th>时间</th>
+      <th>主题</th>
+      <th>状态</th>
+      <th>主要产物</th>
+    </tr>
+    <tr>
+      <td><code>codex/live-lab-prompt-bench</code></td>
+      <td>2026-07-01</td>
+      <td>沙箱化实验工具：提示词迭代 + 记忆压力测试</td>
+      <td><span class="pill g">框架完成</span><span class="pill a">未合并</span></td>
+      <td><code>src/mutsumi_sync/lab/*</code> + TUI + 4 个测试文件</td>
+    </tr>
+    <tr>
+      <td><code>codex/context-integrity-v2</code></td>
+      <td>2026-07-11</td>
+      <td>十三项生产硬化任务（发送诚实性/账本/预算等）</td>
+      <td><span class="pill g">已合并入 main</span></td>
+      <td><code>docs/plans/2026-07-11-context-integrity-v2.md</code> → 现生产基线</td>
+    </tr>
+    <tr>
+      <td><code>experiment/context-v2</code>（当前分支）</td>
+      <td>2026-08-04</td>
+      <td>USC：激进简化的「摘要 + 窗口」上下文 vs 真实生产投影</td>
+      <td><span class="pill a">实验完成</span><span class="pill a">未合并</span></td>
+      <td><code>context_v2.py</code> ≈300 行 + 全量召回基准 + 3 项基线 major 修复 + 论文风格报告</td>
+    </tr>
+    <tr>
+      <td><code>codex/context-v3-experiment</code></td>
+      <td>2026-08-05</td>
+      <td>Quest Context：多角色事项上下文（三条布局路线对照）</td>
+      <td><span class="pill a">最新实验</span><span class="pill a">未合并</span></td>
+      <td>设计探索稿 + 短/长场景实验框架 + regraded 汇总报告</td>
+    </tr>
+  </table>
+
+  <h3>时间线（实验链的推进）</h3>
+  <div class="timeline">
+    <span class="t">06-23</span> <span class="b1">v3 Phase 2 冻结</span> → <span class="t">07-01</span> <span class="b2">live-lab-prompt-bench（实验工具化）</span>
+    → <span class="t">07-11</span> <span class="b3">context-integrity-v2（生产硬化）</span>
+    → <span class="t">07-30~08-03</span> <span class="b5">main 收编基线（PR #13/#14 + 732cd9e）</span>
+    → <span class="t">08-04</span> <span class="b4">experiment/context-v2（USC 基准 + 3 项 major 修复）</span>
+    → <span class="t">08-05</span> <span class="b1">codex/context-v3-experiment（Quest 短/长场景）</span>
+  </div>
+
+  <div class="card info">
+    <span class="t">观察：两条主线</span>
+    1) <b>硬化线</b>（context-integrity-v2）：把 v3 的协议与持久化做「诚实、可验证」——已全部进入生产基线；
+    2) <b>上下文结构线</b>（Live Lab → USC → Quest）：反复用真实模型基准拷问「Event Ledger + Episode 投影」的复杂度
+    是否带来可度量的收益——目前三个实验相互独立地给出同一个方向性答案（见 §5）。
+  </div>
+</section>
+
+<!-- ================= 2 分支明细 ================= -->
+<section id="branches">
+  <h2>2. 各分支进展明细</h2>
+
+  <h3>2.1 codex/live-lab-prompt-bench — 实验工具化（2026-07-01）</h3>
+  <div class="card">
+    <p>
+      最早的分支，目标是把「提示词迭代」从生产 pipeline 中剥离：<code>src/mutsumi_sync/lab/</code> 提供
+      <code>core.py</code>（会话/场景/种子管理）、<code>memory_bench.py</code>（记忆压力测试：
+      锚定事实 + 噪声洪水，验证长轮次下事实能否存活）、<code>reporting.py</code>（结果报告），
+      配套 <code>tui/lab.py</code> 与 <code>tests/test_lab_*.py</code>、<code>tests/test_memory_bench.py</code>。
+    </p>
+    <p>
+      <b>进度</b>：框架与测试齐备（独立于生产 pipeline，不碰生产数据库）。<b>状态</b>：未合并；
+      其理念被后续两个实验分支继承——<code>experiments/context_lab.py</code>（真实模型 + 规则打分）与
+      <code>experiments/context_v3/</code> 框架都是在「沙箱实验、环境变量取 key、不联网 dry-run」的同一约定上演进。
+    </p>
+    <p class="file">关键文件：src/mutsumi_sync/lab/core.py · memory_bench.py · reporting.py · tui/lab.py · tests/test_memory_bench.py</p>
+  </div>
+
+  <h3>2.2 codex/context-integrity-v2 — 生产硬化（2026-07-11，已合并）</h3>
+  <div class="card">
+    <p>
+      一份十三任务的发布计划（<code>docs/plans/2026-07-11-context-integrity-v2.md</code>），把 v3 的协议承诺固化为
+      可验证的实现：发送诚实性（真实成功才持久化）、config 局部编辑、上下文四层布局、
+      摘要类型与精确覆盖、干净启动恢复、取消安全暂存写入、工具连续失败计数、动作账本、
+      图片进常规 pipeline、请求级 token 预算、文档同步、生产发布。
+    </p>
+    <p>
+      <b>进度</b>：全部落地。main @ 732cd9e 的实况已由 <code>docs/implementation-guide.html</code>（2026-08-03 审阅）
+      逐条核实：actions 账本、staged 写入、图片合成输入、token 感知压缩、ingress、心跳均在；
+      350 个测试全绿。<b>这是后续实验的「可信基线」</b>——没有它，USC 基准无法用真实生产投影代码做对照。
+    </p>
+    <p class="file">关键文件：docs/plans/2026-07-11-context-integrity-v2.md · docs/implementation-guide.html（基线实况）</p>
+  </div>
+
+  <h3>2.3 experiment/context-v2 — USC 上下文基准（2026-08-04，当前分支）</h3>
+  <div class="card">
+    <p>
+      提出 <b>Unified Simple Context (USC)</b>：每个会话只维护「一条累积摘要 + 一个有界原始回合窗口」，
+      放弃全局账本、Episode 覆盖/前沿验证、audience/visibility 状态机与三重 legacy 兼容路径；
+      回收在<b>写入时</b>进行（旧摘要 + 新片段 → 新摘要的单次 LLM 合并，强制「用户事实清单」段落）。
+      实现 <code>src/mutsumi_sync/context_v2.py</code> ≈300 行，对照的基线是<b>真实生产投影代码</b>
+      （MessageStore + episodes + build_life_stream，≈2300 行）。
+    </p>
+    <p>
+      分支同时完成了三件基线 major 修复（<b>只帮助基线、不偏向 USC</b>）：
+      <span class="pill r">F1</span> 上下文超限时诚实失败（ContextBudgetError，此前只打日志仍发超限请求）；
+      <span class="pill r">F2</span> Episode 摘要 <code>max_tokens 500 → 4000/8000</code> + 空内容重试——
+      <b>修复前推理模型下压缩 100% 失败</b>，生产端到端不可用；
+      <span class="pill r">F3</span> 消息/合并摘要 max_tokens 提升 + 删除死代码 <code>_recycle_window_if_needed</code>。
+    </p>
+    <p>
+      <b>进度</b>：完整基准已跑完（8 事实 × 3 时间深度 × 5 个 (规模,预算) 条件 × 2 次重复 +
+      多用户一致性实验），18 个结果 JSON 已归档；论文风格报告
+      <code>docs/experiments/context-v2-comparison.md</code> 完成。结果见 §4.1。
+    </p>
+    <p class="file">关键文件：src/mutsumi_sync/context_v2.py · experiments/context_v2/*（run_recall.py / run_consistency.py / baseline_ctx.py / results/*.json）· docs/experiments/context-v2-comparison.md</p>
+  </div>
+
+  <h3>2.4 codex/context-v3-experiment — Quest Context 多角色实验（2026-08-05）</h3>
+  <div class="card">
+    <p>
+      把问题从「单会话召回」推进到「<b>多角色事项</b>」（Project Atlas：群聊 + Alice/Bob/Carol 三条私聊 +
+      OpenCode Worker 回报 + scheduler 定时 + fan-out 投递；用例即 <code>skills/nature-daily-cet4</code>）。
+      设计探索稿（<code>docs/quest-context-design.html</code>）提出四路线：A 地址化邮箱 / B 黑板 + 私人透镜（推荐）/
+      C 全角色格式化单窗口（用户方案）/ D 当前 Ledger。
+      实验对三条可实现路线（<code>ledger_projection</code> / <code>task_room_usc</code> / <code>formatted_llm</code>）
+      做了<b>短场景</b>（9 用例、无噪声、2 次全量）与<b>长场景</b>（320 条噪声 + 28 条核心事实、13 用例、regraded 汇总）。
+    </p>
+    <p>
+      <b>进度</b>：两轮实验全部完成；框架修复（500/429 指数退避、max_tokens 4000、send <code>artifact</code> 参数、
+      判定器对齐生产 recover 语义）已并入分支；结果报告 <code>docs/experiments/context-v3-experiment.html</code> /
+      <code>context-v3-results.html</code> / <code>quest-context-results.md</code> 完成。结果见 §4.2。
+    </p>
+    <p class="file">关键文件：docs/quest-context-design.html · docs/experiments/context-v3-*.html · docs/experiments/quest-context-results.md · experiments/context_v3/*（run.py / long_run.py / results/deepseek_full_regraded.json）</p>
+  </div>
+</section>
+
+<!-- ================= 3 协议 ================= -->
+<section id="protocol">
+  <h2>3. 实验协议与方法</h2>
+  <p>四个分支共用同一套实验纪律（Live Lab 确立、后两分支继承并强化），保证结果可对照：</p>
+  <table>
+    <tr><th>维度</th><th>约定</th><th>说明</th></tr>
+    <tr><td>模型</td><td>DeepSeek V4 Flash（<code>https://opencode.ai/zen/go/v1</code>）</td><td>与生产 pipeline 相同请求协议；<code>thinking</code> + <code>reasoning_effort</code> + 中文 system</td></tr>
+    <tr><td>沙箱</td><td>不导入生产 scheduler、不开生产数据库</td><td>API key 只从环境变量读取，结果脱敏落盘</td></tr>
+    <tr><td>基线真实性</td><td>USC 基准的 baseline 用<b>真实生产投影代码</b>跑合成轮次</td><td>同一数据、同一预算、同一 QA 层，差异只来自 L2 历史布局</td></tr>
+    <tr><td>判定</td><td>关键词/结构规则 + regrade 对齐生产语义</td><td>Quest 判定器按生产 recover 语义修正（完整单 TO_USER 块 = 恢复路径）</td></tr>
+    <tr><td>预算语义</td><td>约束 L2（历史）部分；L1 system ≈7K 固定开销不计</td><td>USC 按渲染后尺寸计预算（CJK-aware），与 <code>build_life_stream(max_tokens=...)</code> 一致</td></tr>
+    <tr><td>重复</td><td>USC 召回 2 次；Quest 短场景 2 次、长场景 1 次</td><td>方差真实存在，32K 档差异应视为持平</td></tr>
+  </table>
+</section>
+
+<!-- ================= 4 结果 ================= -->
+<section id="results">
+  <h2>4. 结果汇总对比</h2>
+
+  <h3>4.1 USC 召回基准（8 事实 × 5 条件，repeats=2 均值）</h3>
+  <table>
+    <tr><th>条件</th><th>baseline（真实投影）</th><th>usc</th><th>truncate（控制组）</th></tr>
+    <tr><td>300 轮 / 16K</td><td class="num">1.00</td><td class="num">1.00</td><td class="num">0.94</td></tr>
+    <tr><td>600 轮 / 16K</td><td class="num">0.50</td><td class="num">1.00</td><td class="num">0.44</td></tr>
+    <tr><td>1000 轮 / 8K（预算最紧）</td><td class="num">0.38</td><td class="num">1.00</td><td class="num">0.25</td></tr>
+    <tr><td>1000 轮 / 16K</td><td class="num">0.94</td><td class="num">0.94</td><td class="num">0.25</td></tr>
+    <tr><td>1000 轮 / 32K（宽松）</td><td class="num">0.81</td><td class="num">0.75</td><td class="num">0.88</td></tr>
+  </table>
+  <ul>
+    <li><b>预算紧张时基线崩溃、USC 稳健</b>：1000 轮 / 8K 下基线把几乎全部历史压成 13–17 段 Episode（≈7.8K tokens），
+      <code>build_life_stream</code> 的 newest-first 预算选择<b>静默丢弃最老 Episode 且无 omission 标记</b>，early 事实 100% 丢失；USC 折叠 1680 回合为一条 2K 摘要 + 最新窗口，8/8 事实全召回。</li>
+    <li><b>宽松预算下两者持平</b>（0.94 = 0.94）；32K 时 truncate 反超（0.88）——原文 &gt; 摘要，证明信息瓶颈在压缩层。</li>
+    <li><b>压缩成本</b>：基线是 USC 的 <b>2.2–7.1 倍</b>（1000 轮 / 16K：239,036 vs 58,706 tokens；32K：175,640 vs 24,790），
+      机制性原因：每段 Episode 独立调用（160 事件/段）且每次请求超限都重新评估。</li>
+  </ul>
+
+  <h3>4.2 多用户一致性（3 用户 × 3 事实）</h3>
+  <table>
+    <tr><th>指标</th><th>baseline</th><th>usc</th></tr>
+    <tr><td>同会话召回</td><td class="num">1.00</td><td class="num">1.00</td></tr>
+    <tr><td>跨会话泄露率</td><td class="num">0.00</td><td class="num">0.00</td></tr>
+    <tr><td>跨会话明确拒答率</td><td class="num">0.67</td><td class="num">1.00</td></tr>
+    <tr><td>人格标记命中</td><td class="num">0.67</td><td class="num">1.00</td></tr>
+  </table>
+  <p>两设计均<b>零泄露</b>（投影过滤 vs 结构性隔离等效有效）；差异在「明确拒答」——基线 2/6 次跨会话提问答出了<b>本会话自己的值</b>，USC 6/6 明确说「不知道」。</p>
+
+  <h3>4.3 Quest Context：三条布局对照</h3>
+  <table>
+    <tr><th>设计</th><th>短场景 r1/r2（9 用例）</th><th>长场景（320 噪声，regraded）</th><th>长场景平均上下文</th><th>输入 tokens</th></tr>
+    <tr><td><code>ledger_projection</code></td><td class="num">1.00 / 0.89 → 0.94</td><td class="num">0.38</td><td class="num">23,067</td><td class="num">267,174</td></tr>
+    <tr><td><code>task_room_usc</code></td><td class="num">0.89 / 0.89 → 0.89</td><td class="num">0.62</td><td class="num">12,321</td><td class="num">156,923</td></tr>
+    <tr><td><code>formatted_llm</code></td><td class="num">0.89 / 0.78 → 0.83</td><td class="num">0.77</td><td class="num">17,365</td><td class="num">248,648</td></tr>
+  </table>
+  <p>长场景分类通过率（regraded）：</p>
+  <table>
+    <tr><th>设计</th><th>fact_recall</th><th>private_boundary</th><th>instruction</th><th>dispatch</th></tr>
+    <tr><td><code>ledger_projection</code></td><td class="num">0.25</td><td class="num">0.00</td><td class="num">0.67</td><td class="num">0.50</td></tr>
+    <tr><td><code>task_room_usc</code></td><td class="num">1.00</td><td class="num">0.50</td><td class="num">0.67</td><td class="num">0.25</td></tr>
+    <tr><td><code>formatted_llm</code></td><td class="num">1.00</td><td class="num">1.00</td><td class="num">0.67</td><td class="num">0.50</td></tr>
+  </table>
+  <ul>
+    <li><b>短场景（无噪声）三者持平</b>：资料直接可见时差异全部来自输出协议随机性（缺闭合标签、误用 send），不来自布局。</li>
+    <li><b>长场景拉开差距</b>：<code>formatted_llm</code> 0.77 &gt; <code>task_room_usc</code> 0.62 &gt; <code>ledger_projection</code> 0.38。</li>
+    <li><b>Ledger 隐私边界在长历史下崩溃（0.00）</b>：模型把当前私聊回复误当成跨会话动作向当前目标调 <code>send</code>；
+      formatted 的边界 1.00——角色头随每条记录内联，不依赖投影正确性。</li>
+    <li><b>task_room 是折中</b>：输入最小（12.3K）、基础召回稳定（1.00），但复杂调度不稳（dispatch 0.25）。</li>
+    <li><b>共同弱点</b>：<code>delegate_worker</code> prompt 三要素（SKILL 路径/目标群/report_task）三个设计都栽（instruction 0.67）；
+      输出协议随机出错是所有设计的方差来源——生产 recover/重写路径必不可少。</li>
+  </ul>
+
+  <h3>4.4 稳定性（压缩层故障率）</h3>
+  <table>
+    <tr><th>设计</th><th>故障模式</th><th>发生次数</th></tr>
+    <tr><td>baseline（修复后）</td><td>Episode 摘要返回空 → 压缩中断、该 repeat 召回崩塌</td><td class="num">600 轮 repeat0（early/mid 归零）；1000 轮多次，靠重试降级</td></tr>
+    <tr><td>usc</td><td>摘要合并返回空 → 回收停止（窗口超预算但<b>不回丢数据</b>）</td><td class="num">少量（重试 2 次后极罕见）</td></tr>
+    <tr><td>truncate</td><td>无 LLM 依赖</td><td class="num">0</td></tr>
+  </table>
+  <div class="card warn">
+    <span class="t">关键发现：修复前生产压缩端到端不可用</span>
+    F2 修复前（Episode 摘要 <code>max_tokens=500</code>），推理模型把输出预算全部消耗在思考上，
+    摘要 <b>100% 返回空</b>——本实验最初的完整运行全部 RecursionError/空摘要（如实记录在 git 历史）。
+    即「当前生产代码在推理型模型下端到端不可用，Episode 压缩从未成功过」，这是比任何性能差距都严重的发现。
+  </div>
+</section>
+
+<!-- ================= 5 结论 ================= -->
+<section id="conclusion">
+  <h2>5. 综合对比结论</h2>
+
+  <div class="card ok">
+    <span class="t">结论一：两个独立实验收敛于同一判断——复杂度与收益不匹配</span>
+    USC 基准（单会话超长历史）与 Quest 实验（多角色长噪声）用完全不同的场景和实验设计，
+    各自独立地证明：<b>复杂投影机制的信息瓶颈不在元数据完备性，而在压缩层提示词、预算粒度与稳定性</b>。
+    Ledger 投影 ≈2300 行 vs USC ≈300 行；成本 2–7 倍；且在基线自身的边界预算上（8K/1000 轮）和长噪声下
+    （boundary 0.00）出现结构性失败。设计文档「有界投影不得伪装成完整覆盖」的红线被 <code>build_life_stream</code>
+    的静默丢 Episode 行为实际违反——模型完全不知道更早历史存在过。
+  </div>
+
+  <div class="card ok">
+    <span class="t">结论二：后端控制面不可省，且是两者共识</span>
+    Quest 设计稿的六字段（task_ref / source / target / visibility / dedupe+status / artifact_ref）与
+    USC 建议保留的「TO_SELF/TO_USER 协议、inner journal、status_update、staging 语义」同属一类：
+    <b>身份、可见性过滤、目标校验、幂等、真实回执必须由服务端强制</b>，实验证明模型在长历史下对此不可靠
+    （ledger 边界崩溃、send 误用、fan-out 失配均源于把控制面交给模型）。
+  </div>
+
+  <div class="card ok">
+    <span class="t">结论三：模型面对的布局应该极简，两个设计给出同族答案</span>
+    USC 的「一条摘要 + 有界窗口」与 Quest 的「单窗口 + 每行内联 <code>&lt;ROLE_RECORD&gt;</code> 角色头」是同族方案：
+    都是<b>单一序列、行内结构化、无嵌套实体</b>。差异只在回收方式（写入时串行合并 vs 不回收/提示词承载）。
+    Quest 明确建议「Room/投影不应成为模型必须理解的结构」；USC 的串行累积摘要恰好弥补 formatted 方案缺回收的短板。
+  </div>
+
+  <div class="card">
+    <span class="t">结论四：分歧点与判据</span>
+    唯一实质分歧是 <b>Ledger 的去留</b>：USC 主张上下文路径完全不读 Ledger（降级为审计）；
+    Quest 主张 Ledger 保留审计/恢复价值但模型布局改 formatted。判据（尚未实验）：
+    <code>memory_search</code> 与 Episode 的检索断层、恢复重建、以及跨会话溯源审计在生产中的真实价值。
+    两个方案都不否认 Ledger 的审计价值，分歧只是「模型输入路径」是否还走投影。
+  </div>
+
+  <div class="card note">
+    <span class="t">结论五：实验自身暴露的生产缺陷清单（与设计路线无关，均应修复）</span>
+    ① Episode 摘要 max_tokens 不足（F2，已修于实验分支，未合并）；
+    ② Episode 静默丢弃无 omission 标记（§5.1）；
+    ③ 请求时压缩不稳定（空摘要 → 压缩中断）；
+    ④ <code>memory_search</code> 与 Episode/工具结果互不可见（implementation-guide §9-2）；
+    ⑤ messages 双写与「只读兼容」宣称矛盾（implementation-guide §9-1）；
+    ⑥ delegate prompt 三要素缺失是三个设计的共同短板（L1 规则层可修）。
+  </div>
+</section>
+
+<!-- ================= 6 生产 ================= -->
+<section id="production">
+  <h2>6. 生产影响与修复清单</h2>
+
+  <h3>6.1 已进入生产（context-integrity-v2 → main @ 732cd9e）</h3>
+  <table>
+    <tr><th>能力</th><th>说明</th></tr>
+    <tr><td>Action Ledger（actions 表）</td><td>真实工具/发送结果入账，参数脱敏 + 结果截断；与 events 双份审计</td></tr>
+    <tr><td>取消安全暂存写入</td><td>memory_save / self_note 先 <code>staged</code>，cleanup 在 shield 下恰好提交一次</td></tr>
+    <tr><td>请求级 token 感知压缩</td><td>0.8 触发 / 0.5 目标；工具循环中绝不压缩当前轮；<code>ContextBudgetError</code> 边界（F1 见下）</td></tr>
+    <tr><td>图片进常规 pipeline</td><td>合成输入 + Media Ledger 登记；vision provider（openai-compatible / volcengine-ocr）</td></tr>
+    <tr><td>可信摘要边界与干净恢复</td><td>legacy 覆盖视为不可信；Ledger 会话启动恢复只建空 window</td></tr>
+    <tr><td>发送诚实性</td><td>HTTP 200 + <code>status=="ok"</code> 才算成功；失败记录不消失</td></tr>
+    <tr><td>全局 Event Ledger + 身份稳定</td><td>PR #13/#14：unified life stream、稳定 actor 身份、ingress</td></tr>
+  </table>
+
+  <h3>6.2 实验分支持有、尚未合并（全部在 experiment/context-v2 及其衍生）</h3>
+  <table>
+    <tr><th>项</th><th>内容</th><th>优先级</th></tr>
+    <tr><td><span class="pill r">F1</span> 上下文超限诚实失败</td><td><code>_build_context</code> 超限 raise ContextBudgetError，不再带病发送超限请求</td><td>高</td></tr>
+    <tr><td><span class="pill r">F2</span> 摘要 max_tokens 提升 + 空内容重试</td><td>Episode 500→4000/8000；修复推理模型下压缩 100% 失效</td><td>高（无它压缩不可用）</td></tr>
+    <tr><td><span class="pill r">F3</span> 消息/合并摘要 max_tokens + 死代码清理</td><td>150/300 → 1000/2000；删 <code>_recycle_window_if_needed</code></td><td>中</td></tr>
+    <tr><td>跨会话 send 逻辑分组</td><td>outbound 使用目标会话专属逻辑 pipeline 分组，源会话仅作溯源</td><td>中（行为语义修复）</td></tr>
+    <tr><td>Episode 静默丢弃修复</td><td>预算选择丢弃最老 Episode 时必须注入 omission 标记（铁律 14 实例）</td><td>高（若保留基线路径）</td></tr>
+    <tr><td>USC 实现（context_v2.py）</td><td>可作试点后端或迁移参考实现，≈300 行</td><td>决策后</td></tr>
+    <tr><td>Quest 框架修复</td><td>500/429 重试、max_tokens 4000、send <code>artifact</code> 参数、判定器对齐 recover</td><td>中（artifact 是 send 必要补丁）</td></tr>
+  </table>
+</section>
+
+<!-- ================= 7 下一步 ================= -->
+<section id="next">
+  <h2>7. 待办与下一步</h2>
+  <div class="flow">
+    <div class="node rd"><b>合并 F1/F2/F3</b><span class="en">无论选哪条路线都是生产 bug 修复</span></div>
+    <div class="arrow"></div>
+    <div class="node hl"><b>修复静默丢 Episode</b><span class="en">omission 标记贯通（铁律 14）</span></div>
+    <div class="arrow"></div>
+    <div class="node am"><b>打通 memory_search</b><span class="en">FTS 覆盖 Episode/工具结果 或 检索层换数据源</span></div>
+    <div class="arrow"></div>
+    <div class="node cy"><b>决策 L2 布局</b><span class="en">USC 摘要+窗口 vs formatted 单窗口（同族，可试点）</span></div>
+    <div class="arrow"></div>
+    <div class="node gr"><b>补回收对照实验</b><span class="en">Quest 长场景 + 压缩/recover（设计稿 §9 实验 3）</span></div>
+  </div>
+  <table>
+    <tr><th>#</th><th>行动</th><th>依据</th></tr>
+    <tr><td>1</td><td>把 experiment/context-v2 的 F1/F2/F3 与跨会话 send 分组合入 main（先于任何架构决策）</td><td>§5 结论五；F2 修复前生产压缩端到端不可用</td></tr>
+    <tr><td>2</td><td>为 Episode 预算选择补齐 omission 标记，或在选择前强制保留最老 Episode</td><td>§5.1；铁律 14 明确禁止「分页上限伪装完整覆盖」</td></tr>
+    <tr><td>3</td><td>打通 memory_search 与 Episode 的检索断层（对「个人信息同步」主线是直接伤害）</td><td>implementation-guide §9-2</td></tr>
+    <tr><td>4</td><td>以 USC（写入时回收）或 formatted（行内角色头）为蓝本做 L2 试点：新会话走新后端、旧会话走投影，2–4 周对比</td><td>§5 结论三；USC 报告 §7 迁移路径 2/3</td></tr>
+    <tr><td>5</td><td>Quest 补做带回收/恢复的长场景实验（当前长场景不做压缩），并覆盖多模型方差</td><td>quest-context-results.md §5 局限</td></tr>
+    <tr><td>6</td><td>L1 稳定规则明确 delegate 三要素（SKILL 路径 / 目标群 / report_task），修三个设计的共同短板</td><td>quest-context-results.md §4 修正 5</td></tr>
+    <tr><td>7</td><td>输出协议随机性依赖生产 recover 路径——维持有界重写与扁平文本门禁，不因实验方差改协议</td><td>两实验一致结论</td></tr>
+  </table>
+</section>
+
+<!-- ================= 8 术语 ================= -->
+<section id="glossary">
+  <h2>8. 术语对照表（实验链新增专有名词）</h2>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">USC / Unified Simple Context</span><span class="cn">统一简简单上下文（实验方案）</span></summary>
+    <div class="body">
+      experiment/context-v2 提出的激进简化：每会话仅「一条累积摘要 + 一个有界原始回合窗口」，
+      写入时用「旧摘要 + 新片段 → 新摘要」单次 LLM 合并回收；摘要强制「用户事实清单」段落；
+      隐私靠结构性会话隔离。实现约 300 行（<code>src/mutsumi_sync/context_v2.py</code>）。
+    </div>
+    <div class="loc">src/mutsumi_sync/context_v2.py · docs/experiments/context-v2-comparison.md §3.1</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Life Stream / Episode / Frontier</span><span class="cn">生命流 / 剧集 / 压缩前沿（基线机制）</span></summary>
+    <div class="body">
+      build_life_stream（1124 行）把 Event Ledger 投影为 provider 原生消息序列：audience 过滤、
+      Episode 逐条验证、原生工具回合重建、omission 标记、token 预算选择。Episode 是带精确
+      first/last sequence 覆盖的叙述压缩；Frontier 保证连续覆盖才推进。USC 基准发现其预算选择会
+      <b>静默丢弃最老 Episode</b>（无标记），且每次请求 N+1 验证查询。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py · episodes.py</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">ledger_projection / task_room_usc / formatted_llm</span><span class="cn">三条实验布局路线</span></summary>
+    <div class="body">
+      Quest 对照的三条路线：① <code>ledger_projection</code>＝现有 audience 过滤投影管道；
+      ② <code>task_room_usc</code>＝共享事项记忆 + 当前 actor 私人透镜（对应设计稿方案 B 变体）；
+      ③ <code>formatted_llm</code>＝把所有角色记录放进一个窗口、每行内联
+      <code>&lt;ROLE_RECORD scope=... actor=...&gt;</code> 角色头（用户方案 C）。
+      长场景通过率 0.38 / 0.62 / 0.77。
+    </div>
+    <div class="loc">experiments/context_v3/* · docs/experiments/context-v3-results.html</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">ContextBudgetError（F1）</span><span class="cn">上下文预算诚实失败</span></summary>
+    <div class="body">
+      <code>_build_context</code> 估计超限时抛出的受控异常（此前只打日志仍发送超限请求）。
+      实验分支实现；属于应合入生产的三项 major 修复之一。
+    </div>
+    <div class="loc">src/mutsumi_sync/pipeline.py（experiment/context-v2）· context-v2-comparison.md §2.2</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">F2 / max_tokens 摘要失效</span><span class="cn">推理模型吞掉输出预算</span></summary>
+    <div class="body">
+      推理型模型（DeepSeek reasoning）下 <code>max_tokens=500</code> 的摘要调用把预算全花在思考上，
+      压缩 100% 返回空摘要——修复前生产 Episode 压缩端到端不可用。修复：500→4000/8000 + 空内容重试。
+    </div>
+    <div class="loc">context-v2-comparison.md §2.2 / §4.4</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Ommission Marker（omitted-before）</span><span class="cn">历史遗漏标记</span></summary>
+    <div class="body">
+      事件分页/预算导致更早历史未进入投影时，Life Stream 头部注入
+      <code>&lt;historical_context_omitted&gt;</code> 与 <code>&lt;before_sequence&gt;</code>，明示存在遗漏。
+      基线的 Episode 预算选择<b>没有</b>使用它（被丢弃的最老 Episode 不产生警告）——违反铁律 14 的实例。
+    </div>
+    <div class="loc">src/mutsumi_sync/memory/projection.py:26-31 · context-v2-comparison.md §5.1</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">send.artifact / artifact_ref</span><span class="cn">产物路径参数</span></summary>
+    <div class="body">
+      Quest 实验补丁：send 按平台给定路径直接读文件发送，模型不复制文件内容——
+      否则模型在「有路径无内容」时保守选择重新委派而非发送（formatted 的 publish_exercise 失败模式）。
+    </div>
+    <div class="loc">experiments/context_v3（send artifact 参数）· quest-context-results.md §4 修正 3</div>
+  </details></span>
+
+  <span class="glossary-term"><details>
+    <summary><span class="en">Memory Pressure Bench</span><span class="cn">记忆压力测试</span></summary>
+    <div class="body">
+      Live Lab 的基准工具：锚定事实（4 条）埋在噪声洪水（可压缩填充文本）中，逐轮追加验证
+      长轮次下事实能否存活——USC 召回基准（8 事实 × 3 深度）的前身思路。
+    </div>
+    <div class="loc">codex/live-lab-prompt-bench · src/mutsumi_sync/lab/memory_bench.py</div>
+  </details></span>
+</section>
+
+<!-- ================= 9 索引 ================= -->
+<section id="index">
+  <h2>9. 代码与文档索引</h2>
+  <table>
+    <tr><th>主题</th><th>位置（分支）</th></tr>
+    <tr><td>生产基线实况（术语手册 HTML）</td><td class="file">docs/implementation-guide.html（experiment/context-v2 / codex/context-v3-experiment）</td></tr>
+    <tr><td>USC 对比报告（论文风格）</td><td class="file">docs/experiments/context-v2-comparison.md（experiment/context-v2）</td></tr>
+    <tr><td>USC 实现</td><td class="file">src/mutsumi_sync/context_v2.py（experiment/context-v2）</td></tr>
+    <tr><td>USC 实验框架与结果（18 个 JSON）</td><td class="file">experiments/context_v2/（run_recall.py · run_consistency.py · baseline_ctx.py · results/）</td></tr>
+    <tr><td>Quest 设计探索（方案 A/B/C + 推荐 B）</td><td class="file">docs/quest-context-design.html（codex/context-v3-experiment）</td></tr>
+    <tr><td>Quest 实验方法与四路线</td><td class="file">docs/experiments/context-v3-experiment.html</td></tr>
+    <tr><td>Quest 结果可视化（首轮）</td><td class="file">docs/experiments/context-v3-results.html</td></tr>
+    <tr><td>Quest regraded 汇总</td><td class="file">docs/experiments/quest-context-results.md</td></tr>
+    <tr><td>Quest 实验框架与原始结果</td><td class="file">experiments/context_v3/（run.py · long_run.py · results/deepseek_full_regraded.json）</td></tr>
+    <tr><td>Live Lab 工具</td><td class="file">src/mutsumi_sync/lab/ · tui/lab.py · tests/test_lab_*.py（codex/live-lab-prompt-bench）</td></tr>
+    <tr><td>Context Integrity V2 计划</td><td class="file">docs/plans/2026-07-11-context-integrity-v2.md（已合并入 main）</td></tr>
+    <tr><td>真实模型实验（规则打分，早期）</td><td class="file">experiments/context_lab.py（experiment/context-v2）</td></tr>
+    <tr><td>实验用例技能</td><td class="file">skills/nature-daily-cet4/（BOT.md · SKILL.md）</td></tr>
+  </table>
+</section>
+
+<footer>
+  本文档汇总 main（732cd9e）之后四条实验分支的进度与报告；数据以各分支原始报告为准，
+  引用的行数与数值可能随后续提交变化。生成于 2026-08-07；后续实验更新时请同步修订本文。
+</footer>
+
+</main>
+</body>
+</html>

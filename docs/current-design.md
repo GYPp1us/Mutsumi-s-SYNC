@@ -4,6 +4,10 @@ This document is the current design baseline for v3. `bottle/docs/` records the
 design history; when it conflicts with this document, the implementation tests,
 or `README.md`, this document and the tests take precedence.
 
+The independent [conversation and background-work prototype](prototype-conversation-background-work.md), started with `python -m src.mutsumi_sync.prototype --demo`, experiments with short chat requests, durable background jobs and message lists. It is text-only, uses a separate database and terminal sender, and does not change the production runtime semantics documented below. Its recent per-conversation context does not implement the production global projection or summary pipeline.
+
+The [repository cleanup and experiment handoff report](repository-cleanup-and-experiment-plan-2026-09-08.md) lists historical design records, archived generated data, branch/worktree status, and the next experiments for autonomous orchestration. It is a design and maintenance note, not a replacement for this runtime baseline.
+
 ## 1. Runtime Boundaries
 
 - `PipelineScheduler` owns shared dependencies and per-conversation state.
