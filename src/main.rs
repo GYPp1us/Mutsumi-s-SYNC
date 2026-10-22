@@ -1,18 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
-use mutsumi_runtime::{
-    config::Config,
-    executor::Executor,
-    ledger::Ledger,
-    provider::OpenAiCompatible,
-    review::ModelReviewer,
-    routing::{MainModelRouter, QuickReplies},
-    runtime::{Input, Runtime},
-    sender::TerminalSender,
-    tools::ToolRegistry,
-};
-use std::{path::PathBuf, sync::Arc};
-use tokio_util::sync::CancellationToken;
+use mutsumi_runtime::{app, config::Config, runtime::Input};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(about = "V4 Rust orchestration prototype: terminal transport, dedicated SQLite ledger")]
@@ -33,35 +22,13 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Config::load(&args.config)?;
-    let prompts = config.prompts()?;
-    let model = Arc::new(OpenAiCompatible::new(config.provider.clone())?);
-    let ledger = Ledger::open(std::path::Path::new(&config.database)).await?;
-    let cancel = CancellationToken::new();
-    let signal_cancel = cancel.clone();
+    let runtime = app::build(config).await?;
+    let signal_cancel = runtime.executor.cancel.clone();
     let signal = tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
-            signal_cancel.cancel()
+            signal_cancel.cancel();
         }
     });
-    let executor = Executor {
-        ledger,
-        reviewer: Arc::new(ModelReviewer {
-            model: model.clone(),
-            system: prompts.reviewer.clone(),
-        }),
-        sender: Arc::new(TerminalSender(config.directory.clone())),
-        directory: config.directory.clone(),
-        tools: ToolRegistry,
-        cancel,
-    };
-    let runtime = Runtime {
-        quick_replies: QuickReplies::load(std::path::Path::new(&config.quick_replies))?,
-        config,
-        prompts,
-        model,
-        executor,
-        router: Arc::new(MainModelRouter),
-    };
     let started = std::time::Instant::now();
     let outcome = runtime
         .run(Input {
@@ -69,10 +36,14 @@ async fn main() -> Result<()> {
             source_target: args.source,
             actor: args.actor,
             text: args.text,
+            segments: vec![],
         })
         .await;
     signal.abort();
     let _ = signal.await;
+    if let Some(media) = &runtime.executor.tools.media {
+        media.worker.shutdown().await?;
+    }
     let outcome = outcome?;
     eprintln!(
         "{}",

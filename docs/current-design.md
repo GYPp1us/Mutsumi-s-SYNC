@@ -100,4 +100,4 @@ md2svg + resvg 作为独立常驻 worker。复用 Renderer，限制输入、队�
 
 ## 10. 当前交付边界
 
-V3 归档、V4 主线、模块化 Rust 原型与简单真实模型验证已完成。原型使用专用 SQLite、终端发送器和只读时钟工具；Jev 网络适配器、md2svg worker、真实 QQ 发送、并发调度与生产部署仍是后续工作。运行与模块说明见 [Rust 原型](rust-prototype.md)。远端分支已发布，默认分支已切换为 `v4`，详见 [交接文档](v4-handoff-2026-10-18.md)。
+V3 归档、V4 主线、模块化 Rust 原型与简单真实模型验证已完成。原型已有专用 SQLite、终端发送器、只读时钟，以及可选的媒体索引、实际 md2svg/resvg worker 和本地 OneBot outbox。Jev 网络适配器与工作/陪伴基准已编写，Jev 真实调用仍待账号凭据验证。真实 QQ 收发、并发调度与生产部署仍是后续工作。运行与模块说明见 [Rust 原型](rust-prototype.md)，基准定义见 [benchmark v1](../benchmarks/v1/README.md)。远端分支已发布，默认分支为 `v4`，详见 [交接文档](v4-handoff-2026-10-18.md)。

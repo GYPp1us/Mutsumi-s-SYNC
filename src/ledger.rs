@@ -49,7 +49,7 @@ impl Ledger {
             |r| r.get(0),
         )?;
         let empty = app_id == 0 && version == 0 && tables == 0;
-        let supported = app_id == 0x4d535934 && version == 1;
+        let supported = app_id == 0x4d535934 && (1..=2).contains(&version);
         if !empty && !supported {
             bail!("database is not a supported V4 prototype ledger");
         }
@@ -124,7 +124,7 @@ impl Ledger {
     pub async fn revision(&self) -> Result<i64> {
         self.db(|db| {
             Ok(db.query_row(
-                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result')",
+                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result','media_registered')",
                 [],
                 |r| r.get(0),
             )?)
@@ -137,17 +137,44 @@ impl Ledger {
         self.db(move |db| {
             let mut s=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','action_result') ORDER BY seq DESC LIMIT 16")?;
             let rows=s.query_map([session],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            rows.into_iter().rev().map(|(kind,payload)|Ok(json!({"kind":kind,"data":serde_json::from_str::<Value>(&payload)?}))).collect()
+            rows.into_iter().rev().map(|(kind,payload)|{
+                let data:Value=serde_json::from_str(&payload)?;
+                let data=if kind=="inbound"{crate::onebot::public_inbound(data)}else{data};
+                Ok(json!({"kind":kind,"data":data}))
+            }).collect()
         }).await
+    }
+
+    /// Full evidence for one bounded turn; unlike the reviewer window this is not truncated.
+    pub async fn turn_events(&self, session: &str, turn: &str) -> Result<Vec<Value>> {
+        let (session, turn) = (session.to_owned(), turn.to_owned());
+        self.db(move |db| {
+            let rows: Vec<(String, String)> = db
+                .prepare(
+                    "SELECT kind,payload FROM events WHERE session=? AND turn_id=? ORDER BY seq",
+                )?
+                .query_map(params![session, turn], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            rows.into_iter()
+                .map(|(kind, payload)| {
+                    Ok(json!({"kind":kind,"data":serde_json::from_str::<Value>(&payload)?}))
+                })
+                .collect()
+        })
+        .await
     }
 
     pub async fn snapshot(&self, session: &str) -> Result<(i64, Vec<Value>)> {
         let session = session.to_owned();
         self.db(move |db| {
-            let revision=db.query_row("SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result')",[],|r|r.get(0))?;
+            let revision=db.query_row("SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result','media_registered')",[],|r|r.get(0))?;
             let rows:Vec<(String,String)>=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','action_result') ORDER BY seq DESC LIMIT 16")?
                 .query_map([session],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            let facts=rows.into_iter().rev().map(|(kind,p)|Ok(json!({"kind":kind,"data":serde_json::from_str::<Value>(&p)?}))).collect::<Result<_>>()?;
+            let facts=rows.into_iter().rev().map(|(kind,p)|{
+                let data:Value=serde_json::from_str(&p)?;
+                let data=if kind=="inbound"{crate::onebot::public_inbound(data)}else{data};
+                Ok(json!({"kind":kind,"data":data}))
+            }).collect::<Result<_>>()?;
             Ok((revision,facts))
         }).await
     }
@@ -188,7 +215,7 @@ impl Ledger {
         self.db(move |db| {
             let tx = db.transaction()?;
             let current: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result')",
+                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result','media_registered')",
                 [],
                 |r| r.get(0),
             )?;
@@ -273,7 +300,7 @@ impl Ledger {
             for (seq,kind,payload) in rows {
                 history.event_ids.push(seq);let data:Value=serde_json::from_str(&payload)?;
                 match kind.as_str() {
-                    "inbound" => history.messages.push(json!({"role":"user","content":data.to_string()})),
+                    "inbound" => history.messages.push(json!({"role":"user","content":crate::onebot::public_inbound(data).to_string()})),
                     "action_result" => history.messages.push(json!({"role":"user","content":json!({"platform_observation":"recovered_action_result","data":data}).to_string()})),
                     "model_round" => {
                         let unfinished:Option<String>=db.query_row("SELECT assistant FROM rounds WHERE id=? AND finished=0",[data["round_id"].as_str().unwrap_or("")],|r|r.get(0)).optional()?;
@@ -316,5 +343,37 @@ impl Ledger {
             if let Some(id)=round_id {tx.execute("UPDATE rounds SET finished=1 WHERE id=?",[id])?;}
             tx.commit()?;Ok(())
         }).await
+    }
+
+    pub async fn put_media(&self, record: Value) -> Result<()> {
+        self.db(move|db|{
+            let id=record["id"].as_str().context("missing media id")?;
+            let tx=db.transaction()?;tx.execute("INSERT INTO media VALUES(?,?)",params![id,record.to_string()])?;
+            tx.execute("INSERT INTO events(session,turn_id,kind,payload) VALUES('media_catalog','registration','media_registered',?)",[record.to_string()])?;
+            tx.commit()?;Ok(())
+        }).await
+    }
+    pub async fn get_media(&self, id: &str) -> Result<Option<Value>> {
+        let id = id.to_owned();
+        self.db(move |db| {
+            let record: Option<String> = db
+                .query_row("SELECT record FROM media WHERE id=?", [id], |r| r.get(0))
+                .optional()?;
+            Ok(record.map(|s| serde_json::from_str(&s)).transpose()?)
+        })
+        .await
+    }
+    pub async fn list_media(&self) -> Result<Vec<Value>> {
+        self.db(|db| {
+            let records: Vec<String> = db
+                .prepare("SELECT record FROM media ORDER BY id")?
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            records
+                .into_iter()
+                .map(|s| Ok(serde_json::from_str(&s)?))
+                .collect()
+        })
+        .await
     }
 }

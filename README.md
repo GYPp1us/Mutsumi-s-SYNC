@@ -24,7 +24,7 @@ V4 是基于 NapCat 的个人社交 Agent 重构主线，目标运行时为 Rust
 
 从仓库根目录运行 `cargo test --locked --all-targets`。设置 `MUTSUMI_API_KEY` 后可用 `cargo run --locked -- --text "请查询现在时间"`。
 
-运行、模块边界、编辑入口和已知限制见 [原型说明](docs/rust-prototype.md)，真实模型结果见 [验证记录](docs/rust-prototype-validation-2026-10-18.md)。
+运行、模块边界、编辑入口和已知限制见 [原型说明](docs/rust-prototype.md)，初版真实模型结果见 [验证记录](docs/rust-prototype-validation-2026-10-18.md)。媒体链路已有实际 md2svg/resvg worker、GIF/图片索引和本地 OneBot outbox；[工作/陪伴基准](benchmarks/v1/README.md) 分别验证路由与媒体指令遵循。Jev 适配器仍待真实凭据验证，outbox 不代表 QQ 送达。
 
 ## V3 存档
 
@@ -33,3 +33,5 @@ V4 是基于 NapCat 的个人社交 Agent 重构主线，目标运行时为 Rust
 V3 冻结分支为 `archive/v3`，快照标签为 `archive/v3-final-2026-10-18`。独立实验的标签与本地恢复包见 [归档索引](archive/README.md)。
 
 HZ 的 V3 服务已经归档并停止、禁用自启。新版本部署须在实现与验收完成后另行执行。
+
+最新本地媒体验证与架构结论见 [2026-10-22 pilot](docs/benchmark-pilot-2026-10-22.md)；其中明确区分已测媒体结果和待测 Jev。

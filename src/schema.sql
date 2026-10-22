@@ -2,7 +2,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = FULL;
 BEGIN;
 PRAGMA application_id = 0x4d535934;
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 CREATE TABLE IF NOT EXISTS events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,5 +43,9 @@ CREATE TABLE IF NOT EXISTS projected_events (
     session TEXT NOT NULL,
     seq INTEGER NOT NULL,
     PRIMARY KEY(session, seq)
+);
+CREATE TABLE IF NOT EXISTS media (
+    id TEXT PRIMARY KEY,
+    record TEXT NOT NULL
 );
 COMMIT;

@@ -1,0 +1,23 @@
+version: 1
+templates:
+  - id: morning
+    category: greeting
+    enabled: true
+    description: 当前只是简单早安问候，没有任务、问题或具体困扰。
+    target_binding: source_conversation
+    messages:
+      - segments: [{type: text, text: "早安呀。"}]
+  - id: night
+    category: greeting
+    enabled: true
+    description: 当前只是简单晚安道别，没有附加任务、问题或具体困扰。
+    target_binding: source_conversation
+    messages:
+      - segments: [{type: text, text: "晚安，好好休息。"}]
+  - id: sticker_chain
+    category: companionship
+    enabled: true
+    description: 已确认是无意义表情接龙，当前只接一个通用表情即可，没有指定素材或其他任务。
+    target_binding: source_conversation
+    messages:
+      - segments: [{type: face, face_id: 14}]

@@ -16,6 +16,7 @@ pub struct Input {
     pub source_target: String,
     pub actor: String,
     pub text: String,
+    pub segments: Vec<crate::onebot::InboundSegment>,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,7 +59,7 @@ impl Runtime {
         self.executor.ledger.event(&input.session,&turn,"inbound",json!({
             "actor":input.actor,"source_target":input.source_target,"text":input.text,
             "time":chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap()).to_rfc3339(),
-            "origin":"terminal_ingress"
+            "origin":"terminal_ingress","segments":input.segments
         })).await?;
         let mut history = self.executor.ledger.history(&input.session).await?;
         self.executor
@@ -81,9 +82,24 @@ impl Runtime {
             directory: &self.config.directory,
             recent_facts: self.executor.ledger.facts(&input.session).await?,
         };
-        let route = tokio::select! {
-            _=self.executor.cancel.cancelled()=>Route::Silent,
-            result=self.router.route(&route_context)=>result.unwrap_or(Route::Generate),
+        let route_result = tokio::select! {
+            _=self.executor.cancel.cancelled()=>Ok(Route::Silent),
+            result=self.router.route(&route_context)=>result,
+        };
+        let route = match route_result {
+            Ok(route) => route,
+            Err(error) => {
+                self.executor
+                    .ledger
+                    .event(
+                        &input.session,
+                        &turn,
+                        "routing_error",
+                        json!({"reason":error.to_string(),"fallback":"generate"}),
+                    )
+                    .await?;
+                Route::Generate
+            }
         };
         let template = match route {
             Route::Template(id) => self

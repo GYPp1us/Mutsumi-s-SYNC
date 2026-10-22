@@ -31,7 +31,7 @@ async fn real_model_terminal_orchestration() -> Result<()> {
         }),
         sender: Arc::new(TerminalSender(config.directory.clone())),
         directory: config.directory.clone(),
-        tools: ToolRegistry,
+        tools: ToolRegistry::default(),
         cancel: CancellationToken::new(),
     };
     let runtime = Runtime {
@@ -72,6 +72,7 @@ async fn real_model_terminal_orchestration() -> Result<()> {
                 source_target: "owner_private".into(),
                 actor: "local_owner".into(),
                 text: text.into(),
+                segments: vec![],
             })
             .await?;
         report.push(

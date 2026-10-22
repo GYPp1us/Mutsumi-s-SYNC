@@ -1,0 +1,19 @@
+[package]
+name = "mutsumi-md-worker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+# A separate build keeps Typst and rendering dependencies out of the agent process.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+md2svg = { git = "https://github.com/GYPp1us/md2svg", rev = "91cf197ea5fb082dceeb09abc746712c9b670eca" }
+resvg = "=0.47.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+debug = 0

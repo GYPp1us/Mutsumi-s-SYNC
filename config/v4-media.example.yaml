@@ -1,0 +1,25 @@
+# All paths resolve relative to the repository root.
+provider:
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: MUTSUMI_API_KEY
+  timeout_seconds: 90
+  max_tokens: 2048
+database: data/v4-media/events.sqlite3
+prompts: system-prompts.yaml
+quick_replies: quick-replies.yaml
+max_rounds: 8
+max_corrections: 2
+directory:
+  targets:
+    owner_private: {label: 本地主人私聊测试窗, account: terminal_bot, audience: owner, transport: terminal}
+    project_group: {label: 本地项目群测试窗, account: terminal_bot, audience: project_members, transport: terminal}
+  media: {}
+  face_ids: [14, 66]
+media:
+  root: data/v4-media
+  worker_executable: workers/md2svg/target/debug/mutsumi-md-worker.exe
+  worker_timeout_seconds: 60
+  outbox: data/v4-media/outbox
+# Optional Jev configuration is documented in config/jev.example.yaml.
+# It has not been validated against a real account yet.

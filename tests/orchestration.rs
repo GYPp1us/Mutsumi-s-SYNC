@@ -114,6 +114,7 @@ fn input(text: &str) -> Input {
         source_target: "owner_private".into(),
         actor: "test_owner".into(),
         text: text.into(),
+        segments: vec![],
     }
 }
 
@@ -134,7 +135,7 @@ async fn fixture(
         reviewer: reviewer.clone(),
         sender,
         directory: config.directory.clone(),
-        tools: ToolRegistry,
+        tools: ToolRegistry::default(),
         cancel: CancellationToken::new(),
     };
     let runtime = Runtime {
@@ -410,7 +411,7 @@ async fn reviewer_gets_only_independent_evidence_and_cannot_execute_tools() {
         actor: "owner",
         user_request: "查时间",
         directory: &config.directory,
-        tool_schema: ToolRegistry.schemas().into_iter().next(),
+        tool_schema: ToolRegistry::default().schemas().into_iter().next(),
         observed_facts: vec![],
         proposed_action: &action,
     };

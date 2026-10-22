@@ -23,6 +23,19 @@ pub struct Config {
     pub max_rounds: usize,
     pub max_corrections: usize,
     pub directory: Directory,
+    #[serde(default)]
+    pub jev: Option<crate::jev::JevConfig>,
+    #[serde(default)]
+    pub media: Option<MediaConfig>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaConfig {
+    pub root: String,
+    pub worker_executable: String,
+    pub worker_timeout_seconds: u64,
+    pub outbox: String,
 }
 
 #[derive(Clone, Deserialize)]

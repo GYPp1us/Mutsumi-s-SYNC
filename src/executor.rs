@@ -39,8 +39,24 @@ impl Executor {
         context: &ActionContext<'_>,
         action: Action,
     ) -> Result<Execution> {
+        let directory = if let Some(media) = &self.tools.media {
+            media.directory(&self.directory, context.source).await?
+        } else {
+            self.directory.clone()
+        };
         let validation = match &action {
-            Action::Send { message } => validate_message(message, &self.directory),
+            Action::Send { message } => {
+                let structural = validate_message(message, &directory);
+                if structural.is_ok() {
+                    if let Some(media) = &self.tools.media {
+                        media.validate_send(message).await
+                    } else {
+                        structural
+                    }
+                } else {
+                    structural
+                }
+            }
             Action::Tool { name, arguments } => self.tools.validate(name, arguments),
         };
         if let Err(e) = validation {
@@ -64,7 +80,7 @@ impl Executor {
             source_target: context.source,
             actor: context.actor,
             user_request: context.request,
-            directory: &self.directory,
+            directory: &directory,
             tool_schema: match &action {
                 Action::Tool { name, .. } => self
                     .tools
@@ -124,7 +140,9 @@ impl Executor {
                 .send(id, message)
                 .await
                 .and_then(|r| Ok(serde_json::to_value(r)?)),
-            Action::Tool { name, arguments } => self.tools.execute(name, arguments).await,
+            Action::Tool { name, arguments } => {
+                self.tools.execute(name, arguments, context.source).await
+            }
         };
         let (status, result) = match result {
             Ok(result) => ("succeeded", result),
@@ -133,7 +151,7 @@ impl Executor {
                 "unknown",
                 json!({"reason":"transport did not return a verified receipt; do not replay"}),
             ),
-            Err(_) => ("failed", json!({"reason":"tool execution failed"})),
+            Err(error) => ("failed", json!({"reason":error.to_string()})),
         };
         let event_id = self.ledger.finish(id, status, result.clone()).await?;
         Ok(Execution {

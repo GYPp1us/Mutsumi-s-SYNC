@@ -1,0 +1,8 @@
+base_url: https://api.typesafe.ai
+model: jev-1.13.0
+api_key_env: TYPESAFE_API_KEY
+timeout_seconds: 90
+min_probability: 0.95
+min_confidence: 0.80
+long_context: false
+prompts: jev-prompts.yaml

@@ -1,0 +1,111 @@
+{
+  "date": "2026-10-22",
+  "run": "media-pilot-2026-10-22",
+  "dataset": {
+    "media_cases": 16,
+    "route_cases": 24,
+    "sha256": {
+      "media_cases.json": "ec380904a0eda6c1444c9a541f57bebd6a8fa5c28f2bba395e415545997c2da4",
+      "quick-replies.yaml": "d440caa0f10c75a0a1d917abd5f7a6962cbc37b6d840e22f44142dfe80f11e72",
+      "route_cases.json": "419fb2e9e3daf5ead3f54b77a9ada47acd01a33c5a0abe7bc3914f6b56b321e7"
+    },
+    "version": "v1"
+  },
+  "system_prompts_sha256": "3cc2db1694434632770706e5213c36a8c73e732c09b168c2a3d3c4e656c81f25",
+  "jev_prompts_sha256": "5a9a8fa3885fad8cd2af263f38531924f97e8a388098a3fac9502b19ae6bd903",
+  "md2svg_commit": "91cf197ea5fb082dceeb09abc746712c9b670eca",
+  "summary": {
+    "groups": [
+      {
+        "attempted": 8,
+        "dimension": "work",
+        "end_to_end_pass": 8,
+        "first_output_conformance": 8,
+        "latency": {
+          "n": 8,
+          "p50_ms": 3830,
+          "p95_ms": 9177
+        },
+        "main_calls": 10,
+        "profile": "compact",
+        "rejected_actions": 0,
+        "review_calls": 12
+      },
+      {
+        "attempted": 8,
+        "dimension": "work",
+        "end_to_end_pass": 8,
+        "first_output_conformance": 8,
+        "latency": {
+          "n": 8,
+          "p50_ms": 4592,
+          "p95_ms": 8141
+        },
+        "main_calls": 10,
+        "profile": "long-middle",
+        "rejected_actions": 0,
+        "review_calls": 12
+      },
+      {
+        "attempted": 8,
+        "dimension": "companionship",
+        "end_to_end_pass": 8,
+        "first_output_conformance": 8,
+        "latency": {
+          "n": 8,
+          "p50_ms": 4931,
+          "p95_ms": 6544
+        },
+        "main_calls": 11,
+        "profile": "compact",
+        "rejected_actions": 0,
+        "review_calls": 12
+      },
+      {
+        "attempted": 8,
+        "dimension": "companionship",
+        "end_to_end_pass": 8,
+        "first_output_conformance": 8,
+        "latency": {
+          "n": 8,
+          "p50_ms": 4661,
+          "p95_ms": 8403
+        },
+        "main_calls": 11,
+        "profile": "long-middle",
+        "rejected_actions": 0,
+        "review_calls": 12
+      }
+    ],
+    "kind": "media-instruction-following",
+    "limitations": [
+      "no QQ connection or delivery verification",
+      "synthetic captions are supplied; no vision accuracy claim",
+      "text-only checks measure protocol, not emotional quality",
+      "single sample per case/profile; variants are correlated",
+      "token usage unavailable in this adapter"
+    ],
+    "model": "deepseek-flash",
+    "review_model": "deepseek-flash",
+    "transport": "local_onebot_outbox"
+  },
+  "total_cases": 32,
+  "total_elapsed_ms": 181827,
+  "main_calls": 42,
+  "review_calls": 48,
+  "jev": {
+    "status": "not_run",
+    "reason": "account and credentials not available"
+  },
+  "early_smoke": {
+    "cases": 4,
+    "end_to_end_pass": 4,
+    "review_calls": 8,
+    "reviewer_incomplete_finish_reason_errors": 1
+  },
+  "limits": [
+    "pilot used synthetic captions and fixture sources",
+    "live pilot preceded transport-source projection redaction; no real credentials or URLs were present in fixture sources",
+    "raw traces remain local and ignored"
+  ]
+}
