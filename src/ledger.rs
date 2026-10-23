@@ -19,6 +19,8 @@ pub struct Ledger {
 pub struct History {
     pub messages: Vec<Value>,
     pub event_ids: Vec<i64>,
+    /// Highest ledger event covered by this projection snapshot.
+    pub through_seq: i64,
 }
 
 impl Ledger {
@@ -49,7 +51,7 @@ impl Ledger {
             |r| r.get(0),
         )?;
         let empty = app_id == 0 && version == 0 && tables == 0;
-        let supported = app_id == 0x4d535934 && (1..=2).contains(&version);
+        let supported = app_id == 0x4d535934 && (1..=3).contains(&version);
         if !empty && !supported {
             bail!("database is not a supported V4 prototype ledger");
         }
@@ -82,6 +84,7 @@ impl Ledger {
             "INSERT INTO events(session,turn_id,kind,payload)
              SELECT e.session,e.turn_id,'turn_end','{\"status\":\"interrupted\"}'
              FROM events e WHERE e.kind='inbound'
+             AND NOT EXISTS(SELECT 1 FROM ingress_ids i WHERE i.seq=e.seq)
              AND NOT EXISTS(SELECT 1 FROM events finished WHERE finished.turn_id=e.turn_id AND finished.kind='turn_end')",
             [],
         )?;
@@ -89,7 +92,7 @@ impl Ledger {
         Ok(())
     }
 
-    async fn db<T: Send + 'static>(
+    pub(crate) async fn db<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
@@ -124,7 +127,7 @@ impl Ledger {
     pub async fn revision(&self) -> Result<i64> {
         self.db(|db| {
             Ok(db.query_row(
-                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result','media_registered')",
+                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed')",
                 [],
                 |r| r.get(0),
             )?)
@@ -135,13 +138,17 @@ impl Ledger {
     pub async fn facts(&self, session: &str) -> Result<Vec<Value>> {
         let session = session.to_owned();
         self.db(move |db| {
-            let mut s=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','action_result') ORDER BY seq DESC LIMIT 16")?;
+            let mut s=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','media_observation','action_result') ORDER BY seq DESC LIMIT 256")?;
             let rows=s.query_map([session],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            rows.into_iter().rev().map(|(kind,payload)|{
+            let mut facts=rows.into_iter().rev().map(|(kind,payload)|{
                 let data:Value=serde_json::from_str(&payload)?;
                 let data=if kind=="inbound"{crate::onebot::public_inbound(data)}else{data};
                 Ok(json!({"kind":kind,"data":data}))
-            }).collect()
+            }).collect::<Result<Vec<_>>>()?;
+            if let Some(profile)=db.query_row("SELECT value FROM cache WHERE namespace='runtime' AND key='profile'",[],|r|r.get::<_,String>(0)).optional()? {
+                facts.insert(0,json!({"kind":"runtime_profile","data":serde_json::from_str::<Value>(&profile)?}));
+            }
+            Ok(facts)
         }).await
     }
 
@@ -167,14 +174,17 @@ impl Ledger {
     pub async fn snapshot(&self, session: &str) -> Result<(i64, Vec<Value>)> {
         let session = session.to_owned();
         self.db(move |db| {
-            let revision=db.query_row("SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result','media_registered')",[],|r|r.get(0))?;
-            let rows:Vec<(String,String)>=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','action_result') ORDER BY seq DESC LIMIT 16")?
+            let revision=db.query_row("SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed')",[],|r|r.get(0))?;
+            let rows:Vec<(String,String)>=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','media_observation','action_result') ORDER BY seq DESC LIMIT 256")?
                 .query_map([session],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            let facts=rows.into_iter().rev().map(|(kind,p)|{
+            let mut facts:Vec<Value>=rows.into_iter().rev().map(|(kind,p)|{
                 let data:Value=serde_json::from_str(&p)?;
                 let data=if kind=="inbound"{crate::onebot::public_inbound(data)}else{data};
                 Ok(json!({"kind":kind,"data":data}))
             }).collect::<Result<_>>()?;
+            if let Some(profile)=db.query_row("SELECT value FROM cache WHERE namespace='runtime' AND key='profile'",[],|r|r.get::<_,String>(0)).optional()? {
+                facts.insert(0,json!({"kind":"runtime_profile","data":serde_json::from_str::<Value>(&profile)?}));
+            }
             Ok((revision,facts))
         }).await
     }
@@ -215,7 +225,7 @@ impl Ledger {
         self.db(move |db| {
             let tx = db.transaction()?;
             let current: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','action_result','media_registered')",
+                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed')",
                 [],
                 |r| r.get(0),
             )?;
@@ -294,13 +304,15 @@ impl Ledger {
         let session = session.to_owned();
         self.db(move |db| {
             let stored:Option<String>=db.query_row("SELECT messages FROM projections WHERE session=?",[&session],|r|r.get(0)).optional()?;
-            let mut history=History {messages:stored.map(|s|serde_json::from_str(&s)).transpose()?.unwrap_or_default(),event_ids:vec![]};
+            let through_seq=db.query_row("SELECT COALESCE(MAX(seq),0) FROM projected_events WHERE session=?",[&session],|r|r.get(0))?;
+            let mut history=History {messages:stored.map(|s|serde_json::from_str(&s)).transpose()?.unwrap_or_default(),event_ids:vec![],through_seq};
             let rows:Vec<(i64,String,String)>=db.prepare("SELECT seq,kind,payload FROM events WHERE session=? AND seq NOT IN (SELECT seq FROM projected_events WHERE session=?) ORDER BY seq")?
                 .query_map(params![session,session],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
             for (seq,kind,payload) in rows {
+                history.through_seq=history.through_seq.max(seq);
                 history.event_ids.push(seq);let data:Value=serde_json::from_str(&payload)?;
                 match kind.as_str() {
-                    "inbound" => history.messages.push(json!({"role":"user","content":crate::onebot::public_inbound(data).to_string()})),
+                    "inbound" | "media_observation" => history.messages.push(json!({"role":"user","content":crate::onebot::public_inbound(data).to_string()})),
                     "action_result" => history.messages.push(json!({"role":"user","content":json!({"platform_observation":"recovered_action_result","data":data}).to_string()})),
                     "model_round" => {
                         let unfinished:Option<String>=db.query_row("SELECT assistant FROM rounds WHERE id=? AND finished=0",[data["round_id"].as_str().unwrap_or("")],|r|r.get(0)).optional()?;

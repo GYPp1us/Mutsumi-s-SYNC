@@ -1,0 +1,28 @@
+provider:
+  base_url: https://api.commandcode.ai/provider/v1
+  model: deepseek/deepseek-v4.1-flash
+  api_key_env: COMMANDCODE_API_KEY
+  timeout_seconds: 180
+  max_tokens: 4096
+  request_options:
+    thinking: {type: disabled}
+database: data/playground/runtime.sqlite3
+prompts: system-prompts.yaml
+profile: benchmarks/v2/profile.yaml
+quick_replies: quick-replies.yaml
+max_rounds: 16
+max_corrections: 3
+capture_context: true
+directory:
+  targets:
+    owner_private: {label: 林·主人私聊, account: sim_account, audience: owner, transport: onebot_simulator}
+    project_group: {label: 项目协作群, account: sim_account, audience: project_members, transport: onebot_simulator}
+    friends_group: {label: 朋友闲聊群, account: sim_account, audience: friends, transport: onebot_simulator}
+    stranger_private: {label: 陌生人咨询, account: sim_account, audience: stranger, transport: onebot_simulator}
+  media: {}
+  face_ids: [14, 66]
+media:
+  root: data/playground/media
+  worker_executable: workers/md2svg/target/debug/mutsumi-md-worker.exe
+  worker_timeout_seconds: 60
+  outbox: data/playground/outbox-unused

@@ -19,7 +19,7 @@
 cargo run --locked --bin benchmark -- inspect
 cargo build --locked --manifest-path workers/md2svg/Cargo.toml -j 2
 
-# 设置 MUTSUMI_API_KEY；实际使用主模型与独立模型审查，会产生费用。
+# 设置 COMMANDCODE_API_KEY；实际使用主模型与独立模型审查，会产生费用。
 cargo run --locked --bin benchmark -- --live --profiles compact,long-middle media
 
 # 设置 TYPESAFE_API_KEY。默认固定 jev-1.13.0，不使用浮动别名。

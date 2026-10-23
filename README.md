@@ -2,7 +2,7 @@
 
 V4 是基于 NapCat 的个人社交 Agent 重构主线，目标运行时为 Rust。模型保留自主交流和工具编排能力，宿主负责来源身份、动作审查、持久化与真实执行结果。
 
-当前状态：`v4` 已成为 GitHub 默认分支，V3 已封存。模块化 Rust 编排原型已可运行，使用真实模型、独立 dry-run、终端发送器和专用 SQLite 事件库；完整 QQ 运行时仍在建设。
+当前状态：`v4` 已成为 GitHub 默认分支，V3 已封存。模块化 Rust 编排原型已可运行，包含真实多模态模型、独立 dry-run、多来源异步调度、SQLite 事件库与本地 HTTP 收发模拟器；完整 QQ 运行时仍在建设。
 
 ## 设计入口
 
@@ -22,7 +22,7 @@ V4 是基于 NapCat 的个人社交 Agent 重构主线，目标运行时为 Rust
 
 ## Rust 原型
 
-从仓库根目录运行 `cargo test --locked --all-targets`。设置 `MUTSUMI_API_KEY` 后可用 `cargo run --locked -- --text "请查询现在时间"`。
+从仓库根目录运行 `cargo test --locked --all-targets`。设置 `COMMANDCODE_API_KEY` 后可用 `cargo run --locked -- --text "请查询现在时间"`；示例统一使用 Command Code 的 DeepSeek V4.1 Flash (latest)。
 
 运行、模块边界、编辑入口和已知限制见 [原型说明](docs/rust-prototype.md)，初版真实模型结果见 [验证记录](docs/rust-prototype-validation-2026-10-18.md)。媒体链路已有实际 md2svg/resvg worker、GIF/图片索引和本地 OneBot outbox；[工作/陪伴基准](benchmarks/v1/README.md) 分别验证路由与媒体指令遵循。Jev 适配器仍待真实凭据验证，outbox 不代表 QQ 送达。
 
@@ -35,3 +35,7 @@ V3 冻结分支为 `archive/v3`，快照标签为 `archive/v3-final-2026-10-18`�
 HZ 的 V3 服务已经归档并停止、禁用自启。新版本部署须在实现与验收完成后另行执行。
 
 最新本地媒体验证与架构结论见 [2026-10-22 pilot](docs/benchmark-pilot-2026-10-22.md)；其中明确区分已测媒体结果和待测 Jev。
+
+复杂上下文与真实图片/GIF 的新入口见 [Playground v2](benchmarks/v2/README.md)：9 个来源并发到达，复用生产编排核，提供可查看完整上下文及实际模拟接收结果的交互报告。旧 v1 仍保留为合成协议回归基准。
+
+本轮实测与保留的失败样本见 [2026-10-23 验证记录](docs/playground-validation-2026-10-23.md)。

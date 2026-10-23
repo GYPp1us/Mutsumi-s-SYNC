@@ -11,6 +11,8 @@ pub struct ProviderConfig {
     pub api_key_env: String,
     pub timeout_seconds: u64,
     pub max_tokens: u32,
+    #[serde(default)]
+    pub request_options: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -27,6 +29,10 @@ pub struct Config {
     pub jev: Option<crate::jev::JevConfig>,
     #[serde(default)]
     pub media: Option<MediaConfig>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub capture_context: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -44,6 +50,10 @@ pub struct Prompts {
     pub persona: String,
     pub runtime: String,
     pub reviewer: String,
+    #[serde(default)]
+    pub vision: String,
+    #[serde(default)]
+    pub evaluator: String,
 }
 
 impl Config {
@@ -64,9 +74,9 @@ impl Config {
                 .directory
                 .targets
                 .values()
-                .any(|t| t.transport != "terminal")
+                .any(|t| !matches!(t.transport.as_str(), "terminal" | "onebot_simulator"))
         {
-            bail!("this prototype requires explicit terminal targets");
+            bail!("this prototype requires explicit terminal or simulator targets");
         }
         Ok(config)
     }

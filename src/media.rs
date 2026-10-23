@@ -213,6 +213,7 @@ impl MediaService {
         let bytes = tokio::fs::read(&artifact.png).await?;
         let targets = BTreeSet::from([source.to_owned(), target.to_owned()])
             .into_iter()
+            .filter(|t| self.targets.contains(t))
             .collect();
         let record = self
             .register(

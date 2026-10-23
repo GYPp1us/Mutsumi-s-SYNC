@@ -40,7 +40,13 @@ impl Executor {
         action: Action,
     ) -> Result<Execution> {
         let directory = if let Some(media) = &self.tools.media {
-            media.directory(&self.directory, context.source).await?
+            let scope = match &action {
+                Action::Send { message } => message.target_ref.as_deref().unwrap_or(context.source),
+                Action::Tool { arguments, .. } => {
+                    arguments["target_ref"].as_str().unwrap_or(context.source)
+                }
+            };
+            media.directory(&self.directory, scope).await?
         } else {
             self.directory.clone()
         };
@@ -92,6 +98,14 @@ impl Executor {
             observed_facts: facts,
             proposed_action: &action,
         };
+        self.ledger
+            .event(
+                context.session,
+                context.turn,
+                "review_started",
+                json!({"action_id":id,"action":action}),
+            )
+            .await?;
         let reviewed = tokio::select! {
             _=self.cancel.cancelled()=>return Ok(Execution {feedback:json!({"status":"cancelled"}),event_id:None}),
             verdict=self.reviewer.review(&evidence)=>verdict,
@@ -134,6 +148,14 @@ impl Executor {
             });
         }
         // Once started, await the adapter and commit its result even if input is cancelled.
+        self.ledger
+            .event(
+                context.session,
+                context.turn,
+                "action_started",
+                json!({"action_id":id,"action":action}),
+            )
+            .await?;
         let result = match &action {
             Action::Send { message } => self
                 .sender

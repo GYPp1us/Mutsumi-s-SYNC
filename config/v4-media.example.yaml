@@ -1,10 +1,12 @@
 # All paths resolve relative to the repository root.
 provider:
-  base_url: https://api.deepseek.com
-  model: deepseek-flash
-  api_key_env: MUTSUMI_API_KEY
+  base_url: https://api.commandcode.ai/provider/v1
+  model: deepseek/deepseek-v4.1-flash
+  api_key_env: COMMANDCODE_API_KEY
   timeout_seconds: 90
-  max_tokens: 2048
+  max_tokens: 4096
+  request_options:
+    thinking: {type: disabled}
 database: data/v4-media/events.sqlite3
 prompts: system-prompts.yaml
 quick_replies: quick-replies.yaml

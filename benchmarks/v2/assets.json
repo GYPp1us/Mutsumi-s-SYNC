@@ -1,0 +1,6 @@
+[
+  {"id":"market_chart","url":"https://upload.wikimedia.org/wikipedia/commons/6/64/DowJones2020crash.png","source":"https://commons.wikimedia.org/wiki/File:DowJones2020crash.png","author":"Renerpho","rights":"CC BY-SA 4.0; original bytes, attribution retained","cache_file":"market-chart.png"},
+  {"id":"fire_meme","url":"https://gunshowcomic.com/comics/20130109.png","source":"https://gunshowcomic.com/648","author":"KC Green","rights":"Copyrighted original comic; private evaluation cache only, do not redistribute","cache_file":"comic.png"},
+  {"id":"typing_gif","url":"https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif","source":"https://giphy.com/gifs/JIX9t2j0ZTN9S","author":"See source GIPHY item","rights":"Third-party GIF; private evaluation cache only, do not redistribute","cache_file":"typing.gif"},
+  {"id":"cat_photo","url":"https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg","source":"https://commons.wikimedia.org/wiki/File:Cat03.jpg","author":"See Wikimedia source attribution","rights":"See source license; private evaluation cache only","cache_file":"photo.jpg"}
+]

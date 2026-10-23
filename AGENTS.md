@@ -28,6 +28,7 @@
 - Rust 入口为 `src/main.rs`，单个主循环为 `src/runtime.rs`；模块边界与命令见 `docs/rust-prototype.md`。
 - Rust 改动运行 `cargo test --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings` 与 `cargo fmt --all -- --check`。真实 API 测试默认忽略，使用 key 的调用必须在用户授权范围内。
 - 不将终端或本地 OneBot outbox 回执声称为 QQ 送达。Jev HTTP 适配器尚待真实凭据验证；默认只有只读 clock，启用媒体模式后另外提供 media_search 与 render_markdown。
+- 多来源与真实媒体验证入口为 `playground`，复用 Runtime/Context/Reviewer/Ledger，只接本地 HTTP 模拟器。示例模型统一为 Command Code 的 `deepseek/deepseek-v4.1-flash`，key 从环境注入，不复制 dsh 凭据到仓库。视觉缓存含原字节哈希、模型与 prompt 版本；本轮待处理范围与完整历史分开，检查点不覆盖未读入站。
 - 代码和测试只围绕本次真实改动增加；离线验证不证明真实模型延迟、角色扮演或语义准确率。
 - V3 行为基准可在 `archive/v3/` 下使用根目录的现有 `.venv` 执行；详见交接文档。
 - 提交消息用中文约定式前缀；不提交 `config.yaml`、`.env`、运行数据、模型原始隐私内容、依赖目录或恢复包。

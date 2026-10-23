@@ -103,6 +103,9 @@ pub fn inbound_text(segments: &[InboundSegment]) -> String {
 
 /// Keep original transport references in the ledger, outside model-facing projections.
 pub fn public_inbound(mut data: Value) -> Value {
+    if let Some(object) = data.as_object_mut() {
+        object.remove("transport");
+    }
     if let Some(segments) = data.get_mut("segments").and_then(Value::as_array_mut) {
         for segment in segments {
             if segment["type"] == "image"

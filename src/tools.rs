@@ -17,7 +17,7 @@ impl ToolRegistry {
         ];
         if self.media.is_some() {
             schemas.extend([
-            json!({"type":"function","function":{"name":"media_search","description":"搜索本会话有权访问的真实媒体引用。query为空可列出可用项，返回media_id、描述和格式，不返回文件路径。按结果选择，不编造ID。","parameters":{"type":"object","properties":{"query":{"type":"string","description":"描述中的关键词，可为空"}},"required":["query"],"additionalProperties":false}}}),
+            json!({"type":"function","function":{"name":"media_search","description":"按真实视觉描述搜索已有媒体。query为空可列出；target_ref明确选择预期听众，只返回该听众有权访问的引用。不会重新识图或发送。","parameters":{"type":"object","properties":{"query":{"type":"string","description":"描述中的关键词，可为空"},"target_ref":{"type":"string"}},"required":["query","target_ref"],"additionalProperties":false}}}),
             json!({"type":"function","function":{"name":"render_markdown","description":"将Markdown、支持的LaTeX与Mermaid在独立md2svg/resvg进程中渲染为实际图片，返回真实media_id；不发送。不能加载外部图片、HTML或本地路径。target_ref明确绑定预期听众，后续发送仍需独立审查。","parameters":{"type":"object","properties":{"markdown":{"type":"string"},"width":{"type":"integer","minimum":256,"maximum":1200},"target_ref":{"type":"string"}},"required":["markdown","width","target_ref"],"additionalProperties":false}}}),
         ]);
         }
@@ -31,7 +31,11 @@ impl ToolRegistry {
             "clock" if map.is_empty() => (),
             "media_search"
                 if self.media.is_some()
-                    && map.len() == 1
+                    && map.len() == 2
+                    && map
+                        .get("target_ref")
+                        .and_then(Value::as_str)
+                        .is_some_and(|t| self.media.as_ref().unwrap().known_target(t))
                     && map
                         .get("query")
                         .and_then(Value::as_str)
@@ -67,7 +71,10 @@ impl ToolRegistry {
                 self.media
                     .as_ref()
                     .unwrap()
-                    .search(arguments["query"].as_str().unwrap(), source_target)
+                    .search(
+                        arguments["query"].as_str().unwrap(),
+                        arguments["target_ref"].as_str().unwrap(),
+                    )
                     .await
             }
             "render_markdown" => {

@@ -16,7 +16,7 @@ use std::{path::Path, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
-#[ignore = "requires explicit MUTSUMI_API_KEY and makes real provider calls"]
+#[ignore = "requires explicit COMMANDCODE_API_KEY and makes real provider calls"]
 async fn real_model_terminal_orchestration() -> Result<()> {
     let config = Config::load(Path::new("config/v4.example.yaml"))?;
     let prompts = config.prompts()?;

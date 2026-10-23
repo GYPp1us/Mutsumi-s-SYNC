@@ -40,6 +40,12 @@ pub struct Runtime {
 
 impl Runtime {
     pub async fn run(&self, input: Input) -> Result<TurnOutcome> {
+        self.run_inner(input, true).await
+    }
+    pub async fn run_pending(&self, session: &str) -> Result<TurnOutcome> {
+        self.run_inner(Input{session:session.into(),source_target:"attention".into(),actor:"host_scheduler".into(),text:"处理尚未完成的入站事件；逐个核对来源和实际回执，自行决定回复、静默、目标与工具。".into(),segments:vec![]},false).await
+    }
+    async fn run_inner(&self, input: Input, append: bool) -> Result<TurnOutcome> {
         if input.text.trim().is_empty()
             || input.text.len() > 16_384
             || input.actor.is_empty()
@@ -47,20 +53,23 @@ impl Runtime {
         {
             bail!("invalid inbound input");
         }
-        if !self
-            .config
-            .directory
-            .targets
-            .contains_key(&input.source_target)
+        if append
+            && !self
+                .config
+                .directory
+                .targets
+                .contains_key(&input.source_target)
         {
             bail!("source target is not in the directory")
         }
         let turn = Uuid::new_v4().to_string();
-        self.executor.ledger.event(&input.session,&turn,"inbound",json!({
+        if append {
+            self.executor.ledger.event(&input.session,&turn,"inbound",json!({
             "actor":input.actor,"source_target":input.source_target,"text":input.text,
             "time":chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(28800).unwrap()).to_rfc3339(),
             "origin":"terminal_ingress","segments":input.segments
         })).await?;
+        }
         let mut history = self.executor.ledger.history(&input.session).await?;
         self.executor
             .ledger
@@ -132,6 +141,12 @@ impl Runtime {
                 outcome.status = "cancelled".into();
                 break;
             }
+            // New ingress is projected at a provider boundary, preserving the current native pairs.
+            let refreshed = self.executor.ledger.history(&input.session).await?;
+            if refreshed.messages.len() > history.messages.len() {
+                live.extend_from_slice(&refreshed.messages[history.messages.len()..]);
+                history = refreshed;
+            }
             // Refuse oversized history instead of silently discarding facts or half a tool pair.
             if serde_json::to_vec(&live)?.len() > 256 * 1024 {
                 outcome.status = "context_limit".into();
@@ -144,12 +159,26 @@ impl Runtime {
                     reasoning_content: None,
                 }
             } else {
-                let mut request = vec![
-                    json!({"role":"system","content":format!("{}\n\n{}",self.prompts.runtime,self.prompts.persona)}),
-                    json!({"role":"user","content":json!({"platform_state":{"directory":self.config.directory,"source_target":input.source_target,"actor":input.actor,"time":chrono::Utc::now().to_rfc3339()}}).to_string()}),
-                ];
-                request.extend(live.clone());
+                let request =
+                    match crate::context::request(self, &input, &live, history.through_seq).await {
+                        Ok(request) => request,
+                        Err(_) => {
+                            outcome.status = "context_limit".into();
+                            break;
+                        }
+                    };
                 let schemas = self.executor.tools.schemas();
+                if self.config.capture_context {
+                    self.executor
+                        .ledger
+                        .event(
+                            &input.session,
+                            &turn,
+                            "context_snapshot",
+                            json!({"round_index":index,"messages":request,"tools":schemas}),
+                        )
+                        .await?;
+                }
                 let result = tokio::select! {
                     _=self.executor.cancel.cancelled()=>{outcome.status="cancelled".into();break},
                     result=self.model.complete(&request,&schemas)=>result,

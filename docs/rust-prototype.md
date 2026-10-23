@@ -2,7 +2,7 @@
 
 这是按 [V4 契约](current-design.md) 拆分的可运行编排核：真实 OpenAI-compatible 模型、独立模型 dry-run、原生工具回合、结构化消息和 SQLite 事件恢复。默认输出到终端；启用媒体配置时将原生 OneBot 数组写入本地 outbox，每条回执明确标记 `local_onebot_outbox`。
 
-它不是可部署的完整 QQ 服务。Jev System One 网络适配器已编写但尚未用真实凭据验证；md2svg/resvg worker 已完成本地实际渲染。真实 QQ 媒体下载、识别、发送、后台调度和上下文压缩尚未接入。
+它不是可部署的完整 QQ 服务。Jev System One 网络适配器尚未用真实凭据验证；md2svg/resvg worker 已完成本地实际渲染。另有复用相同编排核的多来源 Playground、真实像素观察和本地 HTTP 收发模拟器；真实 QQ 适配器、生产压缩与跨进程队列尚未接入。
 
 ## 运行
 
@@ -13,12 +13,12 @@ cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-# 在当前 shell 中设置 MUTSUMI_API_KEY，再启动。
+# 在当前 shell 中设置 COMMANDCODE_API_KEY，再启动。
 cargo run --locked -- --text "请查询现在时间"
 cargo run --locked -- --session local-test --text "刚刚的工具回执是什么？"
 ```
 
-配置位于 [config/v4.example.yaml](../config/v4.example.yaml)，示例使用 DeepSeek 的 OpenAI-compatible 接口及 `deepseek-flash`。接入其他提供商时修改 `base_url`、`model`、`api_key_env` 和预算。模型凭据只从指定环境变量读取，不写入 YAML、日志或数据库。DeepSeek 接口依据见 [官方 API 文档](https://api-docs.deepseek.com/)。
+配置位于 [config/v4.example.yaml](../config/v4.example.yaml)，统一使用 Command Code 的 `deepseek/deepseek-v4.1-flash`，即 DeepSeek V4.1 Flash (latest)。模型凭据只从 `COMMANDCODE_API_KEY` 环境变量读取，不写入 YAML、日志或数据库。本机已授权的 dsh 凭据可用 `scripts/with_dsh_credentials.py` 注入子进程；不复制私有文件。接口依据见 [Command Code 文档](https://commandcode.ai/docs/provider)。
 
 可以复制配置到被忽略的 `data/v4-prototype/config.yaml`，通过 `--config` 指定。所有路径以启动时的工作目录为基准。默认数据库为 `data/v4-prototype/events.sqlite3`，与 V3 数据分离。不要让两个进程同时使用该数据库；文件锁会拒绝第二个实例。
 
@@ -32,19 +32,25 @@ cargo run --locked -- --session local-test --text "刚刚的工具回执是什�
 | --- | --- | --- |
 | [protocol.rs](../src/protocol.rs) | 消息段、目标目录、原生工具调用、动作指纹 | 增加平台消息类型时同步校验与 prompt |
 | [runtime.rs](../src/runtime.rs) | 单个异步主循环，保留 provider 原生回合 | 修改每轮动作顺序、有限纠正、完成条件 |
+| [context.rs](../src/context.rs) | CLI 与调度器共用的完整上下文装配 | 保持来源、待处理范围、媒体目录和原生回合 |
+| [scheduler.rs](../src/scheduler.rs) | 持久入站、来源绑定、注意力回合与检查点 | 合并突发事件，不编写业务工作流 |
 | [provider.rs](../src/provider.rs) | `Model` 接口和 HTTPS 模型适配器 | 接入其他 API；保留非空 system 与工具配对 |
 | [review.rs](../src/review.rs) | 一次性证据包、`Reviewer` 与模型审查 | 调整审查输入；推演不进入主上下文 |
 | [executor.rs](../src/executor.rs) | 校验、审查、短事务门禁、执行与结果提交 | 增加执行器时保持真实回执与未知状态 |
 | [ledger.rs](../src/ledger.rs) | append-first 事件、动作状态、恢复与上下文投影 | 数据演进需要版本迁移，不能删除原始事件 |
+| [ledger_stream.rs](../src/ledger_stream.rs) | 幂等入站、检查点、持久缓存与 profile | SQLite schema 当前为 v3，可从 v1/v2 添加表 |
 | [sender.rs](../src/sender.rs) | `Sender` 接口和终端发送器 | 实现 NapCat 适配器及送达语义 |
 | [tools.rs](../src/tools.rs) | schema 唯一事实源、参数校验、时钟与可选媒体工具 | 增加真实工具并明确副作用 |
 | [routing.rs](../src/routing.rs) | `Router` 接口、分类证据与模板实例化 | 接入 Jev，保持不确定时回到主模型 |
 | [jev.rs](../src/jev.rs) | System One HTTP、choice 校验、阈值与模板路由 | 提示词在 `jev-prompts.yaml`，凭据仅从环境读取 |
 | [media.rs](../src/media.rs) | 真实媒体登记、哈希、受众与检索 | 媒体来源决定可用受众，不能重复登记以扩大权限 |
+| [vision.rs](../src/vision.rs) | 原始像素/动画代表帧、版本化单次识别缓存 | 提示词外置，失败保留未知与原始媒体 |
+| [simulator.rs](../src/simulator.rs) | 本地 HTTP 入站、下载、上传、原生发送和接收 | 回执明确标记模拟器；收发完成后关闭服务器 |
 | [onebot.rs](../src/onebot.rs) | 有序入站段、原生出站数组、本地 outbox | 后续接真实 NapCat 传输，不虚构送达 |
 | [rendering.rs](../src/rendering.rs) | 有界队列、常驻 worker、超时回收 | 固定 worker 协议，模型不选择磁盘路径 |
 | [app.rs](../src/app.rs) | 显式组装模型、门禁与适配器 | 保持主循环不依赖业务工作流 |
 | [benchmark/](../src/benchmark/mod.rs) | 合成用例、素材、计时与评分 | gold 与模型输入隔离，原始结果留在忽略目录 |
+| [playground/](../src/playground/mod.rs) | 多来源回放、独立评估、原字节核对、交互报告 | 场景只控制输入，行动使用正常 Runtime |
 | [config.rs](../src/config.rs) | 外部配置与预算验证 | 添加配置时同步示例与验证 |
 
 提示词集中在 [system-prompts.yaml](../system-prompts.yaml) 的 `runtime`、`persona`、`reviewer`，改提示不需要改 Rust 正文。用户可编辑的预制回复在 [quick-replies.yaml](../quick-replies.yaml)。模板包含稳定 ID、类别、适用说明、启用状态、显式目标绑定和两层消息数组；不执行脚本。默认 `MainModelRouter` 全部交给生成模型；显式添加 `jev` 配置后才使用网络适配器，失败或低置信度回到主模型。尚未验证真实 Jev 准确率，也未实现热重载。
@@ -77,7 +83,9 @@ flowchart TD
 - 投影记录精确事件 ID，避免把未读取的新事件误记为已覆盖。未完成原生工具回合按持久化的真实 call 与动作结果恢复；未开始调用明确标记取消，不伪造成功。
 - 默认注册无外部副作用的 `clock`。媒体模式另外提供 `media_search` 和 `render_markdown`；工具 schema 是能力事实源。媒体登记保存实际文件哈希、类型、尺寸与受众；发送前重验权限和字节。OneBot outbox 只证明原生数组已写入本地，不证明 QQ 接收或呈现。
 
-审查器是模型语义判断，并不提供形式化安全保证。原型未实现生产调度器、同会话并发接入和外部事件 steering；目前是持有独占数据库的单入口 CLI。上下文超过预算时显式终止，不静默截断完整工具回合。
+审查器是模型语义判断，并不提供形式化安全保证。CLI 保持单入口；Playground 使用同一运行时的多来源调度入口，来源并发入站、一个注意力循环执行动作。检查点与原始入站生命周期分离，未知动作不自动重放。当前没有跨进程队列或生产摘要压缩；上下文超过预算时显式终止，不静默截断完整工具回合。
+
+真实媒体与复杂上下文的执行方法见 [Playground v2](../benchmarks/v2/README.md)。`media_search` 需要显式 `target_ref`，检索只返回该听众可用的媒体；`render_markdown` 同样绑定目标。`attention` 是宿主调度触发，不能作为消息目标或媒体授权目标。
 
 ## 验证
 
