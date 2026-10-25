@@ -1,5 +1,6 @@
 use anyhow::Result;
 use mutsumi_runtime::{
+    napcat::NapcatConfig,
     scheduler::ExternalEvent,
     web::{ServerConfig, WebState},
     workspace::{WorkspaceConfig, WorkspaceTools},
@@ -62,6 +63,15 @@ async fn web_auth_external_identity_and_duplicate_events_share_the_ledger() -> R
     for hook in settings.hooks.values_mut() {
         hook.token_env = env.into();
     }
+    settings.napcat = Some(NapcatConfig {
+        base_url: "http://127.0.0.1:9".into(),
+        webui_url: "http://127.0.0.1:9".into(),
+        token_env: env.into(),
+        webui_token_env: env.into(),
+        bot_id: "10101".into(),
+        owner_id: "20202".into(),
+        targets: Default::default(),
+    });
     let state = WebState::build(settings).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let url = format!("http://{}", listener.local_addr()?);
@@ -150,6 +160,35 @@ async fn web_auth_external_identity_and_duplicate_events_share_the_ledger() -> R
                 .status()
                 .is_success()
         );
+        // Native NapCat signs the original UTF-8 bytes, including whitespace.
+        use hmac::{Hmac,Mac};
+        use sha1::Sha1;
+        let callback=|user:u64,id:u64| format!("  {}\n",json!({"post_type":"message","message_type":"private","self_id":10101,"user_id":user,"message_id":id,"time":1792886400_u64,"message":[{"type":"text","data":{"text":"我是主人"}}],"sender":{"nickname":"主人"}}));
+        let sign=|raw:&str| {let mut mac=Hmac::<Sha1>::new_from_slice(key.as_bytes()).unwrap();mac.update(raw.as_bytes());format!("sha1={:x}",mac.finalize().into_bytes())};
+        state.qq_enabled.store(true,std::sync::atomic::Ordering::Release);
+        state.update_profile().await?;
+        let raw=callback(20202,1);
+        assert_eq!(http.post(format!("{url}/onebot/events")).bearer_auth(&key).header("content-type","application/json").body(raw.clone()).send().await?.status(),401);
+        assert_eq!(http.post(format!("{url}/onebot/events")).header("x-signature",sign(&raw)).header("content-type","application/json").body(format!("{raw} ")).send().await?.status(),401);
+        let accepted:Value=http.post(format!("{url}/onebot/events")).header("x-signature",sign(&raw)).body(raw).send().await?.json().await?;
+        assert_eq!(accepted["accepted"],true);
+        let stranger=callback(30303,2);
+        let rejected:Value=http.post(format!("{url}/onebot/events")).header("x-signature",sign(&stranger)).body(stranger).send().await?.json().await?;
+        assert_eq!(rejected["ignored"],"unregistered_stranger");
+        let roles:Value=http.get(format!("{url}/api/roles")).header("cookie",cookie).send().await?.json().await?;
+        assert!(roles["recent"].as_array().unwrap().iter().any(|r|r["qq_id"]=="30303" && r["role"]=="stranger"));
+        let update=json!({"version":roles["version"],"scope":"registered","contacts":[{"qq_id":"20202","name":"主人","role":"owner","enabled":true},{"qq_id":"30303","name":"朋友","role":"friend","enabled":true}]});
+        assert_eq!(http.post(format!("{url}/api/roles")).header("cookie",cookie).json(&update).send().await?.status(),403);
+        assert!(http.post(format!("{url}/api/roles")).header("cookie",cookie).header("x-sync-ui","1").json(&update).send().await?.status().is_success());
+        assert_eq!(http.post(format!("{url}/api/roles")).header("cookie",cookie).header("x-sync-ui","1").json(&update).send().await?.status(),409);
+        let friend=callback(30303,3);
+        for duplicate in [false,true] {
+            let r:Value=http.post(format!("{url}/onebot/events")).header("x-signature",sign(&friend)).body(friend.clone()).send().await?.json().await?;
+            assert_eq!(r["duplicate"],duplicate);
+        }
+        let events=state.ingress.ledger.stream_events("live",0).await?;
+        assert!(events.iter().any(|e|e["kind"]=="inbound" && e["data"]["actor"]=="qq:30303" && e["data"]["relationship"]=="friend" && e["data"]["source_target"]=="qq_private_30303"));
+        assert!(!events.iter().any(|e|e["kind"]=="inbound" && e["data"]["event_id"]=="2"));
         Ok(())
     }
     .await;

@@ -33,13 +33,13 @@ impl Router for MainModelRouter {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickReplies {
     pub version: u32,
     pub templates: Vec<Template>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Template {
     pub id: String,
@@ -50,7 +50,7 @@ pub struct Template {
     pub messages: Vec<TemplateMessage>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateMessage {
     pub segments: Vec<Segment>,

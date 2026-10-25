@@ -227,6 +227,7 @@ pub struct LiveSender {
     pub napcat: Option<Arc<NapcatClient>>,
     pub qq_enabled: Arc<AtomicBool>,
     pub directory: crate::protocol::Directory,
+    pub bindings: BTreeMap<String, Peer>,
     pub session: String,
 }
 #[async_trait]
@@ -260,9 +261,8 @@ impl Sender for LiveSender {
             .napcat
             .as_ref()
             .ok_or(NotStarted("NapCat is not configured"))?;
-        let peer = client
-            .config
-            .targets
+        let peer = self
+            .bindings
             .get(target)
             .ok_or(NotStarted("target has no QQ binding"))?;
         let array = crate::onebot::outbound_array(message, &self.media).await?;

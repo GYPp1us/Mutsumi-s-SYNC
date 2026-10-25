@@ -20,6 +20,7 @@ document.querySelectorAll('[data-panel]').forEach(button => button.onclick = () 
   activePanel = button.dataset.panel;
   document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('hidden', panel.id !== activePanel));
   if (activePanel === 'connections') checkQQ();
+  if (activePanel === 'roles') loadRoles();
 });
 function image(id, parent) { if (!/^media_[a-f0-9]{64}$/.test(id)) return; const img = document.createElement('img'); img.src = 'api/media/' + encodeURIComponent(id); img.alt = '原始媒体'; img.loading = 'lazy'; parent?.append(img); return img; }
 function bubble(label, owner, key) {
@@ -38,9 +39,9 @@ function segments(parts, node) {
 }
 function displayEvent(event) {
   const data = event.data;
-  if (event.kind === 'inbound' && ['owner_web', 'qq_owner'].includes(data.source_id)) {
-    const node = bubble(data.source_id === 'qq_owner' ? '你 · QQ 私聊' : '你 · 网页', true, data.event_id);
-    if (data.source_id === 'qq_owner') segments(data.segments, node);
+  if (event.kind === 'inbound' && (data.source_id === 'owner_web' || data.source_id?.startsWith('qq_'))) {
+    const node = bubble(data.source_id?.startsWith('qq_') ? `${data.actor} · QQ · ${data.relationship}` : '你 · 网页', true, data.event_id);
+    if (data.source_id?.startsWith('qq_')) segments(data.segments, node);
     else {
       const text = document.createElement('div'); text.className = 'body'; text.textContent = data.text || ''; node.append(text);
       for (const id of data.transport?.media || []) if (typeof id === 'string') image(id, node);
@@ -129,3 +130,46 @@ $('loadHooks').onclick = async () => {
   else await poll();
   setInterval(() => { if (authenticated) poll(); }, 2500);
 })();
+
+let rolesVersion = 0, rolesDraft = [];
+const roleLabels = {owner:'主人', friend:'朋友', stranger:'陌生人', blocked:'屏蔽'};
+const ingressLabels = {accepted:'已进入模型', qq_disabled:'QQ 收发关闭', unregistered_stranger:'未登记，未接入', role_or_scope_disabled:'角色或接入范围未启用', group_not_enabled:'群聊未接入'};
+function renderRoles() {
+  $('roleList').replaceChildren();
+  for (const contact of rolesDraft) {
+    const row = document.createElement('div'); row.className = 'role-row';
+    for (const [field, title] of [['qq_id','QQ号'],['name','称呼']]) {
+      const label = document.createElement('label'), input = document.createElement('input');
+      label.append(document.createTextNode(title)); input.type = 'text'; input.value = contact[field]; input.maxLength = field === 'qq_id' ? 20 : 80;
+      input.readOnly = field === 'qq_id' && contact.existing; input.oninput = () => contact[field] = input.value; label.append(input); row.append(label);
+    }
+    const select = document.createElement('select');
+    for (const [value, label] of Object.entries(roleLabels)) { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); }
+    select.value = contact.role; select.onchange = () => contact.role = select.value; row.append(select);
+    const label = document.createElement('label'), enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.checked = contact.enabled;
+    enabled.onchange = () => contact.enabled = enabled.checked; label.append(enabled, document.createTextNode('启用')); row.append(label);
+    const remove = document.createElement('button'); remove.textContent = '移除'; remove.onclick = () => { rolesDraft = rolesDraft.filter(c => c !== contact); renderRoles(); }; row.append(remove); $('roleList').append(row);
+  }
+}
+async function loadRoles() {
+  try {
+    notice(); const data = await api('api/roles'); rolesVersion = data.version;
+    rolesDraft = data.contacts.map(c => ({...c, existing:true})); $('roleScope').value = data.scope; renderRoles();
+    $('recentRoles').replaceChildren();
+    for (const item of data.recent) {
+      const row = document.createElement('div'); row.className = 'role-row';
+      const text = document.createElement('span'); text.textContent = `${item.qq_id} · ${item.nickname || ''} · ${roleLabels[item.role] || item.role} · ${ingressLabels[item.decision] || item.decision} · ${item.at}`; row.append(text);
+      if (!rolesDraft.some(c => c.qq_id === item.qq_id)) { const add = document.createElement('button'); add.textContent = '登记此账号'; add.onclick = () => { if (!rolesDraft.some(c => c.qq_id === item.qq_id)) rolesDraft.push({qq_id:item.qq_id, name:item.nickname || item.qq_id, role:'stranger', enabled:false, existing:true}); renderRoles(); }; row.append(add); }
+      $('recentRoles').append(row);
+    }
+    if (!data.recent.length) $('recentRoles').textContent = '尚未收到已通过签名校验的 QQ 消息。可先检查 QQ 连接，再发送一条新消息。';
+  } catch (error) { notice(error); }
+}
+$('reloadRoles').onclick = loadRoles;
+$('addRole').onclick = () => { rolesDraft.push({qq_id:'',name:'',role:'stranger',enabled:false}); renderRoles(); };
+$('saveRoles').onclick = async () => {
+  try {
+    notice(); await api('api/roles', {version:rolesVersion, scope:$('roleScope').value, contacts:rolesDraft.map(({qq_id,name,role,enabled}) => ({qq_id,name,role,enabled}))});
+    await loadRoles(); await poll(); notice('角色设置已保存并生效。');
+  } catch (error) { notice(error); }
+};

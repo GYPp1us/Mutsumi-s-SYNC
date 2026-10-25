@@ -6,6 +6,7 @@ use crate::{
 use axum::{
     Json, Router,
     body::Body,
+    body::Bytes,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
@@ -13,8 +14,10 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -66,6 +69,7 @@ pub fn router(state: Arc<WebState>) -> Router {
         .route("/api/uploads", post(upload))
         .route("/api/media/{id}", get(media))
         .route("/api/hooks", get(hooks))
+        .route("/api/roles", get(roles).post(save_roles))
         .route("/api/napcat/status", get(napcat_status))
         .route("/api/napcat/qr", get(napcat_qr))
         .route("/api/napcat/refresh", post(napcat_refresh))
@@ -204,8 +208,14 @@ async fn logout(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Respo
         .into_response()
 }
 async fn status(State(state): State<Arc<WebState>>) -> Json<Value> {
+    let book = state.roles.read().unwrap().clone();
+    let directory = state
+        .napcat
+        .as_ref()
+        .map(|c| book.directory(&state.runtime.config.directory, &c.config.bot_id, false))
+        .unwrap_or_else(|| state.runtime.config.directory.clone());
     Json(
-        json!({"model":state.runtime.config.provider.model,"provider_configured":state.provider_configured,"busy":state.busy.load(Ordering::Acquire),"needs_attention":state.needs_attention.load(Ordering::Acquire),"qq_enabled":state.qq_enabled.load(Ordering::Acquire),"targets":state.runtime.config.directory.targets,"last_outcome":state.last_outcome.lock().unwrap().clone(),"tools":state.runtime.executor.tools.schemas(),"qq_scope":"当前仅接入配置中的主人私聊；未接入其他联系人或群"}),
+        json!({"model":state.runtime.config.provider.model,"provider_configured":state.provider_configured,"busy":state.busy.load(Ordering::Acquire),"needs_attention":state.needs_attention.load(Ordering::Acquire),"qq_enabled":state.qq_enabled.load(Ordering::Acquire),"targets":directory.targets,"last_outcome":state.last_outcome.lock().unwrap().clone(),"tools":state.runtime.executor.tools.schemas(),"qq_scope":if book.scope==super::roles::Scope::Owner {"仅接入角色管理中主人账号的私聊；群聊未开启"} else {"接入角色管理中已启用联系人的私聊；群聊未开启"}}),
     )
 }
 #[derive(Deserialize)]
@@ -273,7 +283,13 @@ async fn upload(
         if state.napcat.is_none() {
             return Err(bad());
         }
-        audience.push("qq_owner".into());
+        let book = state.roles.read().unwrap();
+        let owner = book
+            .contacts
+            .values()
+            .find(|c| c.role == super::roles::Role::Owner)
+            .ok_or_else(bad)?;
+        audience.push(book.target(&owner.qq_id));
     }
     let record = state
         .media
@@ -297,6 +313,65 @@ async fn hooks(State(state): State<Arc<WebState>>) -> Json<Value> {
     Json(
         json!({"sources":state.settings.hooks.iter().map(|(id,hook)|json!({"id":id,"source":hook.source,"token":state.hook_keys[id],"url":format!("{}{}/hooks/{id}",state.settings.public_origin,state.settings.base_path)})).collect::<Vec<_>>()}),
     )
+}
+async fn roles(State(state): State<Arc<WebState>>) -> Result<Json<Value>> {
+    let book = state.roles.read().unwrap().clone();
+    let recent=state.ingress.ledger.db(|db| {
+        let rows=db.prepare("SELECT payload,at FROM events WHERE session='live' AND kind='qq_transport' ORDER BY seq DESC LIMIT 200")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut seen=std::collections::BTreeSet::new();let mut recent=Vec::new();
+        for (payload,at) in rows {
+            let p:Value=serde_json::from_str(&payload)?;let raw=&p["transport"];
+            if raw["post_type"]!="message" {continue}
+            let Some(id)=number(&raw["user_id"]) else {continue};
+            if seen.insert(id.clone()) {recent.push(json!({"qq_id":id,"nickname":raw["sender"]["nickname"],"message_type":raw["message_type"],"at":at,"decision":p["decision"],"role":p["role"]}));}
+        }
+        Ok(recent)
+    }).await.map_err(|_|unavailable())?;
+    Ok(Json(
+        json!({"configured":state.napcat.is_some(),"version":book.version,"scope":book.scope,"contacts":book.contacts.values().collect::<Vec<_>>(),"recent":recent}),
+    ))
+}
+async fn save_roles(
+    State(state): State<Arc<WebState>>,
+    Json(input): Json<super::roles::Update>,
+) -> Result<Json<Value>> {
+    let client = state.napcat.as_ref().ok_or_else(unavailable)?;
+    let _control = state
+        .control
+        .try_lock()
+        .map_err(|_| Error(StatusCode::CONFLICT, "正在处理消息，请稍后保存角色设置"))?;
+    // Serialize profile facts with the independent QQ on/off control.
+    let _profile_control = state.profile_control.lock().await;
+    let old = state.roles.read().unwrap().clone();
+    if input.version != old.version {
+        return Err(Error(StatusCode::CONFLICT, "角色配置已变化，请重新加载"));
+    }
+    let next = old.updated(input, &client.config.bot_id).map_err(|_| {
+        Error(
+            StatusCode::BAD_REQUEST,
+            "请检查QQ号和称呼：QQ号唯一且不是机器人，必须且只能保留一个已启用的主人",
+        )
+    })?;
+    state
+        .install_roles_profile(&next)
+        .await
+        .map_err(|_| unavailable())?;
+    state
+        .media
+        .add_targets(next.contacts.keys().map(|id| next.target(id)));
+    *state.roles.write().unwrap() = next.clone();
+    state
+        .ingress
+        .ledger
+        .event(
+            "live",
+            "owner-control",
+            "roles_changed",
+            json!({"actor":"authenticated_web_owner","version":next.version}),
+        )
+        .await
+        .map_err(|_| unavailable())?;
+    Ok(Json(json!({"saved":true,"version":next.version})))
 }
 async fn hook(
     State(state): State<Arc<WebState>>,
@@ -384,32 +459,53 @@ fn number(value: &Value) -> Option<String> {
 async fn qq_event(
     State(state): State<Arc<WebState>>,
     headers: HeaderMap,
-    Json(raw): Json<Value>,
+    body: Bytes,
 ) -> Result<Json<Value>> {
-    if !bearer(&headers).is_some_and(|given| equal(given, &state.onebot_hook_key)) {
+    if !onebot_signature(&state.onebot_hook_key, &headers, &body) {
+        let _ = state
+            .ingress
+            .ledger
+            .event(
+                "live",
+                "onebot-auth",
+                "qq_callback_rejected",
+                json!({"reason":"invalid_or_missing_hmac_sha1_signature"}),
+            )
+            .await;
         return Err(Error(StatusCode::UNAUTHORIZED, "OneBot 凭据无效"));
     }
+    let raw: Value = serde_json::from_slice(&body).map_err(|_| bad())?;
     let client = state.napcat.as_ref().ok_or_else(unavailable)?;
     if number(&raw["self_id"]).as_deref() != Some(&client.config.bot_id) {
         return Err(bad());
     }
-    if raw["post_type"] != "message"
-        || raw["message_type"] != "private"
-        || number(&raw["user_id"]).as_deref() != Some(&client.config.owner_id)
-    {
-        return Ok(Json(
-            json!({"ignored":"outside configured owner private chat"}),
-        ));
+    let book = state.roles.read().unwrap().clone();
+    let contact = number(&raw["user_id"]).and_then(|id| book.contacts.get(&id).cloned());
+    let decision = if raw["post_type"] != "message" {
+        "not_message"
+    } else if raw["message_type"] != "private" {
+        "group_not_enabled"
+    } else if !state.qq_enabled.load(Ordering::Acquire) {
+        "qq_disabled"
+    } else if contact.is_none() {
+        "unregistered_stranger"
+    } else if !book.allows(contact.as_ref().unwrap()) {
+        "role_or_scope_disabled"
+    } else {
+        "accepted"
+    };
+    state.ingress.ledger.event("live","onebot-transport","qq_transport",json!({"transport":raw,"decision":decision,"role":contact.as_ref().map(|c|c.role.relationship()).unwrap_or("stranger"),"role_version":book.version})).await.map_err(|_|unavailable())?;
+    if decision != "accepted" {
+        return Ok(Json(json!({"ignored":decision})));
     }
+    let contact = contact.unwrap();
+    let source = book.source(&contact);
+    let target = book.target(&contact.qq_id);
     let id = raw["message_id"]
         .as_i64()
         .map(|id| id.to_string())
         .or_else(|| raw["message_id"].as_str().map(str::to_owned))
         .ok_or_else(bad)?;
-    if !state.qq_enabled.load(Ordering::Acquire) {
-        state.ingress.ledger.event("live",&id,"transport_inbound_disabled",json!({"transport":raw,"reason":"QQ control is off; not queued for automatic later reply"})).await.map_err(|_|unavailable())?;
-        return Ok(Json(json!({"ignored":"QQ control is off"})));
-    }
     let array = raw["message"]
         .as_array()
         .filter(|a| a.len() <= 64)
@@ -431,23 +527,24 @@ async fn qq_event(
             });
         segments.extend(normalized);
     }
-    let source = &state.ingress.sources["qq_owner"];
     let occurred = raw["time"]
         .as_i64()
         .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
         .unwrap_or_else(chrono::Utc::now);
-    let payload = json!({"event_id":id,"source_id":"qq_owner","actor":source.actor,"actor_kind":source.kind,"relationship":source.relationship,"conversation":source.conversation,"source_target":source.reply_target,"occurred_at":occurred.to_rfc3339(),"received_at":chrono::Utc::now().to_rfc3339(),"text":inbound_text(&segments),"segments":segments,"transport":raw});
+    let payload = json!({"event_id":id,"source_id":target,"actor":source.actor,"actor_kind":source.kind,"relationship":source.relationship,"conversation":source.conversation,"source_target":source.reply_target,"role_version":book.version,"occurred_at":occurred.to_rfc3339(),"received_at":chrono::Utc::now().to_rfc3339(),"text":inbound_text(&segments),"segments":segments,"transport":raw});
     let (seq, fresh) = state
         .ingress
         .ledger
-        .ingest("live", "qq_owner", &id, payload)
+        .ingest("live", &target, &id, payload)
         .await
         .map_err(|_| bad())?;
     if fresh {
-        state
-            .set_attention(false)
-            .await
-            .map_err(|_| unavailable())?;
+        if contact.role == super::roles::Role::Owner {
+            state
+                .set_attention(false)
+                .await
+                .map_err(|_| unavailable())?;
+        }
         state.ingress.changed.notify_one();
         if !images.is_empty() {
             let state = state.clone();
@@ -462,8 +559,8 @@ async fn qq_event(
                         } else { file };
                         let key=format!("{}:{reference}",client.config.bot_id);
                         let cached=task_state.ingress.ledger.cache_get("qq-image",&key).await?;
-                        let bytes=if let Some(id)=cached.and_then(|v|v.as_str().map(str::to_owned)) {task_state.media.bytes_for_target(&id,"qq_owner").await?.1}else{client.image_bytes(file,image["url"].as_str()).await?};
-                        let record=task_state.media.register(&bytes,"图像尚待观察",vec!["qq_owner".into(),"web_owner".into()],"qq-owner-ingress").await?;
+                        let bytes=if let Some(id)=cached.and_then(|v|v.as_str().map(str::to_owned)) {task_state.media.bytes_for_target(&id,&target).await?.1}else{client.image_bytes(file,image["url"].as_str()).await?};
+                        let record=task_state.media.register(&bytes,"图像尚待观察",vec![target.clone(),"web_owner".into()],"qq-private-ingress").await?;
                         task_state.ingress.ledger.cache_put("qq-image",&key,json!(record.id)).await?;
                         let (record,description,hit)=task_state.vision.ingest(bytes,record.allowed_targets).await?;
                         Ok::<_,anyhow::Error>(json!({"media":record.reference(),"visual_observation":description,"vision_cache_hit":hit}))
@@ -475,4 +572,29 @@ async fn qq_event(
         }
     }
     Ok(Json(json!({"accepted":true,"duplicate":!fresh,"seq":seq})))
+}
+
+fn onebot_signature(key: &str, headers: &HeaderMap, body: &[u8]) -> bool {
+    let Some(hex) = headers
+        .get("x-signature")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("sha1="))
+    else {
+        return false;
+    };
+    if hex.len() != 40 || !hex.is_ascii() {
+        return false;
+    }
+    let Ok(signature) = (0..40)
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<std::result::Result<Vec<_>, _>>()
+    else {
+        return false;
+    };
+    let Ok(mut mac) = Hmac::<Sha1>::new_from_slice(key.as_bytes()) else {
+        return false;
+    };
+    mac.update(body);
+    mac.verify_slice(&signature).is_ok()
 }

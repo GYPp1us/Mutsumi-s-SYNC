@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 /// The schema registry is the only model-facing tool inventory.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ToolRegistry {
     pub media: Option<Arc<MediaService>>,
     pub workspace: Option<Arc<crate::workspace::WorkspaceTools>>,

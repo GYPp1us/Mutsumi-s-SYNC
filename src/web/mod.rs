@@ -1,4 +1,5 @@
 //! A small authenticated trial server around the shared orchestration runtime.
+pub mod roles;
 mod routes;
 use crate::{
     config::Config,
@@ -24,12 +25,12 @@ use std::{
     collections::BTreeMap,
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
-use tokio::sync::Notify;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Deserialize)]
@@ -71,12 +72,15 @@ pub struct WebState {
     pub(crate) hook_keys: BTreeMap<String, String>,
     pub(crate) sessions: Mutex<BTreeMap<String, Instant>>,
     pub(crate) login_attempts: Mutex<Vec<Instant>>,
+    pub(crate) roles: RwLock<roles::RoleBook>,
+    pub(crate) control: AsyncMutex<()>,
+    pub(crate) profile_control: AsyncMutex<()>,
     profile: Value,
 }
 
 impl WebState {
     pub async fn build(settings: ServerConfig) -> Result<Arc<Self>> {
-        let config = Config::load(Path::new(&settings.runtime_config))?;
+        let mut config = Config::load(Path::new(&settings.runtime_config))?;
         if !settings
             .listen
             .parse::<std::net::SocketAddr>()?
@@ -160,6 +164,18 @@ impl WebState {
         }
         let prompts = config.prompts()?;
         let ledger = Ledger::open(Path::new(&config.database)).await?;
+        let role_book = match ledger
+            .cache_get("runtime", "profile")
+            .await?
+            .and_then(|p| p.get("qq_roles").cloned())
+        {
+            Some(book) => serde_json::from_value(book)?,
+            None => roles::RoleBook::seed(settings.napcat.as_ref()),
+        };
+        if let Some(client) = &napcat {
+            role_book.validate(&client.config.bot_id)?;
+            config.directory = role_book.directory(&config.directory, &client.config.bot_id, true);
+        }
         let profile = if let Some(path) = &config.profile {
             serde_yaml::from_str(&std::fs::read_to_string(path)?)?
         } else {
@@ -212,6 +228,7 @@ impl WebState {
                     napcat: napcat.clone(),
                     qq_enabled: qq_enabled.clone(),
                     directory: config.directory.clone(),
+                    bindings: role_book.bindings(),
                     session: "live".into(),
                 }),
                 directory: config.directory.clone(),
@@ -265,15 +282,59 @@ impl WebState {
             hook_keys,
             sessions: Mutex::new(BTreeMap::new()),
             login_attempts: Mutex::new(vec![]),
+            roles: RwLock::new(role_book),
+            control: AsyncMutex::new(()),
+            profile_control: AsyncMutex::new(()),
             profile,
         });
         state.update_profile().await?;
         Ok(state)
     }
     pub async fn update_profile(&self) -> Result<()> {
+        let _profile_control = self.profile_control.lock().await;
+        let book = self.roles.read().unwrap().clone();
+        self.install_roles_profile(&book).await
+    }
+    pub(crate) async fn install_roles_profile(&self, book: &roles::RoleBook) -> Result<()> {
         let mut profile = self.profile.clone();
-        profile["host_transport_state"] = json!({"qq_enabled":self.qq_enabled.load(Ordering::Acquire),"web_target":"web_owner","qq_target":"qq_owner","qq_scope":"only configured owner private chat","web_receipt":"stored in authenticated web UI; not proof the browser has read it","napcat_receipt":"API accepted with a message id; not proof a human has read it"});
+        profile["qq_roles"] = serde_json::to_value(book)?;
+        if let Some(owner) = book
+            .contacts
+            .values()
+            .find(|c| c.role == roles::Role::Owner)
+        {
+            profile["owner"]["qq_id"] = json!(owner.qq_id);
+            profile["owner"]["name"] = json!(owner.name);
+        }
+        profile["host_transport_state"] = json!({"qq_enabled":self.qq_enabled.load(Ordering::Acquire),"web_target":"web_owner","qq_scope":book.scope,"web_receipt":"stored in authenticated web UI; not proof the browser has read it","napcat_receipt":"API accepted with a message id; not proof a human has read it"});
         self.ingress.ledger.install_profile(profile).await
+    }
+    pub(crate) fn scoped_runtime(&self) -> Result<Arc<Runtime>> {
+        let Some(client) = &self.napcat else {
+            return Ok(self.runtime.clone());
+        };
+        let book = self.roles.read().unwrap().clone();
+        let mut config = self.runtime.config.clone();
+        config.directory = book.directory(&config.directory, &client.config.bot_id, false);
+        let mut executor = self.runtime.executor.clone();
+        executor.directory = config.directory.clone();
+        executor.sender = Arc::new(LiveSender {
+            ledger: self.ingress.ledger.clone(),
+            media: self.media.clone(),
+            napcat: self.napcat.clone(),
+            qq_enabled: self.qq_enabled.clone(),
+            directory: config.directory.clone(),
+            bindings: book.bindings(),
+            session: "live".into(),
+        });
+        Ok(Arc::new(Runtime {
+            config,
+            prompts: self.runtime.prompts.clone(),
+            model: self.runtime.model.clone(),
+            executor,
+            router: self.runtime.router.clone(),
+            quick_replies: self.runtime.quick_replies.clone(),
+        }))
     }
     pub async fn set_attention(&self, value: bool) -> Result<()> {
         self.needs_attention.store(value, Ordering::Release);
@@ -316,10 +377,6 @@ impl WebState {
         jobs.push(tokio::spawn(task));
     }
     pub async fn work(self: Arc<Self>) -> Result<()> {
-        let scheduler = Scheduler {
-            runtime: self.runtime.clone(),
-            ingress: self.ingress.clone(),
-        };
         loop {
             if self.cancel.is_cancelled() {
                 break;
@@ -331,6 +388,12 @@ impl WebState {
                 continue;
             }
             tokio::time::sleep(Duration::from_millis(180)).await;
+            // Role edits are atomic between attention turns; ingress stays concurrent.
+            let _control = self.control.lock().await;
+            let scheduler = Scheduler {
+                runtime: self.scoped_runtime()?,
+                ingress: self.ingress.clone(),
+            };
             self.busy.store(true, Ordering::Release);
             self.ingress
                 .ledger

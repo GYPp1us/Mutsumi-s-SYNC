@@ -23,6 +23,7 @@ pub struct ActionContext<'a> {
     pub request: &'a str,
 }
 
+#[derive(Clone)]
 pub struct Executor {
     pub ledger: Ledger,
     pub reviewer: Arc<dyn Reviewer>,

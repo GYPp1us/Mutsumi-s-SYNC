@@ -11,7 +11,7 @@ use std::{
     collections::BTreeSet,
     io::Cursor,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -40,7 +40,7 @@ pub struct MediaService {
     pub ledger: Ledger,
     pub worker: Arc<RendererWorker>,
     root: PathBuf,
-    targets: BTreeSet<String>,
+    targets: RwLock<BTreeSet<String>>,
 }
 
 impl MediaService {
@@ -55,11 +55,14 @@ impl MediaService {
             ledger,
             worker,
             root: tokio::fs::canonicalize(root).await?,
-            targets: directory.targets.keys().cloned().collect(),
+            targets: RwLock::new(directory.targets.keys().cloned().collect()),
         })
     }
     pub fn known_target(&self, target: &str) -> bool {
-        self.targets.contains(target)
+        self.targets.read().unwrap().contains(target)
+    }
+    pub fn add_targets(&self, targets: impl IntoIterator<Item = String>) {
+        self.targets.write().unwrap().extend(targets);
     }
     pub async fn register(
         &self,
@@ -72,7 +75,7 @@ impl MediaService {
             || description.trim().is_empty()
             || description.len() > 2048
             || allowed_targets.is_empty()
-            || allowed_targets.iter().any(|t| !self.targets.contains(t))
+            || allowed_targets.iter().any(|t| !self.known_target(t))
         {
             bail!("invalid media registration")
         }
@@ -206,14 +209,14 @@ impl MediaService {
         source: &str,
         target: &str,
     ) -> Result<Value> {
-        if !self.targets.contains(target) {
+        if !self.known_target(target) {
             bail!("unknown render audience")
         }
         let artifact = self.worker.render(markdown, width).await?;
         let bytes = tokio::fs::read(&artifact.png).await?;
         let targets = BTreeSet::from([source.to_owned(), target.to_owned()])
             .into_iter()
-            .filter(|t| self.targets.contains(t))
+            .filter(|t| self.known_target(t))
             .collect();
         let record = self
             .register(
