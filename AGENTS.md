@@ -26,6 +26,7 @@
 ## 开发与验证
 
 - Rust 入口为 `src/main.rs`，单个主循环为 `src/runtime.rs`；模块边界与命令见 `docs/rust-prototype.md`。
+- HZ 试用入口为 `src/bin/server.rs`，部署与边界见 `docs/hz-trial.md`。网页、外部上报和 NapCat 主人私聊复用同一编排核；QQ 每次重启默认关闭。bash/edit/wait 仅限独立 workspace，不向 bash 暴露宿主目录、网络或模型凭据。
 - Rust 改动运行 `cargo test --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings` 与 `cargo fmt --all -- --check`。真实 API 测试默认忽略，使用 key 的调用必须在用户授权范围内。
 - 不将终端或本地 OneBot outbox 回执声称为 QQ 送达。Jev HTTP 适配器尚待真实凭据验证；默认只有只读 clock，启用媒体模式后另外提供 media_search 与 render_markdown。
 - 多来源与真实媒体验证入口为 `playground`，复用 Runtime/Context/Reviewer/Ledger，只接本地 HTTP 模拟器。示例模型统一为 Command Code 的 `deepseek/deepseek-v4.1-flash`，key 从环境注入，不复制 dsh 凭据到仓库。视觉缓存含原字节哈希、模型与 prompt 版本；本轮待处理范围与完整历史分开，检查点不覆盖未读入站。

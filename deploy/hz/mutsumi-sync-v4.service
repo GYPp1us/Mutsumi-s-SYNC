@@ -1,0 +1,35 @@
+[Unit]
+Description=Mutsumi SYNC V4 trial WebUI and runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mutsumi-v4
+Group=mutsumi-v4
+WorkingDirectory=/opt/mutsumi-sync-v4/current
+EnvironmentFile=/opt/mutsumi-sync-v4/shared/service.env
+Environment=HOME=/var/lib/mutsumi-v4
+ExecStart=/opt/mutsumi-sync-v4/current/bin/server --config /opt/mutsumi-sync-v4/shared/server.yaml
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+ReadWritePaths=/var/lib/mutsumi-v4
+ReadWritePaths=/opt/mutsumi-sync-v4/shared/workspace
+MemoryHigh=768M
+MemoryMax=1200M
+TasksMax=256
+CPUQuota=150%
+
+[Install]
+WantedBy=multi-user.target

@@ -92,6 +92,14 @@ impl Ledger {
             .filter(|e| matches!(e["kind"].as_str(), Some("inbound" | "media_observation")))
             .collect())
     }
+    pub async fn stream_page(&self, session: &str, after: i64, limit: usize) -> Result<Vec<Value>> {
+        let session = session.to_owned();
+        let limit = limit.min(500) as i64;
+        self.db(move|db|{
+            let rows:Vec<(i64,String,String,String)>=db.prepare("SELECT seq,kind,payload,at FROM events WHERE session=? AND seq>? ORDER BY seq LIMIT ?")?.query_map(params![session,after,limit],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+            rows.into_iter().map(|(seq,kind,payload,at)|Ok(json!({"seq":seq,"kind":kind,"data":serde_json::from_str::<Value>(&payload)?,"at":at}))).collect()
+        }).await
+    }
     pub async fn cursor(&self, session: &str) -> Result<i64> {
         let session = session.to_owned();
         self.db(move |db| {

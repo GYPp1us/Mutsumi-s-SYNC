@@ -22,9 +22,9 @@ pub async fn build(config: Config) -> Result<Runtime> {
         .directory
         .targets
         .values()
-        .any(|t| t.transport == "onebot_simulator")
+        .any(|t| t.transport != "terminal")
     {
-        anyhow::bail!("simulator targets require the playground transport driver")
+        anyhow::bail!("these targets require their dedicated server transport")
     }
     let model = Arc::new(OpenAiCompatible::for_purpose(
         config.provider.clone(),
@@ -58,7 +58,7 @@ pub async fn build_with_providers(
     } else {
         Arc::new(MainModelRouter)
     };
-    let (sender, tools): (Arc<dyn Sender>, ToolRegistry) = if let Some(media) = &config.media {
+    let (sender, mut tools): (Arc<dyn Sender>, ToolRegistry) = if let Some(media) = &config.media {
         let worker = Arc::new(
             RendererWorker::new(
                 Path::new(&media.worker_executable),
@@ -83,6 +83,7 @@ pub async fn build_with_providers(
             }),
             ToolRegistry {
                 media: Some(service),
+                workspace: None,
             },
         )
     } else {
@@ -91,6 +92,11 @@ pub async fn build_with_providers(
             ToolRegistry::default(),
         )
     };
+    if let Some(workspace) = &config.workspace {
+        tools.workspace = Some(Arc::new(
+            crate::workspace::WorkspaceTools::new(workspace).await?,
+        ));
+    }
     let executor = Executor {
         ledger,
         reviewer: Arc::new(ModelReviewer {

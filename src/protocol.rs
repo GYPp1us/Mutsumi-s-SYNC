@@ -117,7 +117,10 @@ pub fn validate_message(message: &OutgoingMessage, directory: &Directory) -> Res
     let Some(target) = directory.targets.get(target_ref) else {
         bail!("unknown target_ref")
     };
-    if !matches!(target.transport.as_str(), "terminal" | "onebot_simulator") {
+    if !matches!(
+        target.transport.as_str(),
+        "terminal" | "onebot_simulator" | "webui" | "napcat"
+    ) {
         bail!("transport is not enabled in this prototype")
     }
     if message.segments.is_empty() || message.segments.len() > 32 {

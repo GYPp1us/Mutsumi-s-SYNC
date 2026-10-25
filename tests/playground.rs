@@ -441,7 +441,10 @@ async fn lost_http_receipt_retains_real_receiver_effect_and_never_replays() -> R
                 reviewer: Arc::new(Allow),
                 sender,
                 directory: config.directory.clone(),
-                tools: ToolRegistry { media: Some(media) },
+                tools: ToolRegistry {
+                    media: Some(media),
+                    workspace: None,
+                },
                 cancel: CancellationToken::new(),
             },
             config,

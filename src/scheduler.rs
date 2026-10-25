@@ -85,6 +85,21 @@ pub struct Scheduler {
     pub ingress: Arc<Ingress>,
 }
 impl Scheduler {
+    pub async fn step(&self) -> Result<TurnOutcome> {
+        let outcome = self.runtime.run_pending(&self.ingress.session).await?;
+        if matches!(outcome.status.as_str(), "completed" | "silent") {
+            let through = self
+                .ingress
+                .ledger
+                .projected_through(&self.ingress.session)
+                .await?;
+            self.ingress
+                .ledger
+                .checkpoint(&self.ingress.session, through)
+                .await?;
+        }
+        Ok(outcome)
+    }
     pub async fn drain(&self, producers_done: Arc<AtomicBool>) -> Result<Vec<TurnOutcome>> {
         let mut outcomes = Vec::new();
         loop {
@@ -98,19 +113,8 @@ impl Scheduler {
             }
             // A short fixed coalescing window keeps bursts together without task-specific rules.
             tokio::time::sleep(Duration::from_millis(180)).await;
-            let outcome = self.runtime.run_pending(&self.ingress.session).await?;
+            let outcome = self.step().await?;
             let completed = matches!(outcome.status.as_str(), "completed" | "silent");
-            if completed {
-                let through = self
-                    .ingress
-                    .ledger
-                    .projected_through(&self.ingress.session)
-                    .await?;
-                self.ingress
-                    .ledger
-                    .checkpoint(&self.ingress.session, through)
-                    .await?;
-            }
             outcomes.push(outcome);
             if !completed {
                 break;

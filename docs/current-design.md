@@ -102,4 +102,4 @@ md2svg + resvg 作为独立常驻 worker。复用 Renderer，限制输入、队�
 
 V3 归档、V4 主线、模块化 Rust 原型与真实模型验证已完成。原型已有专用 SQLite、终端发送器、只读时钟，以及可选媒体索引、实际 md2svg/resvg worker 和本地 OneBot outbox。本轮另加入共用编排核的多来源持久邮箱、注意力检查点、真实多模态观察与本地 HTTP 上传/收发模拟器；只在 provider 边界纳入新事件，继续保留原生调用配对。
 
-示例模型统一为 Command Code 的 DeepSeek V4.1 Flash (latest)，凭据从环境读取。Jev 网络适配器已编写，真实调用仍待凭据验证。真实 QQ 收发、生产级压缩、跨进程队列与部署仍是后续工作。运行与模块说明见 [Rust 原型](rust-prototype.md)，新基准见 [Playground v2](../benchmarks/v2/README.md)，旧 [benchmark v1](../benchmarks/v1/README.md) 保留为合成回归。默认分支为 `v4`，归档情况见 [交接文档](v4-handoff-2026-10-18.md)。
+示例模型统一为 Command Code 的 DeepSeek V4.1 Flash (latest)，凭据从环境读取。Jev 网络适配器已编写，真实调用仍待凭据验证。试用 WebUI、外部上报、bash/edit/wait 与 NapCat 主人私聊适配现复用同一编排核，部署与明确边界见 [HZ 试用服务](hz-trial.md)。完整 QQ 群聊/陌生人、生产级压缩和跨进程队列仍是后续工作。运行与模块说明见 [Rust 原型](rust-prototype.md)，新基准见 [Playground v2](../benchmarks/v2/README.md)，旧 [benchmark v1](../benchmarks/v1/README.md) 保留为合成回归。默认分支为 `v4`，归档情况见 [交接文档](v4-handoff-2026-10-18.md)。

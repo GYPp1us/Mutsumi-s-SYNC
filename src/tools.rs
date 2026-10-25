@@ -8,6 +8,7 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct ToolRegistry {
     pub media: Option<Arc<MediaService>>,
+    pub workspace: Option<Arc<crate::workspace::WorkspaceTools>>,
 }
 
 impl ToolRegistry {
@@ -21,6 +22,9 @@ impl ToolRegistry {
             json!({"type":"function","function":{"name":"render_markdown","description":"将Markdown、支持的LaTeX与Mermaid在独立md2svg/resvg进程中渲染为实际图片，返回真实media_id；不发送。不能加载外部图片、HTML或本地路径。target_ref明确绑定预期听众，后续发送仍需独立审查。","parameters":{"type":"object","properties":{"markdown":{"type":"string"},"width":{"type":"integer","minimum":256,"maximum":1200},"target_ref":{"type":"string"}},"required":["markdown","width","target_ref"],"additionalProperties":false}}}),
         ]);
         }
+        if self.workspace.is_some() {
+            schemas.extend(crate::workspace::WorkspaceTools::schemas());
+        }
         schemas
     }
     pub fn validate(&self, name: &str, arguments: &Value) -> Result<()> {
@@ -28,6 +32,9 @@ impl ToolRegistry {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("tool arguments must be an object"))?;
         match name {
+            "bash" | "edit" | "wait" if self.workspace.is_some() => {
+                return crate::workspace::WorkspaceTools::validate(name, arguments);
+            }
             "clock" if map.is_empty() => (),
             "media_search"
                 if self.media.is_some()
@@ -65,8 +72,30 @@ impl ToolRegistry {
         arguments: &Value,
         source_target: &str,
     ) -> Result<Value> {
+        self.execute_with_cancel(
+            name,
+            arguments,
+            source_target,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+    }
+    pub async fn execute_with_cancel(
+        &self,
+        name: &str,
+        arguments: &Value,
+        source_target: &str,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<Value> {
         self.validate(name, arguments)?;
         match name {
+            "bash" | "edit" | "wait" => {
+                self.workspace
+                    .as_ref()
+                    .unwrap()
+                    .execute(name, arguments, cancel)
+                    .await
+            }
             "media_search" => {
                 self.media
                     .as_ref()

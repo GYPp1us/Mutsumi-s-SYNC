@@ -189,6 +189,7 @@ async fn run_cases(
                     directory: case_config.directory,
                     tools: ToolRegistry {
                         media: Some(service.clone()),
+                        workspace: None,
                     },
                     cancel: CancellationToken::new(),
                 },

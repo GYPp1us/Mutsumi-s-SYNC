@@ -1,0 +1,26 @@
+provider:
+  base_url: https://api.commandcode.ai/provider/v1
+  model: deepseek/deepseek-v4.1-flash
+  api_key_env: COMMANDCODE_API_KEY
+  timeout_seconds: 180
+  max_tokens: 4096
+  request_options:
+    thinking: {type: disabled}
+database: data/server/events.sqlite3
+prompts: system-prompts.yaml
+quick_replies: quick-replies.yaml
+max_rounds: 16
+max_corrections: 3
+capture_context: false
+profile: config/server-profile.example.yaml
+workspace: {root: data/server/workspace}
+directory:
+  targets:
+    web_owner: {label: 主人网页, account: web, audience: owner, transport: webui}
+  media: {}
+  face_ids: [14, 66]
+media:
+  root: data/server/media
+  worker_executable: workers/md2svg/target/release/mutsumi-md-worker
+  worker_timeout_seconds: 60
+  outbox: data/server/unused-outbox

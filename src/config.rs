@@ -33,6 +33,8 @@ pub struct Config {
     pub profile: Option<String>,
     #[serde(default)]
     pub capture_context: bool,
+    #[serde(default)]
+    pub workspace: Option<crate::workspace::WorkspaceConfig>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -70,13 +72,14 @@ impl Config {
             bail!("invalid runtime budgets")
         }
         if config.directory.targets.is_empty()
-            || config
-                .directory
-                .targets
-                .values()
-                .any(|t| !matches!(t.transport.as_str(), "terminal" | "onebot_simulator"))
+            || config.directory.targets.values().any(|t| {
+                !matches!(
+                    t.transport.as_str(),
+                    "terminal" | "onebot_simulator" | "webui" | "napcat"
+                )
+            })
         {
-            bail!("this prototype requires explicit terminal or simulator targets");
+            bail!("unsupported target transport");
         }
         Ok(config)
     }

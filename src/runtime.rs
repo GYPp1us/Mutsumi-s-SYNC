@@ -290,23 +290,30 @@ impl Runtime {
                 ))
             }
             for call in &round.tool_calls {
-                let result = match serde_json::from_str::<Value>(&call.function.arguments) {
-                    Ok(arguments) => {
-                        self.executor
-                            .execute(
-                                &format!("{round_id}:tool:{}", call.id),
-                                &action_context,
-                                Action::Tool {
-                                    name: call.function.name.clone(),
-                                    arguments,
-                                },
-                            )
-                            .await?
-                    }
-                    Err(_) => crate::executor::Execution {
-                        feedback: json!({"status":"rejected","reason":"invalid tool arguments JSON"}),
+                let result = if unknown {
+                    crate::executor::Execution {
+                        feedback: json!({"status":"cancelled","reason":"earlier action has unknown effects"}),
                         event_id: None,
-                    },
+                    }
+                } else {
+                    match serde_json::from_str::<Value>(&call.function.arguments) {
+                        Ok(arguments) => {
+                            self.executor
+                                .execute(
+                                    &format!("{round_id}:tool:{}", call.id),
+                                    &action_context,
+                                    Action::Tool {
+                                        name: call.function.name.clone(),
+                                        arguments,
+                                    },
+                                )
+                                .await?
+                        }
+                        Err(_) => crate::executor::Execution {
+                            feedback: json!({"status":"rejected","reason":"invalid tool arguments JSON"}),
+                            event_id: None,
+                        },
+                    }
                 };
                 if let Some(id) = result.event_id {
                     history.event_ids.push(id)
@@ -316,6 +323,9 @@ impl Runtime {
                 }
                 if result.feedback["status"] == "rejected" {
                     outcome.rejected_count += 1
+                }
+                if result.feedback["status"] == "unknown" {
+                    unknown = true;
                 }
                 let feedback = json!({"role":"tool","tool_call_id":call.id,"content":result.feedback.to_string()});
                 live.push(feedback.clone());

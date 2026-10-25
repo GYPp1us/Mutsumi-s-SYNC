@@ -163,11 +163,30 @@ impl Executor {
                 .await
                 .and_then(|r| Ok(serde_json::to_value(r)?)),
             Action::Tool { name, arguments } => {
-                self.tools.execute(name, arguments, context.source).await
+                self.tools
+                    .execute_with_cancel(name, arguments, context.source, &self.cancel)
+                    .await
             }
         };
         let (status, result) = match result {
             Ok(result) => ("succeeded", result),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::workspace::UnknownEffect>()
+                    .is_some() =>
+            {
+                (
+                    "unknown",
+                    error
+                        .downcast_ref::<crate::workspace::UnknownEffect>()
+                        .unwrap()
+                        .0
+                        .clone(),
+                )
+            }
+            Err(error) if error.downcast_ref::<crate::napcat::NotStarted>().is_some() => {
+                ("rejected", json!({"reason":error.to_string()}))
+            }
             // A sender error may follow a partial stdout write; it is not proof of no effect.
             Err(_) if matches!(action, Action::Send { .. }) => (
                 "unknown",

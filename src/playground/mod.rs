@@ -299,6 +299,7 @@ async fn run_with_transport(
                 directory: config.directory.clone(),
                 tools: ToolRegistry {
                     media: Some(media.clone()),
+                    workspace: None,
                 },
                 cancel: CancellationToken::new(),
             },
