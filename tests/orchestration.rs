@@ -150,6 +150,45 @@ async fn fixture(
 }
 
 #[tokio::test]
+async fn optional_persona_does_not_replace_the_runtime_protocol() -> Result<()> {
+    let (dir, mut runtime, _, _) = fixture(vec![], Arc::new(CaptureSender::default())).await;
+    assert!(runtime.prompts.persona.is_empty());
+    let request = mutsumi_runtime::context::request(&runtime, &input("测试上下文"), &[], 0).await?;
+    assert_eq!(request[0]["role"], "system");
+    assert_eq!(request[0]["content"], runtime.prompts.runtime);
+
+    let required = runtime.prompts.runtime.clone();
+    let reviewer = runtime.prompts.reviewer.clone();
+    let vision = runtime.prompts.vision.clone();
+    runtime.prompts.persona = "可选表达补充：使用用户指定的称呼。".into();
+    let request = mutsumi_runtime::context::request(&runtime, &input("测试补充"), &[], 0).await?;
+    assert_eq!(
+        request[0]["content"],
+        format!("{}\n\n{}", required, runtime.prompts.persona)
+    );
+    assert_eq!(runtime.prompts.reviewer, reviewer);
+    assert_eq!(runtime.prompts.vision, vision);
+
+    let path = dir.path().join("prompts.yaml");
+    runtime.config.prompts = path.to_str().unwrap().into();
+    for optional in ["", "persona: ''\n", "persona: '   '\n"] {
+        std::fs::write(
+            &path,
+            format!("{optional}runtime: protocol\nreviewer: review\n"),
+        )?;
+        assert!(runtime.config.prompts()?.persona.trim().is_empty());
+    }
+    for invalid in [
+        "runtime: ''\nreviewer: review\n",
+        "runtime: protocol\nreviewer: ''\n",
+    ] {
+        std::fs::write(&path, invalid)?;
+        assert!(runtime.config.prompts().is_err());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn tool_round_content_sends_before_tool_and_preserves_native_pairs() {
     let sender = Arc::new(CaptureSender::default());
     let (_dir, runtime, model, review) = fixture(

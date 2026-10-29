@@ -35,8 +35,13 @@ pub async fn request(
     } else {
         Value::Null
     };
+    let system = if runtime.prompts.persona.trim().is_empty() {
+        runtime.prompts.runtime.clone()
+    } else {
+        format!("{}\n\n{}", runtime.prompts.runtime, runtime.prompts.persona)
+    };
     let mut messages = vec![
-        json!({"role":"system","content":format!("{}\n\n{}",runtime.prompts.runtime,runtime.prompts.persona)}),
+        json!({"role":"system","content":system}),
         json!({"role":"user","content":json!({"platform_state":{"directory":runtime.config.directory,"media_catalog":catalog,"report_events":match &runtime.executor.tools.events {Some(events)=>events.catalog(false).await?,None=>vec![]},"profile":profile,"attention":attention,"trigger_source":input.source_target,"trigger_actor":input.actor,"time":chrono::Utc::now().to_rfc3339()}}).to_string()}),
     ];
     messages.extend_from_slice(live);

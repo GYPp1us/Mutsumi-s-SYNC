@@ -53,7 +53,7 @@ cargo run --locked -- --session local-test --text "刚刚的工具回执是什�
 | [playground/](../src/playground/mod.rs) | 多来源回放、独立评估、原字节核对、交互报告 | 场景只控制输入，行动使用正常 Runtime |
 | [config.rs](../src/config.rs) | 外部配置与预算验证 | 添加配置时同步示例与验证 |
 
-提示词集中在 [system-prompts.yaml](../system-prompts.yaml) 的 `runtime`、`persona`、`reviewer`，改提示不需要改 Rust 正文。用户可编辑的预制回复在 [quick-replies.yaml](../quick-replies.yaml)。模板包含稳定 ID、类别、适用说明、启用状态、显式目标绑定和两层消息数组；不执行脚本。默认 `MainModelRouter` 全部交给生成模型；显式添加 `jev` 配置后才使用网络适配器，失败或低置信度回到主模型。尚未验证真实 Jev 准确率，也未实现热重载。
+提示词集中在 [system-prompts.yaml](../system-prompts.yaml)，改提示不需要改 Rust 正文。`runtime` 与 `reviewer` 必填，分别负责通用助手协议与隔离动作审查；`persona` 可省略，默认空，仅在提供时追加到行动模型的 system，不能改变事实与授权。`vision`、`evaluator` 分别用于媒体观察与离线评估，不注入人设。编辑说明见 [系统提示词](system-prompts.md)。用户可编辑的预制回复在 [quick-replies.yaml](../quick-replies.yaml)。模板包含稳定 ID、类别、适用说明、启用状态、显式目标绑定和两层消息数组；不执行脚本。默认 `MainModelRouter` 全部交给生成模型；显式添加 `jev` 配置后才使用网络适配器，失败或低置信度回到主模型。尚未验证真实 Jev 准确率，也未实现热重载。
 
 ```mermaid
 flowchart TD

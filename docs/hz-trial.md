@@ -72,7 +72,7 @@ API 基址留在原服务商时，Key 留空表示保留；更换服务地址时
 | NapCat | `mutsumi-napcat.service`，沿用原安装与身份 |
 | HTTPS 代理 | `/etc/nginx/snippets/mutsumi-v4-location.conf` |
 
-代码入口：`src/bin/server.rs`、`src/web/{mod,routes}.rs`；网页为 `assets/trial.{html,js}`，NapCat 为 `src/napcat.rs`，工具为 `src/workspace.rs`。提示词继续集中在 `system-prompts.yaml`，人设在私有 `profile.yaml`；修改后重启服务生效。
+代码入口：`src/bin/server.rs`、`src/web/{mod,routes}.rs`；网页为 `assets/trial.{html,js}`，NapCat 为 `src/napcat.rs`，工具为 `src/workspace.rs`。提示词集中在 `system-prompts.yaml`，默认使用无固定人设的通用协议；可选人设单独填入 `persona`，私有 `profile.yaml` 保存关系、偏好和工作资料。编辑说明见 [系统提示词](system-prompts.md)，修改后重启服务生效。
 
 `deploy/hz/prepare.py` 是针对现有 HZ 布局的准备脚本，需要 root 和 JSON 标准输入。只有用户明确授权传输凭据后，才可提供 `commandcode_key`；脚本不打印凭据、不启动服务。它备份原 NapCat 网络配置，设置两个不同的 OneBot token，绑定接口到回环地址，停用旧 NapCat 定时启停，校验 nginx 配置。V3 服务和归档不恢复、不修改。
 

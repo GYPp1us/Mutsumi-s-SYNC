@@ -51,6 +51,7 @@ pub struct MediaConfig {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Prompts {
+    #[serde(default)]
     pub persona: String,
     pub runtime: String,
     pub reviewer: String,
@@ -88,11 +89,11 @@ impl Config {
     pub fn prompts(&self) -> Result<Prompts> {
         let p: Prompts =
             serde_yaml::from_str(&std::fs::read_to_string(&self.prompts).context("read prompts")?)?;
-        if [&p.runtime, &p.persona, &p.reviewer]
+        if [&p.runtime, &p.reviewer]
             .iter()
             .any(|x| x.trim().is_empty())
         {
-            bail!("all prompt sections must be non-empty");
+            bail!("runtime and reviewer prompts must be non-empty");
         }
         Ok(p)
     }
