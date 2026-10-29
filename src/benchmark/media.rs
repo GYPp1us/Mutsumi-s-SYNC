@@ -188,6 +188,7 @@ async fn run_cases(
                     }),
                     directory: case_config.directory,
                     tools: ToolRegistry {
+                        events: None,
                         media: Some(service.clone()),
                         workspace: None,
                     },

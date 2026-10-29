@@ -7,6 +7,7 @@ use std::sync::Arc;
 /// The schema registry is the only model-facing tool inventory.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
+    pub events: Option<Arc<crate::reporting::EventRegistry>>,
     pub media: Option<Arc<MediaService>>,
     pub workspace: Option<Arc<crate::workspace::WorkspaceTools>>,
 }
@@ -25,6 +26,12 @@ impl ToolRegistry {
         if self.workspace.is_some() {
             schemas.extend(crate::workspace::WorkspaceTools::schemas());
         }
+        if self.events.is_some() {
+            schemas.extend([
+                json!({"type":"function","function":{"name":"register_event","description":"注册一个外部上报事件。只登记事件资料，不执行任务或自动回复；全部事件共用同一上报端点。返回事件名、地址、请求示例，调用凭据在WebUI外部上报页提供，不进入模型上下文。同名事件定义不可覆盖。","parameters":{"type":"object","properties":{"event":{"type":"string","pattern":"^[A-Za-z0-9._-]{1,96}$","description":"稳定事件名：1到96个ASCII字母、数字、点、下划线或连字符，例如market.alert"},"description":{"type":"string"},"source_kind":{"type":"string","enum":["service","email","child_agent"]}},"required":["event","description","source_kind"],"additionalProperties":false}}}),
+                json!({"type":"function","function":{"name":"set_event_enabled","description":"启用或停用已经注册的外部上报事件。停用后拒绝新的上报，不删除已接收事实，也不自动重放。","parameters":{"type":"object","properties":{"event":{"type":"string","pattern":"^[A-Za-z0-9._-]{1,96}$","description":"稳定事件名：1到96个ASCII字母、数字、点、下划线或连字符，例如market.alert"},"enabled":{"type":"boolean"}},"required":["event","enabled"],"additionalProperties":false}}})
+            ]);
+        }
         schemas
     }
     pub fn validate(&self, name: &str, arguments: &Value) -> Result<()> {
@@ -32,6 +39,18 @@ impl ToolRegistry {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("tool arguments must be an object"))?;
         match name {
+            "register_event" if self.events.is_some() => {
+                let definition: crate::reporting::Definition =
+                    serde_json::from_value(arguments.clone())?;
+                return definition.validate();
+            }
+            "set_event_enabled"
+                if self.events.is_some()
+                    && map.len() == 2
+                    && arguments["event"]
+                        .as_str()
+                        .is_some_and(|s| !s.is_empty() && s.len() <= 96)
+                    && arguments["enabled"].is_boolean() => {}
             "bash" | "edit" | "wait" if self.workspace.is_some() => {
                 return crate::workspace::WorkspaceTools::validate(name, arguments);
             }
@@ -89,6 +108,23 @@ impl ToolRegistry {
     ) -> Result<Value> {
         self.validate(name, arguments)?;
         match name {
+            "register_event" => {
+                self.events
+                    .as_ref()
+                    .unwrap()
+                    .register(serde_json::from_value(arguments.clone())?)
+                    .await
+            }
+            "set_event_enabled" => {
+                self.events
+                    .as_ref()
+                    .unwrap()
+                    .set_enabled(
+                        arguments["event"].as_str().unwrap().into(),
+                        arguments["enabled"].as_bool().unwrap(),
+                    )
+                    .await
+            }
             "bash" | "edit" | "wait" => {
                 self.workspace
                     .as_ref()

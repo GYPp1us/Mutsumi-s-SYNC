@@ -44,37 +44,47 @@ impl Ledger {
         let (session, source, id) = (session.to_owned(), source.to_owned(), id.to_owned());
         self.db(move |db| {
             let tx = db.transaction()?;
-            let existing: Option<i64> = tx
-                .query_row(
-                    "SELECT seq FROM ingress_ids WHERE session=? AND source=? AND external_id=?",
-                    params![session, source, id],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(seq) = existing {
-                let original: String =
-                    tx.query_row("SELECT payload FROM events WHERE seq=?", [seq], |r| {
-                        r.get(0)
-                    })?;
-                let original: Value = serde_json::from_str(&original)?;
-                if original["transport"] != payload["transport"] {
-                    bail!("ingress id reused with different transport payload")
-                }
-                return Ok((seq, false));
-            }
-            tx.execute(
-                "INSERT INTO events(session,turn_id,kind,payload) VALUES(?,?,'inbound',?)",
-                params![session, id, payload.to_string()],
-            )?;
-            let seq = tx.last_insert_rowid();
-            tx.execute(
-                "INSERT INTO ingress_ids VALUES(?,?,?,?)",
-                params![session, source, id, seq],
-            )?;
+            let result = Self::ingest_transaction(&tx, &session, &source, &id, &payload)?;
             tx.commit()?;
-            Ok((seq, true))
+            Ok(result)
         })
         .await
+    }
+    pub(crate) fn ingest_transaction(
+        tx: &rusqlite::Transaction<'_>,
+        session: &str,
+        source: &str,
+        id: &str,
+        payload: &Value,
+    ) -> Result<(i64, bool)> {
+        let existing: Option<i64> = tx
+            .query_row(
+                "SELECT seq FROM ingress_ids WHERE session=? AND source=? AND external_id=?",
+                params![session, source, id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(seq) = existing {
+            let original: String =
+                tx.query_row("SELECT payload FROM events WHERE seq=?", [seq], |r| {
+                    r.get(0)
+                })?;
+            let original: Value = serde_json::from_str(&original)?;
+            if original["transport"] != payload["transport"] {
+                bail!("ingress id reused with different transport payload")
+            }
+            return Ok((seq, false));
+        }
+        tx.execute(
+            "INSERT INTO events(session,turn_id,kind,payload) VALUES(?,?,'inbound',?)",
+            params![session, id, payload.to_string()],
+        )?;
+        let seq = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO ingress_ids VALUES(?,?,?,?)",
+            params![session, source, id, seq],
+        )?;
+        Ok((seq, true))
     }
     pub async fn stream_events(&self, session: &str, after: i64) -> Result<Vec<Value>> {
         let session = session.to_owned();

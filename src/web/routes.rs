@@ -70,11 +70,13 @@ pub fn router(state: Arc<WebState>) -> Router {
         .route("/api/media/{id}", get(media))
         .route("/api/hooks", get(hooks))
         .route("/api/roles", get(roles).post(save_roles))
+        .route("/api/model", get(model_settings).post(save_model_settings))
+        .route("/api/model/test", post(test_model_settings))
         .route("/api/napcat/status", get(napcat_status))
         .route("/api/napcat/qr", get(napcat_qr))
         .route("/api/napcat/refresh", post(napcat_refresh))
         .route("/api/napcat/enabled", post(napcat_enabled))
-        .route("/hooks/{source}", post(hook))
+        .route("/hooks/events", post(report))
         .route("/onebot/events", post(qq_event))
         .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), access))
@@ -208,6 +210,7 @@ async fn logout(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Respo
         .into_response()
 }
 async fn status(State(state): State<Arc<WebState>>) -> Json<Value> {
+    let model = state.models.current();
     let book = state.roles.read().unwrap().clone();
     let directory = state
         .napcat
@@ -215,7 +218,7 @@ async fn status(State(state): State<Arc<WebState>>) -> Json<Value> {
         .map(|c| book.directory(&state.runtime.config.directory, &c.config.bot_id, false))
         .unwrap_or_else(|| state.runtime.config.directory.clone());
     Json(
-        json!({"model":state.runtime.config.provider.model,"provider_configured":state.provider_configured,"busy":state.busy.load(Ordering::Acquire),"needs_attention":state.needs_attention.load(Ordering::Acquire),"qq_enabled":state.qq_enabled.load(Ordering::Acquire),"targets":directory.targets,"last_outcome":state.last_outcome.lock().unwrap().clone(),"tools":state.runtime.executor.tools.schemas(),"qq_scope":if book.scope==super::roles::Scope::Owner {"仅接入角色管理中主人账号的私聊；群聊未开启"} else {"接入角色管理中已启用联系人的私聊；群聊未开启"}}),
+        json!({"model":model.config().model,"provider_configured":model.configured(),"busy":state.busy.load(Ordering::Acquire),"needs_attention":state.needs_attention.load(Ordering::Acquire),"qq_enabled":state.qq_enabled.load(Ordering::Acquire),"targets":directory.targets,"last_outcome":state.last_outcome.lock().unwrap().clone(),"tools":state.runtime.executor.tools.schemas(),"qq_scope":if book.scope==super::roles::Scope::Owner {"仅接入角色管理中主人账号的私聊；群聊未开启"} else {"接入角色管理中已启用联系人的私聊；群聊未开启"}}),
     )
 }
 #[derive(Deserialize)]
@@ -309,10 +312,58 @@ async fn media(State(state): State<Arc<WebState>>, Path(id): Path<String>) -> Re
         .body(Body::from(bytes))
         .unwrap())
 }
-async fn hooks(State(state): State<Arc<WebState>>) -> Json<Value> {
-    Json(
-        json!({"sources":state.settings.hooks.iter().map(|(id,hook)|json!({"id":id,"source":hook.source,"token":state.hook_keys[id],"url":format!("{}{}/hooks/{id}",state.settings.public_origin,state.settings.base_path)})).collect::<Vec<_>>()}),
-    )
+async fn hooks(State(state): State<Arc<WebState>>) -> Result<Json<Value>> {
+    Ok(Json(
+        json!({"endpoint":state.events.endpoint,"events":state.events.catalog(true).await.map_err(|_|unavailable())?}),
+    ))
+}
+async fn model_settings(State(state): State<Arc<WebState>>) -> Json<Value> {
+    Json(state.models.current().public())
+}
+async fn save_model_settings(
+    State(state): State<Arc<WebState>>,
+    Json(input): Json<super::models::Update>,
+) -> Result<Json<Value>> {
+    let _control = state
+        .control
+        .try_lock()
+        .map_err(|_| Error(StatusCode::CONFLICT, "正在处理消息，请稍后保存模型配置"))?;
+    let _profile = state.profile_control.lock().await;
+    if input.version != state.models.current().version() {
+        return Err(Error(StatusCode::CONFLICT, "模型配置已变化，请重新加载"));
+    }
+    let candidate = state.models.candidate(input).map_err(|_| {
+        Error(
+            StatusCode::BAD_REQUEST,
+            "模型配置无效：请检查HTTPS端点、模型、预算和高级选项；更换服务地址需填写新Key",
+        )
+    })?;
+    let book = state.roles.read().unwrap().clone();
+    let profile = state
+        .profile_for(&book, &candidate.metadata())
+        .map_err(|_| unavailable())?;
+    state
+        .models
+        .commit(candidate, profile)
+        .await
+        .map_err(|_| unavailable())?;
+    Ok(Json(
+        json!({"saved":true,"settings":state.models.current().public()}),
+    ))
+}
+async fn test_model_settings(
+    State(state): State<Arc<WebState>>,
+    Json(input): Json<super::models::Update>,
+) -> Response {
+    match state.models.test(input).await {
+        Ok(result) => Json(result).into_response(),
+        // Provider diagnostics deliberately omit response bodies and credentials.
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error":format!("连接测试未通过：{error}；未修改正在使用的配置")})),
+        )
+            .into_response(),
+    }
 }
 async fn roles(State(state): State<Arc<WebState>>) -> Result<Json<Value>> {
     let book = state.roles.read().unwrap().clone();
@@ -373,24 +424,27 @@ async fn save_roles(
         .map_err(|_| unavailable())?;
     Ok(Json(json!({"saved":true,"version":next.version})))
 }
-async fn hook(
+async fn report(
     State(state): State<Arc<WebState>>,
-    Path(source): Path<String>,
     headers: HeaderMap,
-    Json(event): Json<ExternalEvent>,
+    Json(submission): Json<crate::reporting::Submission>,
 ) -> Result<Json<Value>> {
-    let key = state
-        .hook_keys
-        .get(&source)
-        .ok_or(Error(StatusCode::NOT_FOUND, "上报来源不存在"))?;
-    if !bearer(&headers).is_some_and(|given| equal(given, key)) {
-        return Err(Error(StatusCode::UNAUTHORIZED, "上报凭据无效"));
+    let token = bearer(&headers).ok_or(Error(StatusCode::UNAUTHORIZED, "上报凭据无效"))?;
+    match state.events.receive(submission, token).await {
+        Ok((seq, fresh)) => Ok(Json(json!({"accepted":true,"duplicate":!fresh,"seq":seq}))),
+        Err(e) => Err(match e.downcast_ref::<crate::reporting::Rejection>() {
+            Some(crate::reporting::Rejection::Unknown) => {
+                Error(StatusCode::NOT_FOUND, "事件尚未注册")
+            }
+            Some(crate::reporting::Rejection::Unauthorized) => {
+                Error(StatusCode::UNAUTHORIZED, "上报凭据无效")
+            }
+            Some(crate::reporting::Rejection::Disabled) => {
+                Error(StatusCode::FORBIDDEN, "事件已停用")
+            }
+            None => bad(),
+        }),
     }
-    let (seq, fresh) = state
-        .submit(&source, &event, false)
-        .await
-        .map_err(|_| bad())?;
-    Ok(Json(json!({"accepted":true,"duplicate":!fresh,"seq":seq})))
 }
 async fn napcat_status(State(state): State<Arc<WebState>>) -> Json<Value> {
     Json(match &state.napcat {
@@ -562,7 +616,7 @@ async fn qq_event(
                         let bytes=if let Some(id)=cached.and_then(|v|v.as_str().map(str::to_owned)) {task_state.media.bytes_for_target(&id,&target).await?.1}else{client.image_bytes(file,image["url"].as_str()).await?};
                         let record=task_state.media.register(&bytes,"图像尚待观察",vec![target.clone(),"web_owner".into()],"qq-private-ingress").await?;
                         task_state.ingress.ledger.cache_put("qq-image",&key,json!(record.id)).await?;
-                        let (record,description,hit)=task_state.vision.ingest(bytes,record.allowed_targets).await?;
+                        let (record,description,hit)=task_state.models.current().vision.ingest(bytes,record.allowed_targets).await?;
                         Ok::<_,anyhow::Error>(json!({"media":record.reference(),"visual_observation":description,"vision_cache_hit":hit}))
                     }.await;
                     observations.push(match result{Ok(data)=>json!({"position":position,"status":"available","data":data}),Err(_)=>json!({"position":position,"status":"unavailable","reason":"QQ image download or observation unavailable; do not guess"})});

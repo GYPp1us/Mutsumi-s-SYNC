@@ -82,6 +82,7 @@ pub async fn build_with_providers(
                 root: Path::new(&media.outbox).to_owned(),
             }),
             ToolRegistry {
+                events: None,
                 media: Some(service),
                 workspace: None,
             },

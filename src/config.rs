@@ -1,12 +1,14 @@
 use crate::protocol::Directory;
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{path::Path, time::Duration};
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
     pub base_url: String,
+    #[serde(default)]
+    pub chat_endpoint: Option<String>,
     pub model: String,
     pub api_key_env: String,
     pub timeout_seconds: u64,
@@ -97,6 +99,60 @@ impl Config {
 }
 
 impl ProviderConfig {
+    pub fn endpoint(&self) -> Result<String> {
+        let base = reqwest::Url::parse(&self.base_url)?;
+        let endpoint = match self.chat_endpoint.as_deref().filter(|s| !s.is_empty()) {
+            Some(value) if value.starts_with('/') => base.join(value)?,
+            Some(value) => reqwest::Url::parse(value)?,
+            None => reqwest::Url::parse(&format!(
+                "{}/chat/completions",
+                self.base_url.trim_end_matches('/')
+            ))?,
+        };
+        if base.scheme() != "https"
+            || endpoint.scheme() != "https"
+            || base.origin() != endpoint.origin()
+            || !base.username().is_empty()
+            || base.password().is_some()
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.fragment().is_some()
+        {
+            bail!("模型端点必须使用同一服务地址的 HTTPS URL，且不能携带用户名或密码")
+        }
+        Ok(endpoint.to_string())
+    }
+    pub fn validate(&self) -> Result<()> {
+        if self.base_url.len() > 4096 || self.chat_endpoint.as_ref().is_some_and(|s| s.len() > 8192)
+        {
+            bail!("模型服务地址过长")
+        }
+        self.endpoint()?;
+        if self.model.trim().is_empty()
+            || self.model.len() > 200
+            || !(1..=180).contains(&self.timeout_seconds)
+            || !(256..=8192).contains(&self.max_tokens)
+            || serde_json::to_vec(&self.request_options)?.len() > 16384
+        {
+            bail!("模型名称或请求预算无效")
+        }
+        if self.request_options.keys().any(|k| {
+            matches!(
+                k.as_str(),
+                "model"
+                    | "messages"
+                    | "tools"
+                    | "stream"
+                    | "max_tokens"
+                    | "api_key"
+                    | "headers"
+                    | "authorization"
+            )
+        }) {
+            bail!("高级选项不能覆盖协议和凭据字段")
+        }
+        Ok(())
+    }
     pub fn timeout(&self) -> Duration {
         Duration::from_secs(self.timeout_seconds)
     }

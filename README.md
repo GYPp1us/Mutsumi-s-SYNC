@@ -41,3 +41,5 @@ HZ 的 V3 服务已经归档并停止、禁用自启。V4 使用独立目录、�
 本轮实测与保留的失败样本见 [2026-10-23 验证记录](docs/playground-validation-2026-10-23.md)。
 
 HZ 网页、真实媒体、基础工具和并发上报的部署结果见 [2026-10-25 试用验收](docs/hz-validation-2026-10-25.md)。WebUI 现提供 QQ 角色管理与最近入站诊断，默认仅主人，可显式启用已登记联系人；使用方式见 [HZ 试用服务](docs/hz-trial.md)。
+
+WebUI 支持模型连接与高级请求选项配置；外部报告改为模型通过工具注册事件、外部在统一 `/sync/hooks/events` 请求体中提交 `event`、`id`、`content`。详情见 [HZ 试用服务](docs/hz-trial.md)。

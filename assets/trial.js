@@ -21,6 +21,7 @@ document.querySelectorAll('[data-panel]').forEach(button => button.onclick = () 
   document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('hidden', panel.id !== activePanel));
   if (activePanel === 'connections') checkQQ();
   if (activePanel === 'roles') loadRoles();
+  if (activePanel === 'models') loadModel();
 });
 function image(id, parent) { if (!/^media_[a-f0-9]{64}$/.test(id)) return; const img = document.createElement('img'); img.src = 'api/media/' + encodeURIComponent(id); img.alt = '原始媒体'; img.loading = 'lazy'; parent?.append(img); return img; }
 function bubble(label, owner, key) {
@@ -115,13 +116,15 @@ $('toggleQQ').onclick = async () => { try { notice(); await api('api/napcat/enab
 $('loadHooks').onclick = async () => {
   try {
     const result = await api('api/hooks'); $('hookList').replaceChildren();
-    for (const source of result.sources) {
+    const endpoint = document.createElement('p'); endpoint.textContent = '统一端点：' + result.endpoint; $('hookList').append(endpoint);
+    for (const event of result.events) {
       const card = document.createElement('details'), title = document.createElement('summary'), code = document.createElement('pre');
-      title.textContent = source.id + ' · ' + source.source.kind;
-      const body = JSON.stringify({id:crypto.randomUUID(), occurred_at:new Date().toISOString(), text:'一条新的外部观察', media:[]});
-      code.textContent = `curl -X POST '${source.url}' \\\n  -H 'Authorization: Bearer ${source.token}' \\\n  -H 'Content-Type: application/json' \\\n  --data '${body}'`;
+      title.textContent = `${event.event} · ${event.source_kind} · ${event.enabled ? '启用' : '停用'} · ${event.description}`;
+      const body = JSON.stringify({event:event.event, id:crypto.randomUUID(), content:{message:'一条新的外部观察'}});
+      code.textContent = `curl -X POST '${result.endpoint}' \\\n  -H 'Authorization: Bearer ${event.token}' \\\n  -H 'Content-Type: application/json' \\\n  --data '${body}'`;
       card.append(title, code); $('hookList').append(card);
     }
+    if (!result.events.length) { const empty = document.createElement('p'); empty.textContent = '还没有注册事件。请在聊天中让助手注册，然后重新加载。'; $('hookList').append(empty); }
   } catch (error) { notice(error); }
 };
 (async () => {
@@ -172,4 +175,35 @@ $('saveRoles').onclick = async () => {
     notice(); await api('api/roles', {version:rolesVersion, scope:$('roleScope').value, contacts:rolesDraft.map(({qq_id,name,role,enabled}) => ({qq_id,name,role,enabled}))});
     await loadRoles(); await poll(); notice('角色设置已保存并生效。');
   } catch (error) { notice(error); }
+};
+
+let modelVersion = 0;
+async function loadModel() {
+  try {
+    notice(); const data = await api('api/model'); modelVersion = data.version;
+    $('modelBase').value = data.base_url; $('modelEndpoint').value = data.chat_endpoint || '';
+    $('modelName').value = data.model; $('modelConsole').value = data.console_url;
+    $('modelTimeout').value = data.timeout_seconds; $('modelTokens').value = data.max_tokens;
+    $('modelOptions').value = JSON.stringify(data.request_options, null, 2); $('modelKey').value = '';
+    $('modelKeyState').textContent = data.key_configured ? '已配置 Key，当前值不会回显。' : '尚未配置 Key。';
+    $('modelResolvedEndpoint').textContent = '当前实际端点：' + data.effective_endpoint;
+  } catch (error) { notice(error); }
+}
+function modelInput() {
+  const options = JSON.parse($('modelOptions').value || '{}');
+  if (!options || Array.isArray(options) || typeof options !== 'object') throw new Error('高级选项必须是 JSON 对象');
+  return {version:modelVersion, base_url:$('modelBase').value.trim(), chat_endpoint:$('modelEndpoint').value.trim() || null,
+    model:$('modelName').value.trim(), console_url:$('modelConsole').value.trim(), api_key:$('modelKey').value,
+    timeout_seconds:Number($('modelTimeout').value), max_tokens:Number($('modelTokens').value), request_options:options};
+}
+$('reloadModel').onclick = loadModel;
+$('testModel').onclick = async () => {
+  $('testModel').disabled = true;
+  try { notice('正在测试连接…'); const result = await api('api/model/test', modelInput()); notice(`连接成功：${result.resolved_model || result.model}，耗时 ${result.elapsed_ms} ms。当前配置尚未保存。`); }
+  catch (error) { notice(error); } finally { $('testModel').disabled = false; }
+};
+$('modelForm').onsubmit = async event => {
+  event.preventDefault();
+  try { notice(); await api('api/model', modelInput()); await loadModel(); await poll(); notice('模型配置已保存，下一轮使用新配置。'); }
+  catch (error) { notice(error); }
 };

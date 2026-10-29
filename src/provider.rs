@@ -23,6 +23,12 @@ impl OpenAiCompatible {
         Self::for_purpose(config, "main")
     }
     pub fn for_purpose(config: ProviderConfig, purpose: &str) -> Result<Self> {
+        let api_key = std::env::var(&config.api_key_env)
+            .context("API key environment variable is missing")?;
+        Self::with_key(config, purpose, api_key)
+    }
+    pub fn with_key(config: ProviderConfig, purpose: &str, api_key: String) -> Result<Self> {
+        config.validate()?;
         if config.request_options.keys().any(|k| {
             matches!(
                 k.as_str(),
@@ -31,8 +37,6 @@ impl OpenAiCompatible {
         }) {
             bail!("request_options cannot replace protocol fields")
         }
-        let api_key = std::env::var(&config.api_key_env)
-            .context("API key environment variable is missing")?;
         if api_key.trim().is_empty() {
             bail!("API key is empty")
         }
@@ -75,10 +79,7 @@ impl Model for OpenAiCompatible {
         let result = async {
             let mut response = self
                 .client
-                .post(format!(
-                    "{}/chat/completions",
-                    self.config.base_url.trim_end_matches('/')
-                ))
+                .post(self.config.endpoint()?)
                 .bearer_auth(&self.api_key)
                 .json(&body)
                 .send()

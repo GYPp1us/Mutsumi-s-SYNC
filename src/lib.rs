@@ -14,6 +14,7 @@ pub mod playground;
 pub mod protocol;
 pub mod provider;
 pub mod rendering;
+pub mod reporting;
 pub mod review;
 pub mod routing;
 pub mod runtime;

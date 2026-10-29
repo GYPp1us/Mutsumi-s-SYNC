@@ -442,6 +442,7 @@ async fn lost_http_receipt_retains_real_receiver_effect_and_never_replays() -> R
                 sender,
                 directory: config.directory.clone(),
                 tools: ToolRegistry {
+                    events: None,
                     media: Some(media),
                     workspace: None,
                 },

@@ -1,4 +1,5 @@
 //! A small authenticated trial server around the shared orchestration runtime.
+pub mod models;
 pub mod roles;
 mod routes;
 use crate::{
@@ -7,14 +8,12 @@ use crate::{
     ledger::Ledger,
     media::MediaService,
     napcat::{LiveSender, NapcatClient, NapcatConfig},
-    provider::{Model, OpenAiCompatible},
     rendering::RendererWorker,
     review::ModelReviewer,
     routing::{MainModelRouter, QuickReplies},
     runtime::Runtime,
     scheduler::{ExternalEvent, Ingress, Scheduler, Source},
     tools::ToolRegistry,
-    vision::VisionCache,
     workspace::WorkspaceTools,
 };
 use anyhow::{Context, Result, bail};
@@ -43,6 +42,7 @@ pub struct ServerConfig {
     pub access_key_env: String,
     pub onebot_hook_key_env: String,
     pub owner_source: Source,
+    #[serde(default)]
     pub hooks: BTreeMap<String, Hook>,
     pub napcat: Option<NapcatConfig>,
 }
@@ -54,12 +54,12 @@ pub struct Hook {
 }
 
 pub struct WebState {
-    pub provider_configured: bool,
+    pub models: Arc<models::Models>,
+    pub events: Arc<crate::reporting::EventRegistry>,
     pub settings: ServerConfig,
     pub runtime: Arc<Runtime>,
     pub ingress: Arc<Ingress>,
     pub media: Arc<MediaService>,
-    pub vision: Arc<VisionCache>,
     pub napcat: Option<Arc<NapcatClient>>,
     pub qq_enabled: Arc<AtomicBool>,
     pub busy: AtomicBool,
@@ -69,7 +69,6 @@ pub struct WebState {
     pub jobs: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     pub(crate) access_key: String,
     pub(crate) onebot_hook_key: String,
-    pub(crate) hook_keys: BTreeMap<String, String>,
     pub(crate) sessions: Mutex<BTreeMap<String, Instant>>,
     pub(crate) login_attempts: Mutex<Vec<Instant>>,
     pub(crate) roles: RwLock<roles::RoleBook>,
@@ -112,29 +111,10 @@ impl WebState {
         let access_key = secret(&settings.access_key_env)?;
         let onebot_hook_key = secret(&settings.onebot_hook_key_env)?;
         let mut sources = BTreeMap::from([("owner_web".into(), settings.owner_source.clone())]);
-        let mut hook_keys = BTreeMap::new();
         if settings.owner_source.relationship != "owner"
             || settings.owner_source.reply_target.as_deref() != Some("web_owner")
         {
             bail!("invalid web owner binding")
-        }
-        for (name, hook) in &settings.hooks {
-            if name == "owner_web"
-                || name == "qq_owner"
-                || name.is_empty()
-                || !name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-                || !matches!(
-                    hook.source.kind.as_str(),
-                    "service" | "email" | "child_agent"
-                )
-                || hook.source.relationship == "owner"
-            {
-                bail!("external hooks cannot impersonate a human owner")
-            }
-            sources.insert(name.clone(), hook.source.clone());
-            hook_keys.insert(name.clone(), secret(&hook.token_env)?);
         }
         let napcat = settings
             .napcat
@@ -202,24 +182,36 @@ impl WebState {
             )
             .await?,
         );
-        let provider_configured =
-            std::env::var(&config.provider.api_key_env).is_ok_and(|v| !v.trim().is_empty());
-        let vision = Arc::new(VisionCache::new(
-            media.clone(),
-            provider(&config.provider, "vision")?,
-            config.provider.model.clone(),
-            prompts.vision.clone(),
-        )?);
+        let changed = Arc::new(Notify::new());
+        let events = Arc::new(crate::reporting::EventRegistry::new(
+            ledger.clone(),
+            format!(
+                "{}{}/hooks/events",
+                settings.public_origin, settings.base_path
+            ),
+            changed.clone(),
+        ));
+        let models = Arc::new(
+            models::Models::load(
+                ledger.clone(),
+                config.provider.clone(),
+                media.clone(),
+                prompts.vision.clone(),
+            )
+            .await?,
+        );
+        let active = models.current();
+        config.provider = active.config().clone();
         let qq_enabled = Arc::new(AtomicBool::new(false)); // A restart always starts with live QQ disabled.
         let cancel = CancellationToken::new();
         let runtime = Arc::new(Runtime {
             config: config.clone(),
             prompts: prompts.clone(),
-            model: provider(&config.provider, "main")?,
+            model: active.main.clone(),
             executor: Executor {
                 ledger: ledger.clone(),
                 reviewer: Arc::new(ModelReviewer {
-                    model: provider(&config.provider, "review")?,
+                    model: active.reviewer.clone(),
                     system: prompts.reviewer,
                 }),
                 sender: Arc::new(LiveSender {
@@ -233,6 +225,7 @@ impl WebState {
                 }),
                 directory: config.directory.clone(),
                 tools: ToolRegistry {
+                    events: Some(events.clone()),
                     media: Some(media.clone()),
                     workspace: match &config.workspace {
                         Some(workspace) => Some(Arc::new(WorkspaceTools::new(workspace).await?)),
@@ -259,17 +252,17 @@ impl WebState {
                 .await?
                 .is_some_and(|v| v == true);
         let state = Arc::new(Self {
-            provider_configured,
+            models,
+            events,
             settings,
             runtime,
             ingress: Arc::new(Ingress {
                 ledger,
                 session: "live".into(),
                 sources,
-                changed: Arc::new(Notify::new()),
+                changed,
             }),
             media,
-            vision,
             napcat,
             qq_enabled,
             busy: AtomicBool::new(false),
@@ -279,7 +272,6 @@ impl WebState {
             jobs: Mutex::new(vec![]),
             access_key,
             onebot_hook_key,
-            hook_keys,
             sessions: Mutex::new(BTreeMap::new()),
             login_attempts: Mutex::new(vec![]),
             roles: RwLock::new(role_book),
@@ -296,7 +288,12 @@ impl WebState {
         self.install_roles_profile(&book).await
     }
     pub(crate) async fn install_roles_profile(&self, book: &roles::RoleBook) -> Result<()> {
+        let profile = self.profile_for(book, &self.models.current().metadata())?;
+        self.ingress.ledger.install_profile(profile).await
+    }
+    pub(crate) fn profile_for(&self, book: &roles::RoleBook, model: &Value) -> Result<Value> {
         let mut profile = self.profile.clone();
+        profile["model_settings"] = model.clone();
         profile["qq_roles"] = serde_json::to_value(book)?;
         if let Some(owner) = book
             .contacts
@@ -307,30 +304,35 @@ impl WebState {
             profile["owner"]["name"] = json!(owner.name);
         }
         profile["host_transport_state"] = json!({"qq_enabled":self.qq_enabled.load(Ordering::Acquire),"web_target":"web_owner","qq_scope":book.scope,"web_receipt":"stored in authenticated web UI; not proof the browser has read it","napcat_receipt":"API accepted with a message id; not proof a human has read it"});
-        self.ingress.ledger.install_profile(profile).await
+        Ok(profile)
     }
     pub(crate) fn scoped_runtime(&self) -> Result<Arc<Runtime>> {
-        let Some(client) = &self.napcat else {
-            return Ok(self.runtime.clone());
-        };
-        let book = self.roles.read().unwrap().clone();
+        let active = self.models.current();
         let mut config = self.runtime.config.clone();
-        config.directory = book.directory(&config.directory, &client.config.bot_id, false);
+        config.provider = active.config().clone();
         let mut executor = self.runtime.executor.clone();
-        executor.directory = config.directory.clone();
-        executor.sender = Arc::new(LiveSender {
-            ledger: self.ingress.ledger.clone(),
-            media: self.media.clone(),
-            napcat: self.napcat.clone(),
-            qq_enabled: self.qq_enabled.clone(),
-            directory: config.directory.clone(),
-            bindings: book.bindings(),
-            session: "live".into(),
+        executor.reviewer = Arc::new(ModelReviewer {
+            model: active.reviewer.clone(),
+            system: self.runtime.prompts.reviewer.clone(),
         });
+        if let Some(client) = &self.napcat {
+            let book = self.roles.read().unwrap().clone();
+            config.directory = book.directory(&config.directory, &client.config.bot_id, false);
+            executor.directory = config.directory.clone();
+            executor.sender = Arc::new(LiveSender {
+                ledger: self.ingress.ledger.clone(),
+                media: self.media.clone(),
+                napcat: self.napcat.clone(),
+                qq_enabled: self.qq_enabled.clone(),
+                directory: config.directory.clone(),
+                bindings: book.bindings(),
+                session: "live".into(),
+            });
+        }
         Ok(Arc::new(Runtime {
             config,
             prompts: self.runtime.prompts.clone(),
-            model: self.runtime.model.clone(),
+            model: active.main.clone(),
             executor,
             router: self.runtime.router.clone(),
             quick_replies: self.runtime.quick_replies.clone(),
@@ -363,7 +365,7 @@ impl WebState {
             self.spawn(async move {
                 let mut observations=Vec::new();
                 for (position,id) in event.media.iter().enumerate() {
-                    let result=async {let (record,bytes)=state.media.bytes_for_target(id,"web_owner").await?;let (record,description,hit)=state.vision.ingest(bytes,record.allowed_targets).await?;Ok::<_,anyhow::Error>(json!({"media":record.reference(),"visual_observation":description,"vision_cache_hit":hit}))}.await;
+                    let result=async {let (record,bytes)=state.media.bytes_for_target(id,"web_owner").await?;let (record,description,hit)=state.models.current().vision.ingest(bytes,record.allowed_targets).await?;Ok::<_,anyhow::Error>(json!({"media":record.reference(),"visual_observation":description,"vision_cache_hit":hit}))}.await;
                     observations.push(match result{Ok(data)=>json!({"position":position,"status":"available","data":data}),Err(_)=>json!({"position":position,"status":"unavailable","reason":"visual observation unavailable; original media is retained"})});
                 }
                 if let Err(error)=state.ingress.observed_media(&event.id,json!(observations)).await {eprintln!("media observation persistence failed: {error}");}
@@ -440,28 +442,6 @@ fn secret(name: &str) -> Result<String> {
         bail!("server credentials must contain at least 24 characters")
     };
     Ok(value)
-}
-
-struct UnconfiguredModel;
-#[async_trait::async_trait]
-impl Model for UnconfiguredModel {
-    async fn complete(
-        &self,
-        _messages: &[Value],
-        _tools: &[Value],
-    ) -> Result<crate::protocol::AssistantRound> {
-        bail!("model provider credentials are not configured")
-    }
-}
-fn provider(config: &crate::config::ProviderConfig, purpose: &str) -> Result<Arc<dyn Model>> {
-    if std::env::var(&config.api_key_env).is_ok_and(|v| !v.trim().is_empty()) {
-        Ok(Arc::new(OpenAiCompatible::for_purpose(
-            config.clone(),
-            purpose,
-        )?))
-    } else {
-        Ok(Arc::new(UnconfiguredModel))
-    }
 }
 
 pub async fn serve(path: &Path) -> Result<()> {

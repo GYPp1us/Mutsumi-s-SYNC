@@ -10,18 +10,5 @@ owner_source:
   relationship: owner
   conversation: web_owner
   reply_target: web_owner
-hooks:
-  news:
-    token_env: MUTSUMI_HOOK_NEWS_KEY
-    source: {actor: service:news, kind: service, relationship: subscription, conversation: news_feed, reply_target: null}
-  market:
-    token_env: MUTSUMI_HOOK_MARKET_KEY
-    source: {actor: service:market, kind: service, relationship: observation, conversation: market_feed, reply_target: null}
-  agent:
-    token_env: MUTSUMI_HOOK_AGENT_KEY
-    source: {actor: agent:registered, kind: child_agent, relationship: worker, conversation: agent_reports, reply_target: null}
-  mail:
-    token_env: MUTSUMI_HOOK_MAIL_KEY
-    source: {actor: email:inbox, kind: email, relationship: untrusted_sender, conversation: mail_inbox, reply_target: null}
 # Optional. Actual IDs and credentials belong in the private server configuration.
 napcat: null

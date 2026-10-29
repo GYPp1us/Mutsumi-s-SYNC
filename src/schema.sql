@@ -2,7 +2,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = FULL;
 BEGIN;
 PRAGMA application_id = 0x4d535934;
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 
 CREATE TABLE IF NOT EXISTS events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,5 +64,17 @@ CREATE TABLE IF NOT EXISTS cache (
     key TEXT NOT NULL,
     value TEXT NOT NULL,
     PRIMARY KEY(namespace,key)
+);
+-- Private configuration is never selected into model context or event history.
+CREATE TABLE IF NOT EXISTS private_settings (
+    name TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS report_events (
+    name TEXT PRIMARY KEY,
+    description TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    token TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
 );
 COMMIT;
