@@ -147,11 +147,7 @@ impl Runtime {
                 live.extend_from_slice(&refreshed.messages[history.messages.len()..]);
                 history = refreshed;
             }
-            // Refuse oversized history instead of silently discarding facts or half a tool pair.
-            if serde_json::to_vec(&live)?.len() > 256 * 1024 {
-                outcome.status = "context_limit".into();
-                break;
-            }
+            // Context assembly chooses an explicit historical window; the full ledger stays intact.
             let round = if let Some(template) = template.as_ref().filter(|_| index == 0) {
                 crate::protocol::AssistantRound {
                     content: Some(serde_json::to_string(template)?),

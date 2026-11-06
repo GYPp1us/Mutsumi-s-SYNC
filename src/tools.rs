@@ -7,6 +7,7 @@ use std::sync::Arc;
 /// The schema registry is the only model-facing tool inventory.
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
+    pub knowledge: Option<Arc<crate::knowledge::Knowledge>>,
     pub events: Option<Arc<crate::reporting::EventRegistry>>,
     pub media: Option<Arc<MediaService>>,
     pub workspace: Option<Arc<crate::workspace::WorkspaceTools>>,
@@ -17,6 +18,9 @@ impl ToolRegistry {
         let mut schemas = vec![
             json!({"type":"function","function":{"name":"clock","description":"读取可信宿主当前 UTC+8 时间。只读，无外部副作用。","parameters":{"type":"object","properties":{},"additionalProperties":false}}}),
         ];
+        if self.knowledge.is_some() {
+            schemas.extend(crate::knowledge::Knowledge::schemas());
+        }
         if self.media.is_some() {
             schemas.extend([
             json!({"type":"function","function":{"name":"media_search","description":"按真实视觉描述搜索已有媒体。query为空可列出；target_ref明确选择预期听众，只返回该听众有权访问的引用。不会重新识图或发送。","parameters":{"type":"object","properties":{"query":{"type":"string","description":"描述中的关键词，可为空"},"target_ref":{"type":"string"}},"required":["query","target_ref"],"additionalProperties":false}}}),
@@ -35,6 +39,9 @@ impl ToolRegistry {
         schemas
     }
     pub fn validate(&self, name: &str, arguments: &Value) -> Result<()> {
+        if self.knowledge.is_some() && crate::knowledge::Knowledge::handles(name) {
+            return crate::knowledge::Knowledge::validate(name, arguments);
+        }
         let map = arguments
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("tool arguments must be an object"))?;
@@ -107,6 +114,9 @@ impl ToolRegistry {
         cancel: &tokio_util::sync::CancellationToken,
     ) -> Result<Value> {
         self.validate(name, arguments)?;
+        if crate::knowledge::Knowledge::handles(name) {
+            bail!("knowledge tools require host-owned invocation context")
+        }
         match name {
             "register_event" => {
                 self.events

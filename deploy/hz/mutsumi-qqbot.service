@@ -1,0 +1,32 @@
+[Unit]
+Description=Mutsumi optional official QQ Bot SDK bridge
+After=network-online.target mutsumi-sync-v4.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mutsumi-qqbot
+Group=mutsumi-qqbot
+WorkingDirectory=/opt/mutsumi-sync-v4/current/adapters/qqbot
+EnvironmentFile=/opt/mutsumi-sync-v4/shared/qqbot.env
+Environment=QQBOT_STATE_DIR=/var/lib/mutsumi-qqbot
+ExecStart=/usr/local/bin/node main.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+ReadWritePaths=/var/lib/mutsumi-qqbot
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

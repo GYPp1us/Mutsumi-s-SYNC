@@ -45,3 +45,5 @@ HZ 网页、真实媒体、基础工具和并发上报的部署结果见 [2026-1
 WebUI 支持模型连接与高级请求选项配置；外部报告改为模型通过工具注册事件、外部在统一 `/sync/hooks/events` 请求体中提交 `event`、`id`、`content`。详情见 [HZ 试用服务](docs/hz-trial.md)。
 
 默认 [系统提示词](docs/system-prompts.md) 使用通用助手行为与运行协议，不绑定角色扮演；后续人设通过可选 `persona` 独立补充。
+
+长期笔记、完整历史检索、SKILL 包与持久化内部投递现已接入共用编排核；WebUI 的“笔记与技能”页可维护内容。官方 QQ Bot SDK 是默认关闭的可选通道，与 NapCat 并存，配置和验收边界见 [知识与官方 QQ 接入](docs/knowledge-and-qqbot.md)。

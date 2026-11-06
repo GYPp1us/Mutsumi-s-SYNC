@@ -298,6 +298,10 @@ async fn run_with_transport(
                 }),
                 directory: config.directory.clone(),
                 tools: ToolRegistry {
+                    knowledge: Some(Arc::new(crate::knowledge::Knowledge::new(
+                        ledger.clone(),
+                        Path::new(&config.skills_dir),
+                    )?)),
                     events: None,
                     media: Some(media.clone()),
                     workspace: None,

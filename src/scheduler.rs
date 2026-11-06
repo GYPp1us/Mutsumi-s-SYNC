@@ -46,6 +46,14 @@ pub struct Ingress {
 }
 impl Ingress {
     pub async fn receive(&self, source_id: &str, event: &ExternalEvent) -> Result<(i64, bool)> {
+        self.receive_with_jobs(source_id, event, vec![]).await
+    }
+    pub async fn receive_with_jobs(
+        &self,
+        source_id: &str,
+        event: &ExternalEvent,
+        jobs: Vec<(String, String, Value)>,
+    ) -> Result<(i64, bool)> {
         let source = self
             .sources
             .get(source_id)
@@ -66,7 +74,7 @@ impl Ingress {
         let payload = json!({"event_id":event.id,"source_id":source_id,"actor":source.actor,"actor_kind":source.kind,"relationship":source.relationship,"conversation":source.conversation,"source_target":source.reply_target,"occurred_at":event.occurred_at,"received_at":received,"text":event.text,"segments":segments,"correlation_id":event.correlation_id,"media_status":if event.media.is_empty(){"none"}else{"pending"},"transport":event});
         let result = self
             .ledger
-            .ingest(&self.session, source_id, &event.id, payload)
+            .ingest_with_jobs(&self.session, source_id, &event.id, payload, jobs)
             .await?;
         if result.1 {
             self.changed.notify_one();

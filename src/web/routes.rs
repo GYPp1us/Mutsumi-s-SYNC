@@ -25,17 +25,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Error(StatusCode, &'static str);
+pub(super) struct Error(pub StatusCode, pub &'static str);
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         (self.0, Json(json!({"error":self.1}))).into_response()
     }
 }
-type Result<T> = std::result::Result<T, Error>;
-fn bad() -> Error {
+pub(super) type Result<T> = std::result::Result<T, Error>;
+pub(super) fn bad() -> Error {
     Error(StatusCode::BAD_REQUEST, "请求格式或引用无效")
 }
-fn unavailable() -> Error {
+pub(super) fn unavailable() -> Error {
     Error(
         StatusCode::SERVICE_UNAVAILABLE,
         "服务暂不可用，请查看连接状态",
@@ -62,8 +62,27 @@ pub fn router(state: Arc<WebState>) -> Router {
             get(|| async { Json(json!({"status":"ok","service":"mutsumi-v4"})) }),
         )
         .route("/api/login", post(login))
+        .route(
+            "/knowledge.js",
+            get(|| async {
+                (
+                    [("content-type", "application/javascript; charset=utf-8")],
+                    include_str!("../../assets/knowledge.js"),
+                )
+            }),
+        )
         .route("/api/logout", post(logout))
         .route("/api/status", get(status))
+        .route("/api/knowledge", get(super::knowledge::index))
+        .route("/api/notes", post(super::knowledge::save_note))
+        .route("/api/history", get(super::knowledge::history))
+        .route(
+            "/api/skills/{name}",
+            get(super::knowledge::read_skill).post(super::knowledge::save_skill),
+        )
+        .route("/api/qqbot/status", get(super::official::status))
+        .route("/api/qqbot/enabled", post(super::official::enable))
+        .route("/qqbot/events", post(super::official::event))
         .route("/api/events", get(events))
         .route("/api/messages", post(message))
         .route("/api/uploads", post(upload))
@@ -105,9 +124,12 @@ async fn access(State(state): State<Arc<WebState>>, request: Request, next: Next
     {
         return Error(StatusCode::FORBIDDEN, "来源校验失败").into_response();
     }
-    let public = matches!(path, "/" | "/app.js" | "/health" | "/api/login")
-        || path.starts_with("/hooks/")
-        || path == "/onebot/events";
+    let public = matches!(
+        path,
+        "/" | "/app.js" | "/knowledge.js" | "/health" | "/api/login"
+    ) || path.starts_with("/hooks/")
+        || path == "/onebot/events"
+        || path == "/qqbot/events";
     if !public {
         let cookie = request
             .headers()
@@ -212,11 +234,14 @@ async fn logout(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Respo
 async fn status(State(state): State<Arc<WebState>>) -> Json<Value> {
     let model = state.models.current();
     let book = state.roles.read().unwrap().clone();
-    let directory = state
+    let mut directory = state
         .napcat
         .as_ref()
         .map(|c| book.directory(&state.runtime.config.directory, &c.config.bot_id, false))
         .unwrap_or_else(|| state.runtime.config.directory.clone());
+    if let Some(client) = &state.official {
+        directory = client.directory(&directory, false);
+    }
     Json(
         json!({"model":model.config().model,"provider_configured":model.configured(),"busy":state.busy.load(Ordering::Acquire),"needs_attention":state.needs_attention.load(Ordering::Acquire),"qq_enabled":state.qq_enabled.load(Ordering::Acquire),"targets":directory.targets,"last_outcome":state.last_outcome.lock().unwrap().clone(),"tools":state.runtime.executor.tools.schemas(),"qq_scope":if book.scope==super::roles::Scope::Owner {"仅接入角色管理中主人账号的私聊；群聊未开启"} else {"接入角色管理中已启用联系人的私聊；群聊未开启"}}),
     )
@@ -283,16 +308,34 @@ async fn upload(
     let bytes = STANDARD.decode(input.base64).map_err(|_| bad())?;
     let mut audience = vec!["web_owner".into()];
     if input.allow_qq {
-        if state.napcat.is_none() {
+        if state.napcat.is_some() {
+            let book = state.roles.read().unwrap();
+            if let Some(owner) = book
+                .contacts
+                .values()
+                .find(|c| c.role == super::roles::Role::Owner)
+            {
+                audience.push(book.target(&owner.qq_id));
+            }
+        }
+        if let Some(client) = &state.official {
+            audience.extend(
+                client
+                    .config
+                    .bindings
+                    .iter()
+                    .filter(|b| {
+                        b.scope == "c2c"
+                            && b.senders
+                                .get(&b.conversation_id)
+                                .is_some_and(|r| r == "owner")
+                    })
+                    .map(|b| b.target(&client.config.app_id)),
+            );
+        }
+        if audience.len() == 1 {
             return Err(bad());
         }
-        let book = state.roles.read().unwrap();
-        let owner = book
-            .contacts
-            .values()
-            .find(|c| c.role == super::roles::Role::Owner)
-            .ok_or_else(bad)?;
-        audience.push(book.target(&owner.qq_id));
     }
     let record = state
         .media
@@ -589,7 +632,21 @@ async fn qq_event(
     let (seq, fresh) = state
         .ingress
         .ledger
-        .ingest("live", &target, &id, payload)
+        .ingest_with_jobs(
+            "live",
+            &target,
+            &id,
+            payload,
+            if images.is_empty() {
+                vec![]
+            } else {
+                vec![(
+                    "vision".into(),
+                    format!("napcat:{target}:{id}"),
+                    json!({"source":"napcat","event_id":id,"target_ref":target,"images":images}),
+                )]
+            },
+        )
         .await
         .map_err(|_| bad())?;
     if fresh {
@@ -600,30 +657,6 @@ async fn qq_event(
                 .map_err(|_| unavailable())?;
         }
         state.ingress.changed.notify_one();
-        if !images.is_empty() {
-            let state = state.clone();
-            let task_state = state.clone();
-            state.spawn(async move {
-                let mut observations=Vec::new();
-                for (position,image) in images.into_iter().enumerate() {
-                    let result=async {
-                        let client=task_state.napcat.as_ref().unwrap();let file=image["file"].as_str().unwrap_or("");
-                        let reference = if file.is_empty() {
-                            image["url"].as_str().ok_or_else(||anyhow::anyhow!("missing image reference"))?
-                        } else { file };
-                        let key=format!("{}:{reference}",client.config.bot_id);
-                        let cached=task_state.ingress.ledger.cache_get("qq-image",&key).await?;
-                        let bytes=if let Some(id)=cached.and_then(|v|v.as_str().map(str::to_owned)) {task_state.media.bytes_for_target(&id,&target).await?.1}else{client.image_bytes(file,image["url"].as_str()).await?};
-                        let record=task_state.media.register(&bytes,"图像尚待观察",vec![target.clone(),"web_owner".into()],"qq-private-ingress").await?;
-                        task_state.ingress.ledger.cache_put("qq-image",&key,json!(record.id)).await?;
-                        let (record,description,hit)=task_state.models.current().vision.ingest(bytes,record.allowed_targets).await?;
-                        Ok::<_,anyhow::Error>(json!({"media":record.reference(),"visual_observation":description,"vision_cache_hit":hit}))
-                    }.await;
-                    observations.push(match result{Ok(data)=>json!({"position":position,"status":"available","data":data}),Err(_)=>json!({"position":position,"status":"unavailable","reason":"QQ image download or observation unavailable; do not guess"})});
-                }
-                let _=task_state.ingress.observed_media(&id,json!(observations)).await;
-            });
-        }
     }
     Ok(Json(json!({"accepted":true,"duplicate":!fresh,"seq":seq})))
 }

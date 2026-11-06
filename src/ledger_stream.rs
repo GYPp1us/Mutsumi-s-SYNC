@@ -41,10 +41,26 @@ impl Ledger {
         id: &str,
         payload: Value,
     ) -> Result<(i64, bool)> {
+        self.ingest_with_jobs(session, source, id, payload, vec![])
+            .await
+    }
+    pub async fn ingest_with_jobs(
+        &self,
+        session: &str,
+        source: &str,
+        id: &str,
+        payload: Value,
+        jobs: Vec<(String, String, Value)>,
+    ) -> Result<(i64, bool)> {
         let (session, source, id) = (session.to_owned(), source.to_owned(), id.to_owned());
         self.db(move |db| {
             let tx = db.transaction()?;
             let result = Self::ingest_transaction(&tx, &session, &source, &id, &payload)?;
+            if result.1 {
+                for (kind, key, payload) in jobs {
+                    crate::deliveries::enqueue(&tx, &kind, &key, &payload)?;
+                }
+            }
             tx.commit()?;
             Ok(result)
         })
@@ -84,6 +100,7 @@ impl Ledger {
             "INSERT INTO ingress_ids VALUES(?,?,?,?)",
             params![session, source, id, seq],
         )?;
+        crate::deliveries::enqueue(tx, "attention", session, &json!({"session":session}))?;
         Ok((seq, true))
     }
     pub async fn stream_events(&self, session: &str, after: i64) -> Result<Vec<Value>> {

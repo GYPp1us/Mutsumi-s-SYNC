@@ -189,6 +189,148 @@ async fn optional_persona_does_not_replace_the_runtime_protocol() -> Result<()> 
 }
 
 #[tokio::test]
+async fn historical_window_keeps_current_input_and_native_tool_pairs_without_deleting_history()
+-> Result<()> {
+    let (_dir, runtime, _, _) = fixture(vec![], Arc::new(CaptureSender::default())).await;
+    let mut live = vec![];
+    for i in 0..40 {
+        live.push(json!({"role":"user","content":format!("old-{i}:{}","x".repeat(4096))}));
+        live.push(json!({"role":"assistant","content":null,"tool_calls":[{"id":format!("call-{i}"),"type":"function","function":{"name":"clock","arguments":"{}"}}]}));
+        live.push(json!({"role":"tool","tool_call_id":format!("call-{i}"),"content":"completed"}));
+    }
+    live.push(json!({"role":"user","content":json!({"actor":"test_owner","text":"current input"}).to_string()}));
+    let request =
+        mutsumi_runtime::context::request(&runtime, &input("current input"), &live, 0).await?;
+    assert!(request.len() < live.len());
+    assert!(
+        request.last().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .contains("current input")
+    );
+    let state: Value = serde_json::from_str(request[1]["content"].as_str().unwrap())?;
+    assert!(
+        state["platform_state"]["history_window"]["omitted_messages"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    for (index, message) in request
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m["role"] == "tool")
+    {
+        let id = message["tool_call_id"].as_str().unwrap();
+        assert!(request[..index].iter().any(|m| {
+            m["tool_calls"]
+                .as_array()
+                .is_some_and(|calls| calls.iter().any(|c| c["id"] == id))
+        }));
+    }
+    assert_eq!(live.len(), 121);
+    Ok(())
+}
+
+#[tokio::test]
+async fn knowledge_tools_use_the_same_review_loop_and_progressive_context() -> Result<()> {
+    let (dir, mut runtime, model, review) =
+        fixture(vec![], Arc::new(CaptureSender::default())).await;
+    let knowledge = Arc::new(mutsumi_runtime::knowledge::Knowledge::new(
+        runtime.executor.ledger.clone(),
+        &dir.path().join("skills"),
+    )?);
+    let skill = knowledge
+        .skills
+        .edit(
+            "sample",
+            mutsumi_runtime::skills::Edit {
+                path: "SKILL.md".into(),
+                content: "---\nname: sample\ndescription: 证据检查\n---\n\nfull-skill-body-marker"
+                    .into(),
+                expected_revision: None,
+            },
+        )
+        .await?;
+    let seq = runtime
+        .executor
+        .ledger
+        .event(
+            "test-session",
+            "evidence",
+            "inbound",
+            json!({"event_id":"preference","actor":"test_owner","text":"偏好简洁中文"}),
+        )
+        .await?;
+    let call = |id: &str, name: &str, args: Value| {
+        let mut response = round(vec![], false);
+        response.tool_calls = serde_json::from_value(json!([{"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}])).unwrap();
+        response
+    };
+    *model.rounds.lock().unwrap() = vec![
+        call("save-note","note_upsert",json!({"id":"preference","expected_version":0,"title":"回复偏好","body":"简洁中文","evidence_seqs":[seq],"archived":false})),
+        call("load-skill","skill_read",json!({"name":"sample","path":"SKILL.md","revision":skill["revision"]})),
+        round(vec![],false),
+    ].into();
+    runtime.executor.tools.knowledge = Some(knowledge);
+    let outcome = runtime.run(input("保存偏好并查阅检查方法")).await?;
+    assert_eq!(outcome.status, "completed");
+    assert_eq!(outcome.tool_count, 2);
+    assert_eq!(review.actions.lock().unwrap().len(), 2);
+    let requests = model.requests.lock().unwrap();
+    assert!(!serde_json::to_string(&requests[0])?.contains("full-skill-body-marker"));
+    let second: Value = serde_json::from_str(requests[1][1]["content"].as_str().unwrap())?;
+    assert_eq!(
+        second["platform_state"]["knowledge"]["notes"][0]["id"],
+        "preference"
+    );
+    assert!(requests[2].iter().any(|m| {
+        m["role"] == "tool"
+            && m["tool_call_id"] == "load-skill"
+            && m["content"]
+                .as_str()
+                .unwrap()
+                .contains("full-skill-body-marker")
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn context_window_never_discards_pending_input_or_advances_its_checkpoint() -> Result<()> {
+    let (_dir, runtime, _, _) = fixture(vec![], Arc::new(CaptureSender::default())).await;
+    let ledger = &runtime.executor.ledger;
+    for id in ["unread-a", "unread-b"] {
+        ledger
+            .ingest(
+                "test-session",
+                "source",
+                id,
+                json!({"event_id":id,"text":id,"transport":{}}),
+            )
+            .await?;
+    }
+    let mut live = (0..30)
+        .map(|_| json!({"role":"user","content":"old".repeat(4096)}))
+        .collect::<Vec<_>>();
+    live.push(json!({"role":"user","content":json!({"event_id":"unread-a","text":"must-keep-a"}).to_string()}));
+    live.extend((0..30).map(|_| json!({"role":"user","content":"later".repeat(1024)})));
+    live.push(json!({"role":"user","content":json!({"event_id":"unread-b","text":"must-keep-b"}).to_string()}));
+    let mut attention = input("");
+    attention.source_target = "attention".into();
+    let request = mutsumi_runtime::context::request(&runtime, &attention, &live, i64::MAX).await?;
+    let text = serde_json::to_string(&request)?;
+    assert!(text.contains("must-keep-a") && text.contains("must-keep-b"));
+    assert_eq!(ledger.cursor("test-session").await?, 0);
+    live.remove(30);
+    assert!(
+        mutsumi_runtime::context::request(&runtime, &attention, &live, i64::MAX)
+            .await
+            .is_err()
+    );
+    assert_eq!(ledger.pending("test-session").await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
 async fn tool_round_content_sends_before_tool_and_preserves_native_pairs() {
     let sender = Arc::new(CaptureSender::default());
     let (_dir, runtime, model, review) = fixture(

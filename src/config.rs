@@ -37,6 +37,11 @@ pub struct Config {
     pub capture_context: bool,
     #[serde(default)]
     pub workspace: Option<crate::workspace::WorkspaceConfig>,
+    #[serde(default = "default_skills_dir")]
+    pub skills_dir: String,
+}
+fn default_skills_dir() -> String {
+    "skills".into()
 }
 
 #[derive(Clone, Deserialize)]
@@ -78,7 +83,7 @@ impl Config {
             || config.directory.targets.values().any(|t| {
                 !matches!(
                     t.transport.as_str(),
-                    "terminal" | "onebot_simulator" | "webui" | "napcat"
+                    "terminal" | "onebot_simulator" | "webui" | "napcat" | "qq_official"
                 )
             })
         {

@@ -119,7 +119,7 @@ pub fn validate_message(message: &OutgoingMessage, directory: &Directory) -> Res
     };
     if !matches!(
         target.transport.as_str(),
-        "terminal" | "onebot_simulator" | "webui" | "napcat"
+        "terminal" | "onebot_simulator" | "webui" | "napcat" | "qq_official"
     ) {
         bail!("transport is not enabled in this prototype")
     }
@@ -128,6 +128,11 @@ pub fn validate_message(message: &OutgoingMessage, directory: &Directory) -> Res
     }
     for segment in &message.segments {
         match segment {
+            Segment::Face { .. } if target.transport == "qq_official" => {
+                bail!(
+                    "official QQ does not support native face segments; use Unicode emoji or an image"
+                )
+            }
             Segment::Text { text } if text.trim().is_empty() || text.len() > 16_384 => {
                 bail!("invalid text length")
             }

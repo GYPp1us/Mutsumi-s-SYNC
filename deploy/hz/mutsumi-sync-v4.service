@@ -26,6 +26,7 @@ ProtectControlGroups=true
 ProtectProc=invisible
 ReadWritePaths=/var/lib/mutsumi-v4
 ReadWritePaths=/opt/mutsumi-sync-v4/shared/workspace
+ReadWritePaths=/opt/mutsumi-sync-v4/shared/skills
 MemoryHigh=768M
 MemoryMax=1200M
 TasksMax=256

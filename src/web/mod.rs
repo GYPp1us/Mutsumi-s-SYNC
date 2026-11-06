@@ -1,5 +1,8 @@
 //! A small authenticated trial server around the shared orchestration runtime.
+mod delivery;
+mod knowledge;
 pub mod models;
+mod official;
 pub mod roles;
 mod routes;
 use crate::{
@@ -35,6 +38,8 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+    #[serde(default)]
+    pub qq_official: Option<crate::qqbot::Config>,
     pub runtime_config: String,
     pub listen: String,
     pub public_origin: String,
@@ -54,6 +59,8 @@ pub struct Hook {
 }
 
 pub struct WebState {
+    pub official: Option<Arc<crate::qqbot::Client>>,
+    pub deliveries: crate::deliveries::DeliveryQueue,
     pub models: Arc<models::Models>,
     pub events: Arc<crate::reporting::EventRegistry>,
     pub settings: ServerConfig,
@@ -104,7 +111,7 @@ impl WebState {
             .directory
             .targets
             .values()
-            .any(|t| !matches!(t.transport.as_str(), "webui" | "napcat"))
+            .any(|t| !matches!(t.transport.as_str(), "webui" | "napcat" | "qq_official"))
         {
             bail!("web server only supports explicit webui and napcat targets")
         }
@@ -122,6 +129,15 @@ impl WebState {
             .map(NapcatClient::new)
             .transpose()?
             .map(Arc::new);
+        let official = settings
+            .qq_official
+            .clone()
+            .map(crate::qqbot::Client::new)
+            .transpose()?
+            .map(Arc::new);
+        if let Some(client) = &official {
+            config.directory = client.directory(&config.directory, true);
+        }
         if let Some(client) = &napcat {
             if client
                 .config
@@ -144,6 +160,10 @@ impl WebState {
         }
         let prompts = config.prompts()?;
         let ledger = Ledger::open(Path::new(&config.database)).await?;
+        let knowledge = Arc::new(crate::knowledge::Knowledge::new(
+            ledger.clone(),
+            Path::new(&config.skills_dir),
+        )?);
         let role_book = match ledger
             .cache_get("runtime", "profile")
             .await?
@@ -225,6 +245,7 @@ impl WebState {
                 }),
                 directory: config.directory.clone(),
                 tools: ToolRegistry {
+                    knowledge: Some(knowledge),
                     events: Some(events.clone()),
                     media: Some(media.clone()),
                     workspace: match &config.workspace {
@@ -252,6 +273,8 @@ impl WebState {
                 .await?
                 .is_some_and(|v| v == true);
         let state = Arc::new(Self {
+            official,
+            deliveries: crate::deliveries::DeliveryQueue(ledger.clone()),
             models,
             events,
             settings,
@@ -280,6 +303,12 @@ impl WebState {
             profile,
         });
         state.update_profile().await?;
+        if !state.ingress.ledger.pending("live").await?.is_empty() {
+            state
+                .deliveries
+                .enqueue("attention", "live", json!({"session":"live"}))
+                .await?;
+        }
         Ok(state)
     }
     pub async fn update_profile(&self) -> Result<()> {
@@ -303,7 +332,7 @@ impl WebState {
             profile["owner"]["qq_id"] = json!(owner.qq_id);
             profile["owner"]["name"] = json!(owner.name);
         }
-        profile["host_transport_state"] = json!({"qq_enabled":self.qq_enabled.load(Ordering::Acquire),"web_target":"web_owner","qq_scope":book.scope,"web_receipt":"stored in authenticated web UI; not proof the browser has read it","napcat_receipt":"API accepted with a message id; not proof a human has read it"});
+        profile["host_transport_state"] = json!({"qq_enabled":self.qq_enabled.load(Ordering::Acquire),"qq_official_enabled":self.official.as_ref().is_some_and(|c|c.enabled.load(Ordering::Acquire)),"qq_official_bindings":self.official.as_ref().map(|c|&c.config.bindings),"web_target":"web_owner","qq_scope":book.scope,"web_receipt":"stored in authenticated web UI; not proof the browser has read it","napcat_receipt":"API accepted with a message id; not proof a human has read it"});
         Ok(profile)
     }
     pub(crate) fn scoped_runtime(&self) -> Result<Arc<Runtime>> {
@@ -327,6 +356,16 @@ impl WebState {
                 directory: config.directory.clone(),
                 bindings: book.bindings(),
                 session: "live".into(),
+            });
+        }
+        if let Some(client) = &self.official {
+            config.directory = client.directory(&config.directory, false);
+            executor.directory = config.directory.clone();
+            executor.sender = Arc::new(crate::qqbot::ChannelSender {
+                fallback: executor.sender.clone(),
+                official: client.clone(),
+                media: self.media.clone(),
+                ledger: self.ingress.ledger.clone(),
             });
         }
         Ok(Arc::new(Runtime {
@@ -354,22 +393,19 @@ impl WebState {
         for id in &event.media {
             self.media.bytes_for_target(id, "web_owner").await?;
         }
-        let result = self.ingress.receive(source, event).await?;
+        let jobs = if event.media.is_empty() {
+            vec![]
+        } else {
+            vec![(
+                "vision".into(),
+                format!("web:{}", event.id),
+                json!({"source":"web","event_id":event.id,"target_ref":"web_owner","media_ids":event.media}),
+            )]
+        };
+        let result = self.ingress.receive_with_jobs(source, event, jobs).await?;
         if owner && result.1 {
             self.set_attention(false).await?;
             self.ingress.changed.notify_one();
-        }
-        if result.1 && !event.media.is_empty() {
-            let state = self.clone();
-            let event = event.clone();
-            self.spawn(async move {
-                let mut observations=Vec::new();
-                for (position,id) in event.media.iter().enumerate() {
-                    let result=async {let (record,bytes)=state.media.bytes_for_target(id,"web_owner").await?;let (record,description,hit)=state.models.current().vision.ingest(bytes,record.allowed_targets).await?;Ok::<_,anyhow::Error>(json!({"media":record.reference(),"visual_observation":description,"vision_cache_hit":hit}))}.await;
-                    observations.push(match result{Ok(data)=>json!({"position":position,"status":"available","data":data}),Err(_)=>json!({"position":position,"status":"unavailable","reason":"visual observation unavailable; original media is retained"})});
-                }
-                if let Err(error)=state.ingress.observed_media(&event.id,json!(observations)).await {eprintln!("media observation persistence failed: {error}");}
-            });
         }
         Ok(result)
     }
@@ -386,12 +422,18 @@ impl WebState {
             if self.needs_attention.load(Ordering::Acquire)
                 || self.ingress.ledger.pending("live").await?.is_empty()
             {
-                tokio::select! {_=self.cancel.cancelled()=>break,_=self.ingress.changed.notified()=>()};
+                tokio::select! {_=self.cancel.cancelled()=>break,_=self.ingress.changed.notified()=>(),_=tokio::time::sleep(Duration::from_secs(1))=>()};
                 continue;
             }
             tokio::time::sleep(Duration::from_millis(180)).await;
             // Role edits are atomic between attention turns; ingress stays concurrent.
             let _control = self.control.lock().await;
+            let Some(claim) = self.deliveries.claim("attention").await? else {
+                self.deliveries
+                    .enqueue("attention", "live", json!({"session":"live"}))
+                    .await?;
+                continue;
+            };
             let scheduler = Scheduler {
                 runtime: self.scoped_runtime()?,
                 ingress: self.ingress.clone(),
@@ -409,8 +451,15 @@ impl WebState {
                         self.set_attention(true).await?;
                     }
                     *self.last_outcome.lock().unwrap() = serde_json::to_value(outcome)?;
+                    self.deliveries.complete(claim, None).await?;
                 }
                 Err(_) => {
+                    self.deliveries
+                        .retry(
+                            claim,
+                            "attention processing failed; waiting for authorized continuation",
+                        )
+                        .await?;
                     self.set_attention(true).await?;
                     self.ingress
                         .ledger
@@ -454,6 +503,11 @@ pub async fn serve(path: &Path) -> Result<()> {
         let _stop_on_exit = work_state.cancel.clone().drop_guard();
         work_state.work().await
     });
+    let delivery_state = state.clone();
+    let delivery_worker = tokio::spawn(async move {
+        let _guard = delivery_state.cancel.clone().drop_guard();
+        delivery_state.deliveries_work().await
+    });
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let shutdown = state.cancel.clone();
     let signal = tokio::spawn(async move {
@@ -476,11 +530,13 @@ pub async fn serve(path: &Path) -> Result<()> {
         .await;
     state.cancel.cancel();
     let work = worker.await;
+    let delivered = delivery_worker.await;
     let close = state.shutdown().await;
     signal.abort();
     let _ = signal.await;
     result?;
     work??;
+    delivered??;
     close?;
     Ok(())
 }

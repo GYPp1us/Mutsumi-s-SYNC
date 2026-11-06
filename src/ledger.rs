@@ -51,7 +51,7 @@ impl Ledger {
             |r| r.get(0),
         )?;
         let empty = app_id == 0 && version == 0 && tables == 0;
-        let supported = app_id == 0x4d535934 && (1..=4).contains(&version);
+        let supported = app_id == 0x4d535934 && (1..=5).contains(&version);
         if !empty && !supported {
             bail!("database is not a supported V4 prototype ledger");
         }
@@ -65,6 +65,10 @@ impl Ledger {
 
     fn recover(connection: &mut Connection) -> Result<()> {
         let tx = connection.transaction()?;
+        tx.execute(
+            "UPDATE deliveries SET status='pending',lease=NULL WHERE status='running'",
+            [],
+        )?;
         let pending: Vec<(String, String, String)> = tx
             .prepare("SELECT id,session,turn_id FROM actions WHERE status='started'")?
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
@@ -115,11 +119,22 @@ impl Ledger {
     ) -> Result<i64> {
         let (session, turn, kind) = (session.to_owned(), turn.to_owned(), kind.to_owned());
         self.db(move |db| {
-            db.execute(
+            let tx = db.transaction()?;
+            tx.execute(
                 "INSERT INTO events(session,turn_id,kind,payload) VALUES(?,?,?,?)",
                 params![session, turn, kind, payload.to_string()],
             )?;
-            Ok(db.last_insert_rowid())
+            let seq = tx.last_insert_rowid();
+            if matches!(kind.as_str(), "inbound" | "media_observation") {
+                crate::deliveries::enqueue(
+                    &tx,
+                    "attention",
+                    &session,
+                    &json!({"session":session}),
+                )?;
+            }
+            tx.commit()?;
+            Ok(seq)
         })
         .await
     }
@@ -127,7 +142,7 @@ impl Ledger {
     pub async fn revision(&self) -> Result<i64> {
         self.db(|db| {
             Ok(db.query_row(
-                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed','capabilities_changed')",
+                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed','capabilities_changed','knowledge_changed')",
                 [],
                 |r| r.get(0),
             )?)
@@ -138,7 +153,7 @@ impl Ledger {
     pub async fn facts(&self, session: &str) -> Result<Vec<Value>> {
         let session = session.to_owned();
         self.db(move |db| {
-            let mut s=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','media_observation','action_result','capabilities_changed') ORDER BY seq DESC LIMIT 256")?;
+            let mut s=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','media_observation','action_result','capabilities_changed','knowledge_changed') ORDER BY seq DESC LIMIT 256")?;
             let rows=s.query_map([session],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let mut facts=rows.into_iter().rev().map(|(kind,payload)|{
                 let data:Value=serde_json::from_str(&payload)?;
@@ -174,8 +189,8 @@ impl Ledger {
     pub async fn snapshot(&self, session: &str) -> Result<(i64, Vec<Value>)> {
         let session = session.to_owned();
         self.db(move |db| {
-            let revision=db.query_row("SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed','capabilities_changed')",[],|r|r.get(0))?;
-            let rows:Vec<(String,String)>=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','media_observation','action_result','capabilities_changed') ORDER BY seq DESC LIMIT 256")?
+            let revision=db.query_row("SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed','capabilities_changed','knowledge_changed')",[],|r|r.get(0))?;
+            let rows:Vec<(String,String)>=db.prepare("SELECT kind,payload FROM events WHERE session=? AND kind IN ('inbound','media_observation','action_result','capabilities_changed','knowledge_changed') ORDER BY seq DESC LIMIT 256")?
                 .query_map([session],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
             let mut facts:Vec<Value>=rows.into_iter().rev().map(|(kind,p)|{
                 let data:Value=serde_json::from_str(&p)?;
@@ -225,7 +240,7 @@ impl Ledger {
         self.db(move |db| {
             let tx = db.transaction()?;
             let current: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed','capabilities_changed')",
+                "SELECT COALESCE(MAX(seq),0) FROM events WHERE kind IN ('inbound','media_observation','action_result','media_registered','profile_changed','capabilities_changed','knowledge_changed')",
                 [],
                 |r| r.get(0),
             )?;

@@ -19,9 +19,10 @@ $('logout').onclick = async () => { try { await api('api/logout', {}); location.
 document.querySelectorAll('[data-panel]').forEach(button => button.onclick = () => {
   activePanel = button.dataset.panel;
   document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('hidden', panel.id !== activePanel));
-  if (activePanel === 'connections') checkQQ();
+  if (activePanel === 'connections') {checkQQ();checkOfficial();}
   if (activePanel === 'roles') loadRoles();
   if (activePanel === 'models') loadModel();
+  if (activePanel === 'knowledge') loadKnowledge();
 });
 function image(id, parent) { if (!/^media_[a-f0-9]{64}$/.test(id)) return; const img = document.createElement('img'); img.src = 'api/media/' + encodeURIComponent(id); img.alt = '原始媒体'; img.loading = 'lazy'; parent?.append(img); return img; }
 function bubble(label, owner, key) {
@@ -40,16 +41,16 @@ function segments(parts, node) {
 }
 function displayEvent(event) {
   const data = event.data;
-  if (event.kind === 'inbound' && (data.source_id === 'owner_web' || data.source_id?.startsWith('qq_'))) {
-    const node = bubble(data.source_id?.startsWith('qq_') ? `${data.actor} · QQ · ${data.relationship}` : '你 · 网页', true, data.event_id);
-    if (data.source_id?.startsWith('qq_')) segments(data.segments, node);
+  if (event.kind === 'inbound' && (data.source_id === 'owner_web' || (data.source_id?.startsWith('qq_') || data.source_id?.startsWith('qqbot_')))) {
+    const node = bubble((data.source_id?.startsWith('qq_') || data.source_id?.startsWith('qqbot_')) ? `${data.actor} · QQ · ${data.relationship}` : '你 · 网页', true, data.event_id);
+    if ((data.source_id?.startsWith('qq_') || data.source_id?.startsWith('qqbot_'))) segments(data.segments, node);
     else {
       const text = document.createElement('div'); text.className = 'body'; text.textContent = data.text || ''; node.append(text);
       for (const id of data.transport?.media || []) if (typeof id === 'string') image(id, node);
     }
   }
   if (event.kind === 'web_message') segments(data.message.segments, bubble('睦 · 网页', false));
-  if (event.kind === 'action_result' && data.status === 'succeeded' && data.result?.transport === 'napcat_onebot') segments(data.action.message.segments, bubble('睦 · QQ 接口已确认', false));
+  if (event.kind === 'action_result' && data.status === 'succeeded' && ['napcat_onebot','qq_official'].includes(data.result?.transport)) segments(data.action.message.segments, bubble('睦 · QQ 接口已确认', false));
   if (event.kind === 'media_observation' && bubbles.has(data.event_id)) {
     const node = bubbles.get(data.event_id);
     for (const item of data.observations || []) {

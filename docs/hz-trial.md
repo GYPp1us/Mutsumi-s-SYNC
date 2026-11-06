@@ -67,6 +67,8 @@ API 基址留在原服务商时，Key 留空表示保留；更换服务地址时
 | 运行配置 | `/opt/mutsumi-sync-v4/shared/{server,runtime,profile}.yaml` |
 | 密钥环境 | `/opt/mutsumi-sync-v4/shared/service.env`，root:root 0600 |
 | 工作目录 | `/opt/mutsumi-sync-v4/shared/workspace` |
+| 可编辑技能 | `/opt/mutsumi-sync-v4/shared/skills` |
+| 官方 QQ 可选桥接 | `mutsumi-qqbot.service`，独立用户，默认不启动 |
 | SQLite / 媒体 | `/var/lib/mutsumi-v4/` |
 | Rust 服务 | `mutsumi-sync-v4.service`，专用用户 `mutsumi-v4` |
 | NapCat | `mutsumi-napcat.service`，沿用原安装与身份 |
@@ -80,4 +82,4 @@ Rust 服务限制可写目录、内存和进程数量；Markdown 使用独立 md
 
 `python deploy/hz/source_bundle.py data/hz-source.tar.gz` 可生成只含 Git 跟踪的 V4 构建输入包，自动包括 SQL、HTML 等内嵌资源。构建主程序使用 `cargo build --release --locked --bin server`；worker 在 `workers/md2svg` 中单独执行 `cargo build --release --locked -j 1`，需要 Rust 1.92 或更新版本。HZ 为小内存机器，首次构建较慢，后续应复用 Cargo 缓存。系统依赖包括 `build-essential pkg-config libssl-dev bubblewrap fonts-noto-cjk python3-yaml`；现有原生 NapCat 另依赖 xvfb。
 
-此版本供主人试用，尚不覆盖 QQ 群聊、未登记陌生人自动接入、跨进程队列与生产级上下文压缩。真实 QQ 发送必须在扫码登录并开启收发后验证，不能用本地 outbox 或接口在线代替送达测试。
+此版本供主人试用。NapCat 仍限已登记私聊；可选官方 QQ 通道提供独立的 OpenID 会话绑定，尚待真实凭据验收。内部 attention/vision 投递已持久化，长期笔记与完整历史分离，SKILL 按需读取；详见 [知识与官方 QQ 接入](knowledge-and-qqbot.md)。真实 QQ 发送必须核对实际账号与客户端，不能用本地 outbox 或接口在线代替送达测试。

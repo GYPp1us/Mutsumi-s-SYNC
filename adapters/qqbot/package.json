@@ -1,0 +1,19 @@
+{
+  "name": "mutsumi-qq-official-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tencent-connect/qqbot-nodejs": "1.0.5"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
+}

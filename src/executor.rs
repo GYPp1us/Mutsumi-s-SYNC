@@ -164,9 +164,15 @@ impl Executor {
                 .await
                 .and_then(|r| Ok(serde_json::to_value(r)?)),
             Action::Tool { name, arguments } => {
-                self.tools
-                    .execute_with_cancel(name, arguments, context.source, &self.cancel)
-                    .await
+                if let Some(knowledge) = &self.tools.knowledge
+                    && crate::knowledge::Knowledge::handles(name)
+                {
+                    knowledge.execute(name, arguments, context).await
+                } else {
+                    self.tools
+                        .execute_with_cancel(name, arguments, context.source, &self.cancel)
+                        .await
+                }
             }
         };
         let (status, result) = match result {

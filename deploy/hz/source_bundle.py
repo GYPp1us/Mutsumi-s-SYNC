@@ -20,7 +20,7 @@ def main():
     ]).decode('utf-8').split('\0')
     exact = {'Cargo.toml', 'Cargo.lock', 'system-prompts.yaml', 'quick-replies.yaml',
              'workers/md2svg/Cargo.toml', 'workers/md2svg/Cargo.lock'}
-    prefixes = ('src/', 'assets/', 'deploy/hz/', 'workers/md2svg/src/')
+    prefixes = ('src/', 'assets/', 'deploy/hz/', 'workers/md2svg/src/', 'skills/', 'adapters/qqbot/')
     selected = [name for name in tracked if name and (
         name in exact or name.startswith(prefixes)
         or name.startswith('config/') and name.endswith('.example.yaml')

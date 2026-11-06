@@ -2,7 +2,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = FULL;
 BEGIN;
 PRAGMA application_id = 0x4d535934;
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 
 CREATE TABLE IF NOT EXISTS events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,5 +76,32 @@ CREATE TABLE IF NOT EXISTS report_events (
     source_kind TEXT NOT NULL,
     token TEXT NOT NULL,
     enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
+);
+CREATE TABLE IF NOT EXISTS deliveries (
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    generation INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'pending',
+    lease TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    due_ms INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(kind,key)
+);
+CREATE INDEX IF NOT EXISTS deliveries_due ON deliveries(kind,status,due_ms);
+CREATE TABLE IF NOT EXISTS notes (
+    session TEXT NOT NULL,
+    id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    PRIMARY KEY(session,id)
+);
+CREATE TABLE IF NOT EXISTS note_versions (
+    session TEXT NOT NULL,
+    id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    PRIMARY KEY(session,id,version)
 );
 COMMIT;

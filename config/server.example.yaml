@@ -12,3 +12,16 @@ owner_source:
   reply_target: web_owner
 # Optional. Actual IDs and credentials belong in the private server configuration.
 napcat: null
+# Independent optional official QQ Bot SDK bridge. Never replaces NapCat.
+qq_official: null
+# Example (use real OpenIDs, not personal QQ numeric IDs):
+# qq_official:
+#   base_url: http://127.0.0.1:18241
+#   token_env: MUTSUMI_QQBOT_BRIDGE_KEY
+#   app_id: YOUR_APP_ID
+#   bindings:
+#     - scope: c2c
+#       conversation_id: OWNER_OPENID
+#       label: 官方机器人主人私聊
+#       senders: { OWNER_OPENID: owner }
+#       allow_proactive: false

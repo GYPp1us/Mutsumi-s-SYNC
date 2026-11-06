@@ -82,6 +82,7 @@ pub async fn build_with_providers(
                 root: Path::new(&media.outbox).to_owned(),
             }),
             ToolRegistry {
+                knowledge: None,
                 events: None,
                 media: Some(service),
                 workspace: None,
@@ -98,6 +99,10 @@ pub async fn build_with_providers(
             crate::workspace::WorkspaceTools::new(workspace).await?,
         ));
     }
+    tools.knowledge = Some(Arc::new(crate::knowledge::Knowledge::new(
+        ledger.clone(),
+        Path::new(&config.skills_dir),
+    )?));
     let executor = Executor {
         ledger,
         reviewer: Arc::new(ModelReviewer {

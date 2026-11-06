@@ -9,6 +9,7 @@ provider:
 database: data/server/events.sqlite3
 prompts: system-prompts.yaml
 quick_replies: quick-replies.yaml
+skills_dir: skills
 max_rounds: 16
 max_corrections: 3
 capture_context: false
